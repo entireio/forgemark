@@ -31,6 +31,16 @@ type sample struct {
 	dur    time.Duration
 	res    outcome
 	op     opKind
+	msg    string // raw error text, retained only when res == outcomeErr
+}
+
+// errMsg returns the message to retain on a sample. Only genuine errors carry
+// text; OK and CAS outcomes stay message-free.
+func errMsg(res outcome, err error) string {
+	if res != outcomeErr || err == nil {
+		return ""
+	}
+	return err.Error()
 }
 
 // levelResult is the published summary for one concurrency level. JSON tags
@@ -60,6 +70,58 @@ type levelResult struct {
 	CloneP50ms  float64 `json:"clone_p50_ms,omitempty"`
 	CloneP95ms  float64 `json:"clone_p95_ms,omitempty"`
 	CloneP99ms  float64 `json:"clone_p99_ms,omitempty"`
+
+	// Distinct error messages (normalized) with occurrence counts, for the err
+	// bucket only. Omitted when there were no errors.
+	ErrorMessages      []errGroup `json:"error_messages,omitempty"`
+	CloneErrorMessages []errGroup `json:"clone_error_messages,omitempty"`
+}
+
+// errGroup is one distinct (normalized) error message and how often it occurred.
+type errGroup struct {
+	Message string `json:"message"`
+	Count   int    `json:"count"`
+}
+
+// maxDistinctErrors caps how many distinct messages a level reports; the rest
+// fold into an "(other errors)" bucket.
+const maxDistinctErrors = 20
+
+// errGroups folds raw error messages into a deterministic, bounded breakdown:
+// normalize each distinct raw once (collapsing this run's volatile URLs/refs),
+// tally by the resulting key, then keep the maxDistinctErrors most frequent
+// (count desc, message asc) and fold the remainder into "(other errors)".
+// Returns nil when there were no errors, so the JSON field is omitted.
+func errGroups(raw map[string]int) []errGroup {
+	if len(raw) == 0 {
+		return nil
+	}
+	// Normalize once per distinct raw message, not once per occurrence — an
+	// outage repeating one error tens of thousands of times normalizes it once.
+	counts := make(map[string]int, len(raw))
+	for msg, n := range raw {
+		counts[normalizeErr(msg)] += n
+	}
+	out := make([]errGroup, 0, len(counts))
+	for msg, n := range counts {
+		out = append(out, errGroup{Message: msg, Count: n})
+	}
+	byFreq := func(i, j int) bool {
+		if out[i].Count != out[j].Count {
+			return out[i].Count > out[j].Count
+		}
+		return out[i].Message < out[j].Message
+	}
+	sort.Slice(out, byFreq)
+	if len(out) > maxDistinctErrors {
+		other := 0
+		for _, g := range out[maxDistinctErrors:] {
+			other += g.Count
+		}
+		out = append(out[:maxDistinctErrors], errGroup{Message: "(other errors)", Count: other})
+		sort.Slice(out, byFreq) // the overflow bucket may outrank the kept singletons
+	}
+	return out
 }
 
 // summarize folds raw samples into a levelResult, dropping anything inside the
@@ -76,6 +138,8 @@ func summarize(samples []sample, concurrency int, strategy string, repos, nodes 
 	}
 
 	var okDurs, cloneDurs []float64
+	pushErrs := map[string]int{}
+	cloneErrs := map[string]int{}
 	for _, s := range samples {
 		if s.offset < warmup {
 			continue // warm-up: excluded from every statistic
@@ -87,6 +151,7 @@ func summarize(samples []sample, concurrency int, strategy string, repos, nodes 
 				cloneDurs = append(cloneDurs, float64(s.dur)/float64(time.Millisecond))
 			} else {
 				r.CloneErrors++
+				cloneErrs[s.msg]++
 			}
 			continue
 		}
@@ -99,8 +164,11 @@ func summarize(samples []sample, concurrency int, strategy string, repos, nodes 
 			r.CASFailures++
 		case outcomeErr:
 			r.OtherErrors++
+			pushErrs[s.msg]++
 		}
 	}
+	r.ErrorMessages = errGroups(pushErrs)
+	r.CloneErrorMessages = errGroups(cloneErrs)
 
 	if window > 0 {
 		r.OpsPerSec = float64(r.OK) / window.Seconds()

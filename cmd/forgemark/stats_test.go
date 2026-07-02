@@ -2,6 +2,8 @@ package main
 
 import (
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -77,6 +79,115 @@ func TestClassify(t *testing.T) {
 		if got := classify(c.err); got != c.want {
 			t.Errorf("%s: classify = %v, want %v", c.name, got, c.want)
 		}
+	}
+}
+
+func TestNormalizeErr(t *testing.T) {
+	// The same server failure against different nodes/repos must collapse to one
+	// key: the embedded receive-pack URL varies, the status code (the signal) does not.
+	a := normalizeErr(`push: unexpected requesting "https://node3.cluster/repo-7/git-receive-pack" status code: 503`)
+	b := normalizeErr(`push: unexpected requesting "https://node1.cluster/repo-42/git-receive-pack" status code: 503`)
+	if a != b {
+		t.Errorf("URL variance not collapsed:\n a=%q\n b=%q", a, b)
+	}
+	if !strings.Contains(a, "<url>") || !strings.Contains(a, "status code: 503") {
+		t.Errorf("normalized dropped the signal: %q", a)
+	}
+
+	// Per-agent refs collapse too.
+	r1 := normalizeErr("command error on refs/heads/run-a4: rejected")
+	r2 := normalizeErr("command error on refs/heads/run-a17: rejected")
+	if r1 != r2 || !strings.Contains(r1, "<ref>") {
+		t.Errorf("ref variance not collapsed: %q vs %q", r1, r2)
+	}
+
+	// Truncation runs AFTER normalization: a long URL must not push the status
+	// code past the cutoff.
+	longURL := "https://node." + strings.Repeat("x", 400) + "/repo/git-receive-pack"
+	got := normalizeErr(fmt.Sprintf(`push: unexpected requesting "%s" status code: 500`, longURL))
+	if !strings.Contains(got, "status code: 500") {
+		t.Errorf("status code cut off by truncation: %q", got)
+	}
+	if len(got) > maxErrMsgLen {
+		t.Errorf("normalized message not truncated: len=%d", len(got))
+	}
+
+	if got := normalizeErr(""); got != "(no message)" {
+		t.Errorf("empty message = %q, want (no message)", got)
+	}
+
+	// A message with no volatile parts is truncated but otherwise untouched.
+	long := strings.Repeat("z", maxErrMsgLen+50)
+	if got := normalizeErr(long); len(got) != maxErrMsgLen {
+		t.Errorf("plain message not truncated to %d: got len=%d", maxErrMsgLen, len(got))
+	}
+}
+
+func TestSummarizeAggregatesErrorMessages(t *testing.T) {
+	window := 10 * time.Second
+	samples := []sample{
+		// Two push errors that normalize to the same 503 group (different URLs).
+		{offset: 1 * time.Second, res: outcomeErr, msg: `push: unexpected requesting "https://n1/r1/git-receive-pack" status code: 503`},
+		{offset: 2 * time.Second, res: outcomeErr, msg: `push: unexpected requesting "https://n2/r9/git-receive-pack" status code: 503`},
+		// One local harness-bug error, distinct message (no volatile parts).
+		{offset: 3 * time.Second, res: outcomeErr, msg: "commit: worktree: disk full"},
+		// A successful push (no message) and a CAS (no message) must not appear.
+		{offset: 4 * time.Second, dur: 10 * time.Millisecond, res: outcomeOK},
+		{offset: 5 * time.Second, res: outcomeCAS},
+		// A clone error goes to the clone bucket only.
+		{offset: 6 * time.Second, res: outcomeErr, op: opClone, msg: `clone: unexpected requesting "https://n1/r1/git-upload-pack" status code: 500`},
+	}
+	r := summarize(samples, 8, "session", 1, 3, 0, window, "1-10 x 2048B")
+
+	if len(r.ErrorMessages) != 2 {
+		t.Fatalf("ErrorMessages = %+v, want 2 groups", r.ErrorMessages)
+	}
+	// Count-desc order: the 503 group (2) before the commit failure (1).
+	if r.ErrorMessages[0].Count != 2 ||
+		!strings.Contains(r.ErrorMessages[0].Message, "status code: 503") ||
+		!strings.Contains(r.ErrorMessages[0].Message, "<url>") {
+		t.Errorf("top push error = %+v, want count 2 / normalized 503", r.ErrorMessages[0])
+	}
+	if r.ErrorMessages[1].Count != 1 || r.ErrorMessages[1].Message != "commit: worktree: disk full" {
+		t.Errorf("second push error = %+v, want the commit failure verbatim", r.ErrorMessages[1])
+	}
+
+	if len(r.CloneErrorMessages) != 1 || r.CloneErrorMessages[0].Count != 1 ||
+		!strings.Contains(r.CloneErrorMessages[0].Message, "status code: 500") {
+		t.Errorf("CloneErrorMessages = %+v, want one 500 group", r.CloneErrorMessages)
+	}
+
+	// A clean run must emit no lists (so omitempty fires in the JSON).
+	clean := summarize([]sample{{offset: time.Second, dur: time.Millisecond, res: outcomeOK}}, 1, "branch", 1, 1, 0, window, "")
+	if clean.ErrorMessages != nil || clean.CloneErrorMessages != nil {
+		t.Errorf("clean run should have nil error lists, got %+v / %+v", clean.ErrorMessages, clean.CloneErrorMessages)
+	}
+}
+
+func TestSummarizeCapsDistinctErrors(t *testing.T) {
+	var samples []sample
+	const distinct = 25
+	for i := range distinct {
+		// No volatile substrings, so each stays a distinct normalized key.
+		samples = append(samples, sample{offset: time.Second, res: outcomeErr, msg: fmt.Sprintf("error variant %d", i)})
+	}
+	r := summarize(samples, 1, "branch", 1, 1, 0, 10*time.Second, "")
+
+	// maxDistinctErrors real messages + one "(other errors)" overflow bucket.
+	if len(r.ErrorMessages) != maxDistinctErrors+1 {
+		t.Fatalf("groups = %d, want %d", len(r.ErrorMessages), maxDistinctErrors+1)
+	}
+	var overflow *errGroup
+	for i := range r.ErrorMessages {
+		if r.ErrorMessages[i].Message == "(other errors)" {
+			overflow = &r.ErrorMessages[i]
+		}
+	}
+	if overflow == nil {
+		t.Fatal("no (other errors) overflow bucket")
+	}
+	if want := distinct - maxDistinctErrors; overflow.Count != want {
+		t.Errorf("overflow count = %d, want %d", overflow.Count, want)
 	}
 }
 

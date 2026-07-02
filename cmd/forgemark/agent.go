@@ -7,6 +7,7 @@ import (
 	"io"
 	"math/rand"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -113,7 +114,7 @@ func (a *agent) run(ctx context.Context, start time.Time) {
 	for ctx.Err() == nil {
 		if iter > 0 && iter%resetEvery == 0 {
 			if err := a.initRepo(); err != nil {
-				a.samples = append(a.samples, sample{offset: time.Since(start), res: outcomeErr})
+				a.samples = append(a.samples, sample{offset: time.Since(start), res: outcomeErr, msg: err.Error()})
 				iter++
 				continue
 			}
@@ -122,7 +123,7 @@ func (a *agent) run(ctx context.Context, start time.Time) {
 			// A local commit failure is a harness bug, not a server signal —
 			// record it as an error and keep going so one bad agent doesn't
 			// silently drop out of the concurrency level.
-			a.samples = append(a.samples, sample{offset: time.Since(start), res: outcomeErr})
+			a.samples = append(a.samples, sample{offset: time.Since(start), res: outcomeErr, msg: err.Error()})
 			iter++
 			continue
 		}
@@ -134,7 +135,8 @@ func (a *agent) run(ctx context.Context, start time.Time) {
 		if ctx.Err() != nil {
 			break
 		}
-		a.samples = append(a.samples, sample{offset: t0.Sub(start), dur: dur, res: classify(err)})
+		o := classify(err)
+		a.samples = append(a.samples, sample{offset: t0.Sub(start), dur: dur, res: o, msg: errMsg(o, err)})
 		iter++
 	}
 }
@@ -219,4 +221,32 @@ func classify(err error) outcome {
 		}
 		return outcomeErr
 	}
+}
+
+// maxErrMsgLen caps a retained error message. Longer messages are truncated
+// after normalization so a long URL can't crowd the signal out of the window.
+const maxErrMsgLen = 200
+
+// reURL/reRef match the volatile substrings go-git embeds in error text — the
+// receive-pack URL (varies by node/repo) and the destination ref (varies by
+// agent/session). Collapsing them lets identical failures group in the results.
+// Compiled once; the message-shape sibling of classify.
+var (
+	reURL = regexp.MustCompile(`https?://\S+`)
+	reRef = regexp.MustCompile(`refs/heads/\S+`)
+)
+
+// normalizeErr turns a raw go-git error message into a stable grouping key:
+// collapse this run's volatile URLs/refs, then truncate. Order matters —
+// truncating first could cut the status code that follows a long URL.
+func normalizeErr(msg string) string {
+	if msg == "" {
+		return "(no message)"
+	}
+	msg = reURL.ReplaceAllString(msg, "<url>")
+	msg = reRef.ReplaceAllString(msg, "<ref>")
+	if len(msg) > maxErrMsgLen {
+		msg = msg[:maxErrMsgLen]
+	}
+	return msg
 }

@@ -42,7 +42,8 @@ func (a *agent) runSessions(ctx context.Context, start time.Time) {
 		if ctx.Err() != nil {
 			return
 		}
-		a.samples = append(a.samples, sample{offset: t0.Sub(start), dur: time.Since(t0), res: readOutcome(err), op: opClone})
+		res := readOutcome(err)
+		a.samples = append(a.samples, sample{offset: t0.Sub(start), dur: time.Since(t0), res: res, op: opClone, msg: errMsg(res, err)})
 		if err != nil {
 			continue // clone failed — next session retries
 		}
@@ -52,7 +53,7 @@ func (a *agent) runSessions(ctx context.Context, start time.Time) {
 		pushed := false
 		for k := 0; k < a.sess.commits && ctx.Err() == nil; k++ {
 			if err := a.commit(rng, k); err != nil {
-				a.samples = append(a.samples, sample{offset: time.Since(start), res: outcomeErr, op: opPush})
+				a.samples = append(a.samples, sample{offset: time.Since(start), res: outcomeErr, op: opPush, msg: err.Error()})
 				continue
 			}
 			t1 := time.Now()
@@ -63,7 +64,8 @@ func (a *agent) runSessions(ctx context.Context, start time.Time) {
 			if ctx.Err() != nil {
 				break // window closed mid-push: stop, but still clean up sessRef
 			}
-			a.samples = append(a.samples, sample{offset: t1.Sub(start), dur: time.Since(t1), res: classify(perr), op: opPush})
+			o := classify(perr)
+			a.samples = append(a.samples, sample{offset: t1.Sub(start), dur: time.Since(t1), res: o, op: opPush, msg: errMsg(o, perr)})
 		}
 		// Abandon the session branch by deleting it, so ephemeral …-sN refs don't
 		// accumulate on the target repo across the sweep (a growing receive-pack
