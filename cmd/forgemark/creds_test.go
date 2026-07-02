@@ -14,7 +14,7 @@ func newTestJurisdictionCreds(t *testing.T, calls *atomic.Int32) *jurisdictionCr
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		calls.Add(1)
-		fmt.Fprint(w, `{"access_token":"fresh","expires_in":899}`)
+		_, _ = fmt.Fprint(w, `{"access_token":"fresh","expires_in":899}`)
 	}))
 	t.Cleanup(srv.Close)
 	return newJurisdictionCreds(srv.Client(), srv.URL, "https://us.example", "entire-cli", "subject", "token")

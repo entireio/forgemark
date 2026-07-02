@@ -80,7 +80,7 @@ func newEntireEndpoint(ctx context.Context, cfg *runConfig, creds credentialProv
 	if err != nil {
 		return nil, fmt.Errorf("info/refs probe: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
 		return nil, fmt.Errorf("read info/refs response: %w", err)

@@ -1,0 +1,15 @@
+[tools]
+go = "1.26.4"
+golangci-lint = "2"
+
+[tasks.test]
+description = "Run Go tests"
+run = "go test -race ./..."
+
+[tasks.lint]
+description = "Run golangci-lint"
+run = "golangci-lint run"
+
+[tasks.ci]
+description = "Run all CI checks"
+depends = ["test", "lint"]

@@ -172,7 +172,7 @@ func setupEntiredb(ctx context.Context, cfg *runConfig, httpc *http.Client) (cre
 		missing = append(missing, "-jurisdiction")
 	}
 	if len(missing) > 0 {
-		return nil, nil, fmt.Errorf("Entire target (selected by -token-url/-jurisdiction) also needs: %s", strings.Join(missing, ", "))
+		return nil, nil, fmt.Errorf("entire target (selected by -token-url/-jurisdiction) also needs: %s", strings.Join(missing, ", "))
 	}
 	subject, err := readSecret(cfg) // the subject token to exchange
 	if err != nil {
