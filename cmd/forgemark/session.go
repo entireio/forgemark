@@ -93,7 +93,7 @@ func (a *agent) cloneSession(ctx context.Context) (*git.Repository, plumbing.Ref
 	storer := memory.NewStorage(memory.WithObjectFormat(a.objFmt))
 	wt := memfs.New()
 	opts := &git.CloneOptions{
-		URL:          a.urlFor(a.node, a.repoPath),
+		URL:          verbatimURLFor(a.node, a.repoPath),
 		Depth:        a.sess.cloneDepth,
 		SingleBranch: true,
 		ClientOptions: []gitclient.Option{

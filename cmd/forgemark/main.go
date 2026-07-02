@@ -9,12 +9,13 @@
 // The forge is inferred from the flags, not an explicit -target:
 //
 //	any smart-HTTP host (GitLab, Gitea, Bitbucket, self-hosted, GHES, github.com)
-//	    — push to <-remote>/<owner/repo>.git with a static credential from the
+//	    — push to <-remote>/<repo> (repo path appended verbatim; include a .git
+//	    suffix in -repos if the forge needs it) with a static credential from the
 //	    environment. A github.com remote additionally gets the abuse-detection
 //	    warning above concurrency 16.
 //	entiredb — selected by supplying -token-url and -jurisdiction: one
 //	    jurisdiction identity token (RFC 8693 exchange, authorized live per push),
-//	    direct-to-node push under /et/, node discovery via X-Entire-Replicas.
+//	    direct-to-node push, node discovery via X-Entire-Replicas.
 //
 // Strategies (-strategy): branch (default; per-agent branches on one repo),
 // repo (spread across N repos), session (clone+push loop per agent).
@@ -72,8 +73,8 @@ type runConfig struct {
 	baseRef        string
 
 	// entiredb: supplying -jurisdiction/-token-url selects the entiredb path
-	// (jurisdiction-token exchange + /et/ + node discovery). Meaningless to any
-	// other forge, so their presence is the signal — no separate -target flag.
+	// (jurisdiction-token exchange + node discovery). Meaningless to any other
+	// forge, so their presence is the signal — no separate -target flag.
 	tokenURL     string
 	jurisdiction string
 	clientID     string
@@ -253,7 +254,7 @@ func runLevel(ctx context.Context, cfg *runConfig, creds credentialProvider, ep 
 		}
 		node := ep.nodes[i%len(ep.nodes)]
 		ref := fmt.Sprintf("refs/heads/%s-c%d-a%d", cfg.runID, c, i)
-		a, err := newAgent(i, repoPath, node, ref, ep.objFmt, &cfg.commit, creds, ep.urlFor, httpc, sess)
+		a, err := newAgent(i, repoPath, node, ref, ep.objFmt, &cfg.commit, creds, httpc, sess)
 		if err != nil {
 			return levelResult{}, fmt.Errorf("new agent %d: %w", i, err)
 		}
@@ -305,15 +306,15 @@ func (c *runConfig) commitDesc() string {
 
 func parseFlags() (*runConfig, error) {
 	cfg := &runConfig{}
-	var reposCSV, prefix, concCSV string
+	var reposCSV, pattern, concCSV string
 	var repoCount int
 
-	flag.StringVar(&cfg.remote, "remote", "", "base URL of the forge, e.g. https://gitlab.com (repos are appended as <base>/<owner/repo>.git); for Entire, the cluster base URL")
+	flag.StringVar(&cfg.remote, "remote", "", "base URL of the forge, e.g. https://gitlab.com (repos are appended verbatim as <base>/<repo>); for Entire, the cluster base URL")
 	flag.StringVar(&cfg.tokenFile, "token-file", "", "path to a file holding the credential secret (Entire: the subject token); \"-\" reads stdin. Preferred over $ACCESS_TOKEN — keeps the secret off argv")
 	flag.StringVar(&cfg.user, "user", "", "basic-auth username for the credential (default x-access-token; token forges ignore it)")
-	flag.StringVar(&reposCSV, "repos", "", "comma-separated owner/repo paths (e.g. you/bench-1)")
-	flag.StringVar(&prefix, "repo-prefix", "", "repo path prefix, used with -repo-count (e.g. you/bench-)")
-	flag.IntVar(&repoCount, "repo-count", 0, "number of repos for -repo-prefix (→ <prefix>1..<prefix>N)")
+	flag.StringVar(&reposCSV, "repos", "", "comma-separated repo paths, appended to -remote verbatim (e.g. you/bench.git)")
+	flag.StringVar(&pattern, "repo-pattern", "", "repo path template; {n} is replaced by the index (1..N), used with -repo-count (e.g. you/bench-{n})")
+	flag.IntVar(&repoCount, "repo-count", 0, "number of repos for -repo-pattern (expands {n} = 1..N)")
 	flag.StringVar(&cfg.strategy, "strategy", "branch", "branch (one repo, per-agent branches) | repo (spread across repos) | session (clone+push loop per agent)")
 	flag.StringVar(&concCSV, "concurrency", "1,8,32,128", "comma-separated writer counts to sweep")
 	flag.DurationVar(&cfg.duration, "duration", 60*time.Second, "measured window per concurrency level")
@@ -334,15 +335,11 @@ func parseFlags() (*runConfig, error) {
 	flag.StringVar(&cfg.clientID, "client-id", "entire-cli", "entiredb: public OAuth client id for the exchange")
 	flag.Parse()
 
-	cfg.repos = splitCSV(reposCSV)
-	if len(cfg.repos) == 0 && prefix != "" && repoCount > 0 {
-		for i := 1; i <= repoCount; i++ {
-			cfg.repos = append(cfg.repos, fmt.Sprintf("%s%d", prefix, i))
-		}
+	repos, err := expandRepos(reposCSV, pattern, repoCount)
+	if err != nil {
+		return nil, err
 	}
-	if len(cfg.repos) == 0 {
-		return nil, errors.New("no repos: pass -repos or -repo-prefix + -repo-count")
-	}
+	cfg.repos = repos
 	if cfg.strategy != "branch" && cfg.strategy != "repo" && cfg.strategy != "session" {
 		return nil, fmt.Errorf("invalid -strategy %q (branch|repo|session)", cfg.strategy)
 	}
@@ -373,6 +370,38 @@ func parseFlags() (*runConfig, error) {
 	}
 	cfg.runID = "fm" + strconv.FormatInt(time.Now().Unix(), 36)
 	return cfg, nil
+}
+
+// expandRepos builds the target repo list from the mutually-exclusive
+// -repos / -repo-pattern flags. Paths are used verbatim downstream (the
+// endpoint appends them to the node with no rewriting), so this only validates
+// and expands {n}; it never rewrites the path shape.
+func expandRepos(reposCSV, pattern string, count int) ([]string, error) {
+	repos := splitCSV(reposCSV)
+	switch {
+	case len(repos) > 0 && pattern != "":
+		return nil, errors.New("pass -repos or -repo-pattern, not both")
+	case len(repos) > 0:
+		if count > 0 {
+			return nil, errors.New("-repo-count applies to -repo-pattern, not -repos")
+		}
+		return repos, nil
+	case pattern != "":
+		if count <= 0 {
+			return nil, errors.New("-repo-pattern requires -repo-count > 0")
+		}
+		if !strings.Contains(pattern, "{n}") {
+			return nil, errors.New("-repo-pattern must contain the {n} index placeholder (e.g. you/bench-{n})")
+		}
+		for i := 1; i <= count; i++ {
+			repos = append(repos, strings.ReplaceAll(pattern, "{n}", strconv.Itoa(i)))
+		}
+		return repos, nil
+	case count > 0:
+		return nil, errors.New("-repo-count requires -repo-pattern")
+	default:
+		return nil, errors.New("no repos: pass -repos or -repo-pattern + -repo-count")
+	}
 }
 
 func printRow(r levelResult) {

@@ -32,16 +32,15 @@ func (noopSigner) Sign(io.Reader) ([]byte, error) { return nil, nil }
 // serialized ref-commit throughput, not client retry behaviour.
 type agent struct {
 	id       int
-	repoPath string // owner/repo
+	repoPath string // repo path, appended to node verbatim (see verbatimURLFor)
 	node     string // node base URL, e.g. https://node1.cluster:443
 	ref      string // destination ref, e.g. refs/heads/<run>-a7
 	objFmt   formatcfg.ObjectFormat
 
-	cfg    *commitConfig
-	creds  credentialProvider
-	urlFor func(node, repo string) string
-	httpc  *http.Client
-	sess   *sessionConfig // non-nil → "session" strategy (clone+push loop)
+	cfg   *commitConfig
+	creds credentialProvider
+	httpc *http.Client
+	sess  *sessionConfig // non-nil → "session" strategy (clone+push loop)
 
 	repo    *git.Repository
 	samples []sample
@@ -68,10 +67,10 @@ const resetEvery = 128
 // repo up front (object format matched to the remote). In session mode (sess
 // != nil) the repo is (re)created per session by the clone loop, so init is
 // skipped.
-func newAgent(id int, repoPath, node, ref string, objFmt formatcfg.ObjectFormat, cfg *commitConfig, creds credentialProvider, urlFor func(node, repo string) string, httpc *http.Client, sess *sessionConfig) (*agent, error) {
+func newAgent(id int, repoPath, node, ref string, objFmt formatcfg.ObjectFormat, cfg *commitConfig, creds credentialProvider, httpc *http.Client, sess *sessionConfig) (*agent, error) {
 	a := &agent{
 		id: id, repoPath: repoPath, node: node, ref: ref, objFmt: objFmt,
-		cfg: cfg, creds: creds, urlFor: urlFor, httpc: httpc, sess: sess,
+		cfg: cfg, creds: creds, httpc: httpc, sess: sess,
 	}
 	if sess == nil {
 		if err := a.initRepo(); err != nil {
@@ -93,7 +92,7 @@ func (a *agent) initRepo() error {
 	}
 	if _, err := repo.CreateRemote(&config.RemoteConfig{
 		Name: "origin",
-		URLs: []string{a.urlFor(a.node, a.repoPath)},
+		URLs: []string{verbatimURLFor(a.node, a.repoPath)},
 	}); err != nil {
 		return fmt.Errorf("create remote: %w", err)
 	}

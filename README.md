@@ -80,18 +80,20 @@ forgemark $FORGE -token-file ~/.forge-token \
 
 # Spread across 16 repos (horizontal scale)
 forgemark $FORGE -token-file ~/.forge-token -strategy repo \
-  -repo-prefix org/bench- -repo-count 16 -concurrency 32,128 -duration 2m
+  -repo-pattern "org/bench-{n}" -repo-count 16 -concurrency 32,128 -duration 2m
 
 # Session: clone + push 5 checkpoints, abandon, repeat (needs a seeded base branch)
 forgemark $FORGE -token-file ~/.forge-token -repos org/repo \
   -strategy session -session-commits 5 -clone-depth 1 -concurrency 8,32
 ```
 
-The push URL is `<-remote>/<owner/repo>.git`. The token is used as the basic-auth
-password with a conventional username (`-user` to override); most forges accept
-a PAT this way. The secret comes from `-token-file` or the `ACCESS_TOKEN` env
-var — never a CLI flag, so it can't leak via `ps` or shell history. Entire needs
-a couple of extra flags — see below.
+The push URL is `<-remote>/<repo>` — the `-repos` value is appended **verbatim**
+(ForgeMark does no path rewriting), so include a `.git` suffix if your forge
+needs it. The token is used as the basic-auth password with a conventional
+username (`-user` to override); most forges accept a PAT this way. The secret
+comes from `-token-file` or the `ACCESS_TOKEN` env var — never a CLI flag, so it
+can't leak via `ps` or shell history. Entire needs a couple of extra flags — see
+below.
 
 ## Entire
 
@@ -105,11 +107,12 @@ forgemark -remote https://aws-us-east-2.entire.io \
   -token-url    https://us.auth.entire.io/oauth/token \
   -jurisdiction https://us.entire.io \
   -token-file   ~/.entire-subject-token \
-  -repos acme/backend -concurrency 1,8,32,128 -duration 2m
+  -repos your/repo -concurrency 1,8,32,128 -duration 2m
 ```
 
-`-repos` is the bare `owner/repo` (here `acme/backend`) — ForgeMark adds Entire's
-`/et/` path itself, so don't include it.
+`-repos` is appended verbatim — ForgeMark does no path rewriting, so pass the
+full repo path exactly as your Entire deployment expects it. The exact form is
+deployment-specific — see the runbook.
 
 Deployment-specific setup (obtaining the subject token, target provisioning) and
 methodology notes live in Entire's own runbook.
@@ -139,7 +142,7 @@ comparison, point `-remote` at a **GitHub Enterprise Server** you control.
 | `-remote` | — | base URL of the forge (e.g. `https://gitlab.com`); the cluster base URL for Entire |
 | `-token-file` | — | file holding the credential secret; `-` reads stdin (else `$ACCESS_TOKEN`) |
 | `-user` | `x-access-token` | basic-auth username (token forges ignore it) |
-| `-repos` / `-repo-prefix`+`-repo-count` | — | target repo path(s), `owner/repo` |
+| `-repos` / `-repo-pattern`+`-repo-count` | — | target repo path(s), appended verbatim; `-repo-pattern` expands `{n}` to `1..N` |
 | `-strategy` | `branch` | `branch` \| `repo` \| `session` |
 | `-concurrency` | `1,8,32,128` | swept sequentially, one row each |
 | `-duration` / `-warmup` | `60s` / `10s` | measured window / discarded ramp |
