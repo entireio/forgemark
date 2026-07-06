@@ -42,6 +42,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/go-git/go-git/v6/plumbing"
 	formatcfg "github.com/go-git/go-git/v6/plumbing/format/config"
 )
 
@@ -53,19 +54,20 @@ func main() {
 }
 
 type runConfig struct {
-	remote      string
-	tokenFile   string // path to the credential secret ("-" = stdin); preferred over $ACCESS_TOKEN
-	user        string // basic-auth username (default x-access-token; token forges ignore it)
-	repos       []string
-	strategy    string
-	concurrency []int
-	duration    time.Duration
-	warmup      time.Duration
-	commit      commitConfig
-	objectFmt   string
-	insecure    bool
-	out         string
-	runID       string
+	remote       string
+	tokenFile    string // path to the credential secret ("-" = stdin); preferred over $ACCESS_TOKEN
+	user         string // basic-auth username (default x-access-token; token forges ignore it)
+	repos        []string
+	strategy     string
+	branchPrefix string
+	concurrency  []int
+	duration     time.Duration
+	warmup       time.Duration
+	commit       commitConfig
+	objectFmt    string
+	insecure     bool
+	out          string
+	runID        string
 
 	// session strategy
 	sessionCommits int
@@ -253,7 +255,7 @@ func runLevel(ctx context.Context, cfg *runConfig, creds credentialProvider, ep 
 			repoPath = cfg.repos[i%len(cfg.repos)]
 		}
 		node := ep.nodes[i%len(ep.nodes)]
-		ref := fmt.Sprintf("refs/heads/%s-c%d-a%d", cfg.runID, c, i)
+		ref := destRef(cfg.branchPrefix, cfg.runID, c, i)
 		a, err := newAgent(i, repoPath, node, ref, ep.objFmt, &cfg.commit, creds, httpc, sess)
 		if err != nil {
 			return levelResult{}, fmt.Errorf("new agent %d: %w", i, err)
@@ -316,6 +318,7 @@ func parseFlags() (*runConfig, error) {
 	flag.StringVar(&pattern, "repo-pattern", "", "repo path template; {n} is replaced by the index (1..N), used with -repo-count (e.g. you/bench-{n})")
 	flag.IntVar(&repoCount, "repo-count", 0, "number of repos for -repo-pattern (expands {n} = 1..N)")
 	flag.StringVar(&cfg.strategy, "strategy", "branch", "branch (one repo, per-agent branches) | repo (spread across repos) | session (clone+push loop per agent)")
+	flag.StringVar(&cfg.branchPrefix, "branch-prefix", "", "prefix prepended verbatim to branch names, before the run ID (e.g. bench/ → refs/heads/bench/fm...-c1-a0); empty keeps the default")
 	flag.StringVar(&concCSV, "concurrency", "1,8,32,128", "comma-separated writer counts to sweep")
 	flag.DurationVar(&cfg.duration, "duration", 60*time.Second, "measured window per concurrency level")
 	flag.DurationVar(&cfg.warmup, "warmup", 10*time.Second, "warm-up before measuring (excluded from stats)")
@@ -369,7 +372,19 @@ func parseFlags() (*runConfig, error) {
 		return nil, errors.New("-file-size must be >= 1 (empty blobs reproduce → ErrEmptyCommit)")
 	}
 	cfg.runID = "fm" + strconv.FormatInt(time.Now().Unix(), 36)
+	// Validate the assembled ref, not the prefix alone: validity is context-dependent
+	// (a trailing "/" or bare word is fine mid-ref, invalid standalone). c/a are arbitrary —
+	// only the prefix can invalidate it — so this one parse-time check covers the whole sweep.
+	if err := plumbing.ReferenceName(destRef(cfg.branchPrefix, cfg.runID, 1, 0)).Validate(); err != nil {
+		return nil, fmt.Errorf("invalid -branch-prefix %q: %w", cfg.branchPrefix, err)
+	}
 	return cfg, nil
+}
+
+// destRef builds an agent's destination branch ref, prepending branchPrefix
+// verbatim before the run ID. Empty prefix reproduces the default name.
+func destRef(branchPrefix, runID string, c, i int) string {
+	return fmt.Sprintf("refs/heads/%s%s-c%d-a%d", branchPrefix, runID, c, i)
 }
 
 // expandRepos builds the target repo list from the mutually-exclusive

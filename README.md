@@ -144,6 +144,7 @@ comparison, point `-remote` at a **GitHub Enterprise Server** you control.
 | `-user` | `x-access-token` | basic-auth username (token forges ignore it) |
 | `-repos` / `-repo-pattern`+`-repo-count` | — | target repo path(s), appended verbatim; `-repo-pattern` expands `{n}` to `1..N` |
 | `-strategy` | `branch` | `branch` \| `repo` \| `session` |
+| `-branch-prefix` | — | prepended verbatim to branch names, before the run ID (e.g. `bench/` → `refs/heads/bench/fm...`); groups branches for easy cleanup |
 | `-concurrency` | `1,8,32,128` | swept sequentially, one row each |
 | `-duration` / `-warmup` | `60s` / `10s` | measured window / discarded ramp |
 | `-files-min`/`-files-max`/`-file-size` | `1`/`10`/`2048` | commit shape |
@@ -185,7 +186,8 @@ not a forge PAT.
   top concurrency level, or it — not the server — is your bottleneck.
 - `branch`/`repo` leave one per-agent branch each on the target (no cleanup);
   `session` deletes each ephemeral branch as the agent abandons it. Use
-  throwaway repos regardless.
+  throwaway repos regardless. Pass `-branch-prefix` (e.g. `bench/`) to namespace
+  the branches so they're easy to find and delete on the target afterwards.
 - `branch`/`repo` use force-push on agent-owned refs so numbers aren't polluted
   by spurious non-fast-forwards; the server still does the full receive-pack, so
   throughput is unaffected.
