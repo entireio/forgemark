@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"math"
 	"sort"
 	"time"
@@ -188,6 +189,29 @@ func summarize(samples []sample, concurrency int, strategy string, repos, nodes 
 		r.CloneP99ms = percentile(cloneDurs, 99)
 	}
 	return r
+}
+
+// checkThresholds reports every configured threshold breach in sweep order.
+func checkThresholds(results []levelResult, cfg *runConfig) []string {
+	if cfg == nil {
+		return nil
+	}
+	var breaches []string
+	for _, r := range results {
+		if cfg.minPushRate > 0 && r.OpsPerSec < cfg.minPushRate {
+			breaches = append(breaches, fmt.Sprintf("c=%d push/s=%.1f < min %.1f", r.Concurrency, r.OpsPerSec, cfg.minPushRate))
+		}
+		if cfg.maxP95 > 0 {
+			maxP95ms := float64(cfg.maxP95) / float64(time.Millisecond)
+			if r.P95ms > maxP95ms {
+				breaches = append(breaches, fmt.Sprintf("c=%d p95=%.1fms > max %.1fms", r.Concurrency, r.P95ms, maxP95ms))
+			}
+		}
+		if cfg.maxErrors >= 0 && r.OtherErrors > cfg.maxErrors {
+			breaches = append(breaches, fmt.Sprintf("c=%d errors=%d > max %d", r.Concurrency, r.OtherErrors, cfg.maxErrors))
+		}
+	}
+	return breaches
 }
 
 // percentile returns the nearest-rank percentile of an already-sorted slice.

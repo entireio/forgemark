@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -59,6 +60,44 @@ func TestSummarizeDropsWarmupAndCountsOutcomes(t *testing.T) {
 	}
 	if r.Concurrency != 8 || r.Nodes != 3 {
 		t.Errorf("metadata not carried through: %+v", r)
+	}
+}
+
+func TestCheckThresholds(t *testing.T) {
+	results := []levelResult{
+		{Concurrency: 1, OpsPerSec: 6.2, P95ms: 900, OtherErrors: 0},
+		{Concurrency: 4, OpsPerSec: 3.1, P95ms: 2200, OtherErrors: 2},
+	}
+	tests := []struct {
+		name string
+		cfg  *runConfig
+		want []string
+	}{
+		{
+			name: "breach",
+			cfg:  &runConfig{minPushRate: 5, maxP95: 2 * time.Second, maxErrors: 0},
+			want: []string{
+				"c=4 push/s=3.1 < min 5.0",
+				"c=4 p95=2200.0ms > max 2000.0ms",
+				"c=4 errors=2 > max 0",
+			},
+		},
+		{
+			name: "no breach",
+			cfg:  &runConfig{minPushRate: 3, maxP95: 3 * time.Second, maxErrors: 2},
+		},
+		{
+			name: "unset flags",
+			cfg:  &runConfig{maxErrors: -1},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := checkThresholds(results, tt.cfg)
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("checkThresholds() = %#v, want %#v", got, tt.want)
+			}
+		})
 	}
 }
 

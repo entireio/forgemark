@@ -1,8 +1,14 @@
 package main
 
 import (
+	"encoding/json"
+	"flag"
+	"io"
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/go-git/go-git/v6/plumbing"
 )
@@ -76,4 +82,146 @@ func TestDestRef(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestParseFlagsThresholds(t *testing.T) {
+	tests := []struct {
+		name          string
+		args          []string
+		wantMinRate   float64
+		wantMaxP95    time.Duration
+		wantMaxErrors int
+	}{
+		{
+			name:          "unset",
+			args:          []string{"-repos", "org/repo"},
+			wantMaxErrors: -1,
+		},
+		{
+			name:          "configured",
+			args:          []string{"-repos", "org/repo", "-min-push-rate", "5.5", "-max-p95", "1500ms", "-max-errors", "0"},
+			wantMinRate:   5.5,
+			wantMaxP95:    1500 * time.Millisecond,
+			wantMaxErrors: 0,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, err := parseFlagsForTest(t, tt.args...)
+			if err != nil {
+				t.Fatalf("parseFlags() error = %v", err)
+			}
+			if cfg.minPushRate != tt.wantMinRate {
+				t.Errorf("minPushRate = %v, want %v", cfg.minPushRate, tt.wantMinRate)
+			}
+			if cfg.maxP95 != tt.wantMaxP95 {
+				t.Errorf("maxP95 = %v, want %v", cfg.maxP95, tt.wantMaxP95)
+			}
+			if cfg.maxErrors != tt.wantMaxErrors {
+				t.Errorf("maxErrors = %v, want %v", cfg.maxErrors, tt.wantMaxErrors)
+			}
+		})
+	}
+}
+
+func TestWriteResultsIncludesThresholdsWhenConfigured(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "results.json")
+	cfg := &runConfig{
+		out:         out,
+		runID:       "fmtest",
+		strategy:    "branch",
+		duration:    30 * time.Second,
+		warmup:      5 * time.Second,
+		repos:       []string{"org/repo"},
+		minPushRate: 5,
+		maxP95:      2 * time.Second,
+		maxErrors:   0,
+	}
+	results := []levelResult{{
+		Concurrency: 4,
+		OpsPerSec:   3.1,
+		P95ms:       2200,
+		OtherErrors: 2,
+	}}
+
+	if err := writeResults(cfg, &endpoint{label: "test"}, results); err != nil {
+		t.Fatalf("writeResults() error = %v", err)
+	}
+	b, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatalf("ReadFile(%q) error = %v", out, err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(b, &doc); err != nil {
+		t.Fatalf("Unmarshal results error = %v", err)
+	}
+	ok, exists := doc["thresholds_ok"].(bool)
+	if !exists || ok {
+		t.Fatalf("thresholds_ok = %v (exists %v), want false", doc["thresholds_ok"], exists)
+	}
+	thresholds, exists := doc["thresholds"].(map[string]any)
+	if !exists {
+		t.Fatalf("thresholds missing from result: %v", doc)
+	}
+	if got := thresholds["min_push_rate"]; got != float64(5) {
+		t.Errorf("min_push_rate = %v, want 5", got)
+	}
+	if got := thresholds["max_p95"]; got != "2s" {
+		t.Errorf("max_p95 = %v, want 2s", got)
+	}
+	if got := thresholds["max_errors"]; got != float64(0) {
+		t.Errorf("max_errors = %v, want 0", got)
+	}
+	breaches, exists := thresholds["breaches"].([]any)
+	if !exists || len(breaches) != 3 {
+		t.Fatalf("breaches = %v (exists %v), want 3 entries", thresholds["breaches"], exists)
+	}
+	if breaches[0] != "c=4 push/s=3.1 < min 5.0" {
+		t.Errorf("first breach = %v, want push-rate breach", breaches[0])
+	}
+}
+
+func TestWriteResultsOmitsThresholdsWhenUnset(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "results.json")
+	cfg := &runConfig{
+		out:       out,
+		runID:     "fmtest",
+		strategy:  "branch",
+		repos:     []string{"org/repo"},
+		maxErrors: -1,
+	}
+
+	if err := writeResults(cfg, &endpoint{label: "test"}, []levelResult{{Concurrency: 1}}); err != nil {
+		t.Fatalf("writeResults() error = %v", err)
+	}
+	b, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatalf("ReadFile(%q) error = %v", out, err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(b, &doc); err != nil {
+		t.Fatalf("Unmarshal results error = %v", err)
+	}
+	if _, exists := doc["thresholds"]; exists {
+		t.Fatalf("thresholds present when unset: %v", doc["thresholds"])
+	}
+	if _, exists := doc["thresholds_ok"]; exists {
+		t.Fatalf("thresholds_ok present when unset: %v", doc["thresholds_ok"])
+	}
+}
+
+func parseFlagsForTest(t *testing.T, args ...string) (*runConfig, error) {
+	t.Helper()
+	oldArgs := os.Args
+	oldCommandLine := flag.CommandLine
+	t.Cleanup(func() {
+		os.Args = oldArgs
+		flag.CommandLine = oldCommandLine
+	})
+
+	fs := flag.NewFlagSet("forgemark", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	flag.CommandLine = fs
+	os.Args = append([]string{"forgemark"}, args...)
+	return parseFlags()
 }

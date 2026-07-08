@@ -48,10 +48,15 @@ import (
 
 func main() {
 	if err := run(); err != nil {
+		if errors.Is(err, errThresholdBreached) {
+			os.Exit(2)
+		}
 		fmt.Fprintln(os.Stderr, "forgemark: "+err.Error())
 		os.Exit(1)
 	}
 }
+
+var errThresholdBreached = errors.New("threshold breached")
 
 type runConfig struct {
 	remote       string
@@ -68,6 +73,10 @@ type runConfig struct {
 	insecure     bool
 	out          string
 	runID        string
+
+	minPushRate float64
+	maxP95      time.Duration
+	maxErrors   int
 
 	// session strategy
 	sessionCommits int
@@ -116,7 +125,17 @@ func run() error {
 		printRow(res)
 	}
 
-	return writeResults(cfg, ep, results)
+	if err := writeResults(cfg, ep, results); err != nil {
+		return err
+	}
+	breaches := checkThresholds(results, cfg)
+	for _, breach := range breaches {
+		fmt.Fprintln(os.Stderr, "forgemark: threshold breached: "+breach)
+	}
+	if len(breaches) > 0 {
+		return errThresholdBreached
+	}
+	return nil
 }
 
 // setupTarget builds the credential provider and resolved endpoint, inferring
@@ -307,7 +326,7 @@ func (c *runConfig) commitDesc() string {
 }
 
 func parseFlags() (*runConfig, error) {
-	cfg := &runConfig{}
+	cfg := &runConfig{maxErrors: -1}
 	var reposCSV, pattern, concCSV string
 	var repoCount int
 
@@ -328,6 +347,9 @@ func parseFlags() (*runConfig, error) {
 	flag.StringVar(&cfg.objectFmt, "object-format", "auto", "auto | sha1 | sha256 (auto probes the entiredb advertisement; generic/github default sha1)")
 	flag.BoolVar(&cfg.insecure, "insecure", false, "skip TLS verification (dev/self-signed hosts)")
 	flag.StringVar(&cfg.out, "out", "", "write JSON results here (default: results/forgemark-<id>.json)")
+	flag.Float64Var(&cfg.minPushRate, "min-push-rate", 0, "minimum successful pushes/sec per concurrency level (disabled when unset)")
+	flag.DurationVar(&cfg.maxP95, "max-p95", 0, "maximum p95 push latency per concurrency level (disabled when unset)")
+	flag.IntVar(&cfg.maxErrors, "max-errors", -1, "maximum non-CAS errors per concurrency level (disabled when unset)")
 	flag.IntVar(&cfg.sessionCommits, "session-commits", 5, "session strategy: commit+push checkpoints per cloned session")
 	flag.IntVar(&cfg.cloneDepth, "clone-depth", 1, "session strategy: shallow clone depth (1=tip; 0=full history)")
 	flag.StringVar(&cfg.baseRef, "base-ref", "", "session strategy: branch to clone — bare name (main) or full ref (refs/heads/main); default: remote default branch")
@@ -370,6 +392,15 @@ func parseFlags() (*runConfig, error) {
 	}
 	if cfg.commit.fileSize < 1 {
 		return nil, errors.New("-file-size must be >= 1 (empty blobs reproduce → ErrEmptyCommit)")
+	}
+	if cfg.minPushRate < 0 {
+		return nil, errors.New("-min-push-rate must be >= 0")
+	}
+	if cfg.maxP95 < 0 {
+		return nil, errors.New("-max-p95 must be >= 0")
+	}
+	if cfg.maxErrors < -1 {
+		return nil, errors.New("-max-errors must be >= 0 when set")
 	}
 	cfg.runID = "fm" + strconv.FormatInt(time.Now().Unix(), 36)
 	// Validate the assembled ref, not the prefix alone: validity is context-dependent
@@ -446,6 +477,26 @@ func writeResults(cfg *runConfig, ep *endpoint, results []levelResult) error {
 		"commit":     cfg.commitDesc(),
 		"levels":     results,
 	}
+	if thresholdsConfigured(cfg) {
+		breaches := checkThresholds(results, cfg)
+		if breaches == nil {
+			breaches = []string{}
+		}
+		doc["thresholds_ok"] = len(breaches) == 0
+		thresholds := map[string]any{
+			"breaches": breaches,
+		}
+		if cfg.minPushRate > 0 {
+			thresholds["min_push_rate"] = cfg.minPushRate
+		}
+		if cfg.maxP95 > 0 {
+			thresholds["max_p95"] = cfg.maxP95.String()
+		}
+		if cfg.maxErrors >= 0 {
+			thresholds["max_errors"] = cfg.maxErrors
+		}
+		doc["thresholds"] = thresholds
+	}
 	b, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal results: %w", err)
@@ -455,6 +506,10 @@ func writeResults(cfg *runConfig, ep *endpoint, results []levelResult) error {
 	}
 	fmt.Printf("\nwrote %s\n", out)
 	return nil
+}
+
+func thresholdsConfigured(cfg *runConfig) bool {
+	return cfg.minPushRate > 0 || cfg.maxP95 > 0 || cfg.maxErrors >= 0
 }
 
 func maxInt(xs []int) int {
