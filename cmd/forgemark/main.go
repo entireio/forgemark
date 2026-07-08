@@ -291,6 +291,7 @@ func runLevel(ctx context.Context, cfg *runConfig, creds credentialProvider, ep 
 
 func newHTTPClient(insecure bool, maxConns int) *http.Client {
 	tr := &http.Transport{
+		Proxy:               http.ProxyFromEnvironment,
 		MaxIdleConns:        maxConns * 2,
 		MaxIdleConnsPerHost: maxConns,
 		MaxConnsPerHost:     0, // unbounded: don't queue pushes behind a conn cap
