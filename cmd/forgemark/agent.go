@@ -24,7 +24,7 @@ import (
 // interferes.
 type noopSigner struct{}
 
-func (noopSigner) Sign(io.Reader) ([]byte, error) { return nil, nil }
+func (noopSigner) Sign(context.Context, io.Reader) ([]byte, error) { return nil, nil }
 
 // agent is one synthetic writer. It keeps an in-memory git repo and pushes a
 // stream of small commits to its assigned ref on its assigned repo+node. Each
