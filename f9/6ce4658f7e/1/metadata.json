@@ -1,0 +1,93 @@
+{
+  "cli_version": "0.8.42",
+  "checkpoint_id": "f96ce4658f7e",
+  "session_id": "dc4a5c36-7a71-40b7-bafb-7e1063e8c607",
+  "strategy": "manual-commit",
+  "created_at": "2026-07-23T16:58:58.32329Z",
+  "branch": "feat/web-gui-race",
+  "checkpoints_count": 4,
+  "save_step_count": 1,
+  "files_touched": [
+    "cmd/forgemark/serve.go",
+    "internal/server/collector.go",
+    "internal/server/collector_test.go",
+    "internal/server/demo.go",
+    "internal/server/events.go",
+    "internal/server/runmgr.go",
+    "internal/server/server.go",
+    "internal/server/server_test.go",
+    "internal/server/static/css/style.css",
+    "internal/server/static/index.html",
+    "internal/server/static/js/api.js",
+    "internal/server/static/js/app.js",
+    "internal/server/static/js/charts.js",
+    "internal/server/static/js/dom.js",
+    "internal/server/static/js/sse.js",
+    "internal/server/static/js/views/dashboard.js",
+    "internal/server/static/js/views/history.js",
+    "internal/server/static/js/views/newrun.js",
+    "internal/server/static/js/views/runs.js",
+    "internal/server/static/vendor/uPlot.iife.min.js",
+    "internal/server/static/vendor/uPlot.min.css"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-fable-5",
+  "turn_id": "e5ac9d0f06bd",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 15194,
+    "cache_creation_tokens": 290436,
+    "cache_read_tokens": 20143311,
+    "output_tokens": 147385,
+    "api_call_count": 119
+  },
+  "skill_events_version": 1,
+  "skill_events": [
+    {
+      "id": "claude-skill-toolu_016thL4U1yMmp7jcmDFdDAo3",
+      "event_type": "tool_invocation",
+      "skill": {
+        "name": "dataviz"
+      },
+      "source": {
+        "agent": "claude-code",
+        "signal": "skill_tool_use",
+        "confidence": "explicit"
+      },
+      "turn_id": "e5ac9d0f06bd",
+      "transcript_anchor": {
+        "unit": "line",
+        "start": 446,
+        "end": 447,
+        "entry_ids": [
+          "c72507b8-bc72-455f-99a1-021cbf7018cc"
+        ],
+        "tool_use_id": "toolu_016thL4U1yMmp7jcmDFdDAo3"
+      },
+      "native": {
+        "tool_name": "Skill",
+        "tool_use_id": "toolu_016thL4U1yMmp7jcmDFdDAo3"
+      },
+      "collapse": {
+        "target": "tool_pair",
+        "label": "Skill: dataviz",
+        "default_collapsed": true
+      }
+    }
+  ],
+  "session_metrics": {
+    "turn_count": 4
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-07-23T16:58:58.16807Z",
+    "agent_lines": 3063,
+    "agent_removed": 0,
+    "human_added": 693,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 3756,
+    "total_lines_changed": 3756,
+    "agent_percentage": 81.54952076677317,
+    "metric_version": 2
+  }
+}
