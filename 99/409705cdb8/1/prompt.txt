@@ -1,0 +1,394 @@
+Ensure that you get my git identity right. via GH CLI :)
+
+---
+
+use the noreply form please :)
+
+---
+
+Okay, now for forgemark, I want to be able to create a locally installable server that peole can then use as a GUI to test the same. This should be a lightweight server, but have good graphics, live visualizations and offer the ability to also benchemark multiple forges at the same time. can we come up with a plan?
+
+---
+
+<task-notification>
+<task-id>a8fccdec3ef81ef84</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-krk-Desktop-GitStore-forgemark/dc4a5c36-7a71-40b7-bafb-7e1063e8c607/tasks/a8fccdec3ef81ef84.output</output-file>
+<status>completed</status>
+<summary>Agent "Design forgemark web UI plan" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>I've read all the source files (main.go, agent.go, session.go, stats.go, endpoint.go, creds.go, the four test files, go.mod). Here is the implementation plan.
+
+# Implementation Plan: `forgemark serve` — local web GUI
+
+## Phase 1 — Refactor: extract engine into `internal/bench` (A)
+
+Goal: CLI behavior byte-identical; all benchmark logic importable by the server.
+
+### New package layout
+
+```
+internal/bench/
+  config.go     Target, Workload, CommitConfig, DestRef, validation
+  runner.go     Runner (setupTarget + runLevel, moved from main.go), Sink
+  agent.go      moved from cmd/forgemark/agent.go
+  session.go    moved from cmd/forgemark/session.go
+  stats.go      moved from cmd/forgemark/stats.go
+  endpoint.go   moved from cmd/forgemark/endpoint.go
+  creds.go      moved from cmd/forgemark/creds.go
+internal/results/
+  results.go    result-doc schema, Write/List/Load (Phase 5)
+cmd/forgemark/
+  main.go       flags, printRow, readSecret, serve dispatch — nothing else
+  serve.go      thin: parse -addr/-results, call server.New(...).ListenAndServe
+internal/server/ (Phase 3)
+```
+
+### Config split (replaces `runConfig`)
+
+`runConfig` splits along the multi-target seam — per-target connection vs shared workload:
+
+```go
+// internal/bench/config.go
+type Target struct {
+    Name      string   // display label; default: remote host
+    Remote    string
+    Repos     []string
+    User      string
+    Secret    string   // never serialized; CLI fills from readSecret, server from POST body
+    Insecure  bool
+    ObjectFmt string   // "auto"|"sha1"|"sha256"
+    TokenURL, Jurisdiction, ClientID string // entiredb selector, as today
+}
+
+type Workload struct {
+    RunID        string
+    Strategy     string // branch|repo|clone|session
+    BranchPrefix string
+    Concurrency  []int
+    Duration, Warmup time.Duration
+    Commit       CommitConfig            // FilesMin, FilesMax, FileSize (exported fields)
+    SessionCommits, CloneDepth int
+    BaseRef      string
+}
+
+func (w Workload) Validate() error            // strategy/commit/concurrency checks moved from parseFlags
+func (w Workload) CommitDesc() string         // was commitDesc()
+func DestRef(prefix, runID string, c, i int) string
+func IsGitHubDotCom(remote string) bool       // moved; CLI + server both surface the warning
+```
+
+### Runner (the engine facade)
+
+`setupTarget`/`setupGeneric`/`setupEntiredb`, `newHTTPClient`, and `runLevel` move into:
+
+```go
+// internal/bench/runner.go
+func NewRunner(ctx context.Context, t Target, w Workload, sink Sink) (*Runner, error)
+// builds creds + endpoint (entiredb probe happens here), sizes its own
+// *http.Client from maxInt(w.Concurrency)+8 and t.Insecure. sink may be nil.
+
+func (r *Runner) RunLevel(ctx context.Context, concurrency int) (LevelResult, error)
+func (r *Runner) Label() string        // ep.label, for banner/results
+func (r *Runner) Nodes() int
+func (r *Runner) ObjectFormat() string
+```
+
+`endpoint`, `credentialProvider`, `agent`, `staticCreds`, `jurisdictionCreds` stay **unexported** inside `bench` — nothing outside needs them. Exported from stats.go: `Sample`, `Outcome` (`OutcomeOK/OutcomeCAS/OutcomeErr`), `OpKind` (`OpPush/OpClone`), `LevelResult` (fields already exported), `ErrGroup`; `summarize`/`percentile`/`errGroups` stay lowercase.
+
+Note: `NewRunner` no longer reads secrets or prints warnings — `readSecret` and the github.com stderr warning stay in `cmd/forgemark`; the sha1-on-github and entiredb missing-flag checks move into `NewRunner` (they're target validation) returning errors the CLI reports as today.
+
+### CLI after refactor
+
+`main.go` keeps: `parseFlags` (unchanged flag set, builds `bench.Target` + `bench.Workload`), `readSecret`, `expandRepos`, `splitCSV`→(dup a tiny local copy or export `bench.SplitCSV`), `printRow`, `writeResults` (delegates to `internal/results` in Phase 5), `maxInt`. `run()` becomes:
+
+```go
+r, err := bench.NewRunner(ctx, target, workload, nil)
+... banner using r.Label()/r.Nodes()/r.ObjectFormat() ...
+for _, c := range workload.Concurrency { res, err := r.RunLevel(ctx, c); printRow(res); ... }
+```
+
+Subcommand dispatch at top of `main()` — backward compatible because today `forgemark` takes no positional args:
+
+```go
+if len(os.Args) &gt; 1 &amp;&amp; os.Args[1] == "serve" { runServe(os.Args[2:]); return }
+```
+
+### Test moves
+- `stats_test.go`, `creds_test.go`, `endpoint_test.go` → `internal/bench/` (package `bench`; mechanical identifier renames: `tokenEntry` etc. unchanged, `percentile` unchanged — same package).
+- `main_test.go`: `TestExpandRepos` and flag/secret tests stay in `cmd/forgemark`; `destRef` validation test moves to `internal/bench/config_test.go` alongside `DestRef`.
+
+**Review gate:** `go test ./...` green; run CLI against a dev forge (or eyeball `go run ./cmd/forgemark -h`) and confirm identical output/flags.
+
+## Phase 2 — Engine instrumentation: the Sink (B)
+
+Design principle: the engine stays per-target and per-level; **level lifecycle is not an engine event** — the caller (CLI loop or server coordinator) calls `RunLevel` itself, so it already knows level start/end and gets `LevelResult` as the return value. The only hook the engine needs is the per-sample hot path:
+
+```go
+// Sink observes every recorded sample, including warmup samples, live.
+// OnSample is called concurrently from up to `concurrency` agent goroutines
+// and must be cheap and non-blocking.
+type Sink interface {
+    OnSample(s Sample)
+}
+```
+
+Implementation: `agent` gains a `sink Sink` field; every `a.samples = append(a.samples, s)` site (5 in agent.go, 4 in session.go) is replaced by one method:
+
+```go
+func (a *agent) record(s sample) {
+    a.samples = append(a.samples, s)
+    if a.sink != nil { a.sink.OnSample(exportSample(s)) }
+}
+```
+
+`a.samples` remains the authoritative post-hoc source for `summarize` — **CLI behavior is untouched** (nil sink, one nil-check per op, zero allocations).
+
+**Mechanism recommendation: direct callback into a mutex-protected aggregator, not a channel.** Justification: sample rates are modest (≤ a few hundred ops/sec per target — each sample is a full git push round-trip), while a `sync.Mutex` sustains millions of lock/unlock per second even contended. The server-side sink does ~10 integer increments and one `append` to a bucket slice under the lock (&lt;1µs). A buffered channel would need a drainer goroutine, a drop policy, and shutdown ordering, and would still allocate for batching — complexity with no payoff at this volume. No per-agent batching needed either.
+
+`Sample` (exported): `Offset time.Duration; Dur time.Duration; Res Outcome; Op OpKind; Msg string`. Offset is relative to level start; the collector timestamps buckets itself, so no wall-clock field needed.
+
+**Review gate:** unit test — run a fake sink through a `record`-exercising path; existing bench tests still green.
+
+## Phase 3 — Server: run manager, coordination, API, aggregation
+
+New package `internal/server` (stdlib only: `net/http`, `embed`, `encoding/json`).
+
+### 3a. Multi-target coordination (C)
+
+Because `RunLevel` is a synchronous fixed-duration call (`warmup+duration` timeout inside), **the level barrier is just a WaitGroup per level** — start each level simultaneously across targets, wait for all, then advance:
+
+```go
+// runmgr.go — coordinator goroutine per run
+for li, c := range w.Concurrency {
+    run.emit(levelStartEvent{li, c, w.Warmup, w.Duration})
+    var wg sync.WaitGroup
+    for _, t := range run.liveTargets() {
+        wg.Add(1)
+        go func(t *targetState) {
+            defer wg.Done()
+            t.collector.startLevel(li, time.Now())
+            res, err := t.runner.RunLevel(run.ctx, c)
+            if err != nil { t.dead = true; run.emit(targetErrorEvent{t.ID, li, err.Error(), true}); return }
+            t.results = append(t.results, res)
+        }(t)
+    }
+    wg.Wait()
+    run.emit(levelResultEvent{...per-target results...})
+    if run.ctx.Err() != nil || run.allDead() { break }
+}
+run.finish() // persist + run_done event
+```
+
+Alignment is exact at level start; level end skew is bounded by in-flight push completion (pushes are `PushContext`-bound, cancel promptly at the level deadline).
+
+**Hard-error policy (recommendation): continue the others.** A target failing `NewRunner` (bad URL/auth/probe) or `RunLevel` (agent construction) is marked dead, emits a fatal `target_error` event, and is skipped in later levels; the run keeps its remaining targets — a comparison run where one forge is misconfigured still yields the other curves. The run fails as a whole only when *all* targets are dead. `NewRunner` for all targets executes concurrently in the run goroutine (the entiredb probe is a network call), so `POST /api/runs` returns immediately after validation; setup failures arrive as events.
+
+The coordinator uses a `levelRunner` interface so the demo target (Phase 6) plugs in:
+
+```go
+type levelRunner interface {
+    Label() string
+    RunLevel(ctx context.Context, concurrency int) (bench.LevelResult, error)
+}
+```
+
+One `RunManager` holds `map[string]*Run` under a mutex; a single active run at a time is enforced (409 on concurrent POST) — this is a load generator, overlapping runs corrupt each other's numbers. Finished runs stay in memory for the session (bounded, e.g. last 20) and on disk forever.
+
+### 3b. Live aggregation (E)
+
+Per target, per run — `collector.go`:
+
+```go
+type collector struct {
+    mu        sync.Mutex
+    levelIdx  int
+    levelT0   time.Time
+    cur       bucket            // counters + latencies landing in the current second
+    window    [10]bucketLats    // ring of last-10s OK latencies for rolling percentiles
+}
+func (c *collector) OnSample(s bench.Sample)      // implements bench.Sink: increments + append, under mu
+func (c *collector) snapshot(now time.Time) BucketStats // called by the 1s ticker
+```
+
+**Recommended approach: exact per-tick sort over a 10-second rolling window.** A ticker goroutine per run fires every second; for each target it locks, swaps out the current bucket, pushes its latencies into the ring, concatenates the ring (≤ 10s × few hundred ops = a few thousand float64s), sorts, and takes p50/p95/p99 with the existing `percentile()`. Sorting 3k floats is ~100µs once per second — nothing. No t-digest, no heap tricks; exact and ~40 lines. Throughput = OK count in the 1s bucket (per-second, not windowed, so spikes are visible). Buckets during warmup are emitted too (UI shades the warmup region using `level_start.warmup_sec`).
+
+### 3c. HTTP API (D)
+
+```
+POST /api/runs               start a run
+GET  /api/runs               list active + recent (redacted)
+GET  /api/runs/{id}          full status incl. per-target level results so far
+POST /api/runs/{id}/cancel   cancel run ctx
+GET  /api/runs/{id}/events   SSE stream
+GET  /api/history            list results/*.json summaries
+GET  /api/history/{file}     one parsed result doc (filename validated: no separators, must match forgemark-*.json)
+GET  /                       embedded UI
+```
+
+`POST /api/runs` request body:
+
+```json
+{
+  "confirm_authorized": true,
+  "workload": {
+    "strategy": "branch", "concurrency": [1, 8, 32],
+    "duration_sec": 60, "warmup_sec": 10,
+    "files_min": 1, "files_max": 10, "file_size": 2048,
+    "branch_prefix": "", "session_commits": 5, "clone_depth": 1, "base_ref": ""
+  },
+  "targets": [
+    { "name": "gitlab", "remote": "https://gitlab.example", "repos": ["you/bench.git"],
+      "user": "", "secret": "glpat-...", "insecure": false, "object_format": "auto",
+      "token_url": "", "jurisdiction": "", "client_id": "" }
+  ]
+}
+```
+
+Response `201 {"id":"fm...", "warnings":["concurrency 32 against github.com is likely to trip abuse detection ..."]}`. `400` if `confirm_authorized` != true or validation fails; `409` if a run is active.
+
+**Credential handling (req. 6):** the wire DTO has a `Secret string` field used *only* to construct `bench.Target`; the stored `RunSpec` drops it immediately (the DTO type used for all GET responses simply has no secret field, so redaction is structural, not a filter). Secrets live only inside the runner's `credentialProvider` for the run's lifetime. `POST` handlers verify `Origin`/`Host` are localhost when an Origin header is present — cheap DNS-rebinding/CSRF guard since the UI pastes credentials.
+
+### 3d. SSE event schema (D)
+
+Standard SSE frames: `id: &lt;seq&gt;\nevent: &lt;type&gt;\ndata: &lt;json&gt;\n\n`, heartbeat comment every 15s. Every event appended to `run.events []event` (seq-numbered); a subscriber first receives a replay from `Last-Event-ID+1` (or 0), then live events — this makes browser reconnect and late-join free, since `EventSource` resends `Last-Event-ID` natively. Buffer is small: ~1 bucket event/sec + a handful of lifecycle events (an hour-long run ≈ 3600 events ≈ a few MB; acceptable, cap at 100k defensively).
+
+```
+event: hello
+data: {"run_id":"fmxyz","state":"running","started_at":"2026-07-23T10:00:00Z",
+       "workload":{...as posted...},
+       "targets":[{"id":0,"name":"gitlab","label":"https://gitlab.example"},
+                  {"id":1,"name":"entire","label":"https://us.entire.example"}],
+       "levels":[1,8,32]}
+
+event: level_start
+data: {"level_index":0,"concurrency":1,"at":"...","warmup_sec":10,"duration_sec":60}
+
+event: bucket            // once per second while a level runs
+data: {"level_index":0,"t":1784000123,
+       "targets":{"0":{"ops":42,"ok":41,"cas":1,"err":0,
+                       "p50_ms":88.1,"p95_ms":140.2,"p99_ms":190.0,
+                       "clones":0,"clone_ok":0,"clone_err":0},
+                  "1":{...}}}
+       // percentiles = rolling 10s window; keys are target ids; a dead target is absent
+
+event: level_result
+data: {"level_index":0,"concurrency":1,
+       "targets":{"0":{&lt;bench.LevelResult JSON, existing tags&gt;},"1":{...}}}
+
+event: target_error
+data: {"target":1,"level_index":0,"message":"info/refs probe: HTTP 401: ...","fatal":true}
+
+event: run_done
+data: {"state":"done","results_file":"forgemark-fmxyz.json","at":"..."}
+       // state ∈ done|cancelled|failed (failed = all targets dead)
+```
+
+### Files (Phase 3)
+- `internal/server/server.go` — `func New(addr, resultsDir string) *Server`, mux wiring, `//go:embed static` FS, `ListenAndServe`.
+- `internal/server/runmgr.go` — RunManager, Run, targetState, coordinator + ticker goroutines, DTO types.
+- `internal/server/collector.go` — collector + BucketStats.
+- `internal/server/events.go` — event buffer, fanout (per-subscriber `chan []byte`, cap ~64, slow subscriber dropped and told to reconnect — replay makes that lossless), SSE handler.
+- `internal/server/demo.go` — demo runner (see Phase 6).
+- `cmd/forgemark/serve.go` — flag parsing (`-addr` default `127.0.0.1:8377`, `-results` default `results`), startup banner with URL.
+
+## Phase 4 — UI (F)
+
+All under `internal/server/static/`, embedded, zero build step, no CDN:
+
+```
+static/
+  index.html          single page, hash routing (#new | #run/&lt;id&gt; | #history)
+  css/style.css       dark dashboard theme (CSS variables, fixed 8-color target palette)
+  js/app.js           router, boot
+  js/api.js           fetch wrappers
+  js/sse.js           EventSource wrapper (native auto-reconnect + Last-Event-ID; on run_done, close)
+  js/charts.js        uPlot helpers: makeTimeChart(series-per-target), pushPoint(), aligned x-axis
+  js/views/newrun.js  form: workload fields + dynamic target rows (add/remove), secret &lt;input type=password&gt;,
+                      collapsible "entiredb" section per target, authorization checkbox (start disabled until checked),
+                      github.com client-side hint + server `warnings` banner
+  js/views/dashboard.js  live view: sweep progress (level i/N + per-level countdown), stat tiles per target
+                      (ops/s, p95, CAS, errors), throughput chart, latency chart (percentile
+                      selector p50/p95/p99, one line per target), errors+CAS chart, warmup shading
+                      (uPlot band/plugin), completed-levels results table (grouped per target),
+                      cancel button, target_error banners
+  js/views/history.js list of /api/history entries with checkboxes → overlay comparison:
+                      ops/s-vs-concurrency and p95-vs-concurrency per selected target; series
+                      replay into the time charts when the doc has `series`
+  vendor/uPlot.iife.min.js   (~45KB, vendored)
+  vendor/uPlot.min.css
+```
+
+Streaming wiring: each chart keeps parallel arrays `[ts, ...perTargetSeries]`; a `bucket` event appends one column and calls `u.setData(data)` (uPlot handles thousands of points at 1Hz trivially). Colors assigned by target index from the fixed palette, consistent across all charts and the legend/tiles.
+
+Reconnect: `EventSource` reconnects automatically; server replays from `Last-Event-ID`; dashboard rebuilds charts idempotently from replayed events (state derives purely from the event stream — this also makes "open dashboard mid-run" work with zero extra code).
+
+## Phase 5 — Results persistence + history (G)
+
+`internal/results/results.go`:
+
+```go
+type Doc struct { // format 2
+    Format   int            `json:"format"`             // 2; absent in old files
+    RunID    string         `json:"run_id"`
+    Strategy string         `json:"strategy"`
+    Duration string         `json:"duration"`
+    Warmup   string         `json:"warmup"`
+    Commit   string         `json:"commit"`
+    Targets  []TargetResult `json:"targets"`
+    // legacy single-target fields (target, repo_count, levels) written only by the CLI path
+}
+type TargetResult struct {
+    Name   string              `json:"name"`
+    Label  string              `json:"label"`
+    Error  string              `json:"error,omitempty"`  // fatal target error, if died
+    Levels []bench.LevelResult `json:"levels"`
+    Series []SeriesPoint       `json:"series,omitempty"` // the 1s buckets, for re-rendering
+}
+type SeriesPoint struct {
+    T int64 `json:"t"`; Level int `json:"level"`
+    OK, CAS, Err int `json:"ok","cas","err"`
+    P50, P95, P99 float64 `json:"p50_ms","p95_ms","p99_ms"`
+}
+func Write(path string, doc Doc) error
+func List(dir string) ([]Summary, error)   // Summary: file, run_id, targets, strategy, mtime, level count
+func Load(dir, file string) (Doc, error)   // old files (no "format") adapt to one pseudo-target
+                                           // {Name: doc.target, Levels: doc.levels}; Series nil
+```
+
+- **CLI keeps writing the exact old shape** (writeResults body moves here as a legacy writer, or stays in main.go untouched — recommend leaving CLI writer untouched for strict compat and having `Load` normalize).
+- Server writes format-2 docs to `&lt;resultsDir&gt;/forgemark-&lt;runID&gt;.json` at `run.finish()`; the collector retains all snapshots (~86KB/hour/target) so `Series` is cheap to include.
+- History view renders both formats identically because `Load` normalizes.
+
+## Phase 6 — Safety + verification (H, I)
+
+Safety (mostly already placed above): default bind `127.0.0.1:8377` (explicit `-addr 0.0.0.0:...` prints a loud warning); `confirm_authorized` required server-side; github.com warning computed server-side via `bench.IsGitHubDotCom` and returned in POST `warnings` + shown as a persistent banner on the dashboard; Origin check on mutating endpoints; secrets structurally unreachable from any GET.
+
+**Demo target: yes, include it** — it is the cheapest way to develop and demo the UI offline and to integration-test the whole collector→SSE→chart path. Recommendation: implement it at the `levelRunner` seam in `internal/server/demo.go` (~100 lines), *not* inside `bench` and *not* as a fake smart-HTTP forge (implementing receive-pack is disproportionate). A target whose `remote` is `demo://&lt;name&gt;?p50=80ms&amp;spread=3&amp;err=0.01&amp;cas=0.02&amp;ops=50` gets a `demoRunner` that spawns `concurrency` goroutines, sleeps log-normal-ish latencies, calls `sink.OnSample` with synthetic samples, and returns a real `bench.LevelResult` via the same `summarize` inputs shape (it can just fold its own samples with exported stats or compute directly). It exercises barriers, buckets, percentiles, SSE, persistence, and charts end-to-end: `forgemark serve` → paste two demo targets with different latency profiles → watch the overlay.
+
+Tests:
+- `internal/server/collector_test.go` — feed deterministic samples, assert bucket counters and rolling percentiles across ticks and level boundaries.
+- `internal/server/server_test.go` (httptest) — POST demo run (assert 400 without `confirm_authorized`, 201 with), consume SSE via a plain `http.Get` reader asserting `hello → level_start → bucket… → level_result → run_done` ordering and that no response body anywhere contains the posted secret string; cancel path; `Last-Event-ID` replay; history list/load incl. a hand-written old-format fixture.
+- `internal/results/results_test.go` — old/new format round-trip.
+- Existing `bench` tests unchanged post-move.
+- Manual: `go run ./cmd/forgemark -remote ... -concurrency 1 -duration 5s` before/after Phase 1 to confirm identical CLI output; `go install ./cmd/forgemark &amp;&amp; forgemark serve` from a clean dir to confirm embedding works.
+
+## Sequencing summary (each phase independently reviewable)
+
+1. **Refactor** — move code into `internal/bench`, Target/Workload/Runner API, move tests. No behavior change.
+2. **Sink** — `bench.Sink` + `agent.record()`; nil-sink for CLI.
+3. **Server core** — `serve` subcommand, RunManager + level barriers, collector, API + SSE, demo runner. Testable with curl before any UI exists.
+4. **UI** — embedded static app, uPlot vendored, three views.
+5. **Persistence/history** — format-2 docs with series, history API + view, old-file compat.
+6. **Hardening/tests** — Origin check, redaction test, collector/API/httptest coverage, README section.
+
+No new Go dependencies (stdlib `embed`/`net/http`); one vendored JS asset (uPlot).
+
+### Critical Files for Implementation
+- /Users/krk/Desktop/GitStore/forgemark/cmd/forgemark/main.go (source of runLevel/setupTarget/runConfig being split; keeps CLI + gains serve dispatch)
+- /Users/krk/Desktop/GitStore/forgemark/cmd/forgemark/agent.go (all sample-record sites gain the Sink hook; moves to internal/bench)
+- /Users/krk/Desktop/GitStore/forgemark/cmd/forgemark/stats.go (sample/levelResult/summarize become the exported engine vocabulary; moves to internal/bench)
+- /Users/krk/Desktop/GitStore/forgemark/cmd/forgemark/session.go (remaining record sites + clone-side samples; moves to internal/bench)
+- /Users/krk/Desktop/GitStore/forgemark/cmd/forgemark/endpoint.go (endpoint construction folded into bench.NewRunner; moves to internal/bench)</result>
+<usage><subagent_tokens>42927</subagent_tokens><tool_uses>8</tool_uses><duration_ms>264578</duration_ms></usage>
+</task-notification>
