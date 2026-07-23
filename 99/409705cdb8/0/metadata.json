@@ -1,0 +1,635 @@
+{
+  "cli_version": "0.8.42",
+  "checkpoint_id": "99409705cdb8",
+  "session_id": "c11b8d4c-8f8a-4fbd-967b-148d908d89e3",
+  "strategy": "manual-commit",
+  "created_at": "2026-07-23T16:57:52.832619Z",
+  "branch": "feat/web-gui-race",
+  "checkpoints_count": 31,
+  "save_step_count": 31,
+  "files_touched": [
+    "cmd/forgemark/agent.go",
+    "cmd/forgemark/creds.go",
+    "cmd/forgemark/creds_test.go",
+    "cmd/forgemark/endpoint.go",
+    "cmd/forgemark/endpoint_test.go",
+    "cmd/forgemark/main.go",
+    "cmd/forgemark/main_test.go",
+    "cmd/forgemark/session.go",
+    "cmd/forgemark/stats.go",
+    "cmd/forgemark/stats_test.go",
+    "internal/bench/agent.go",
+    "internal/bench/config.go",
+    "internal/bench/creds.go",
+    "internal/bench/creds_test.go",
+    "internal/bench/endpoint.go",
+    "internal/bench/endpoint_test.go",
+    "internal/bench/session.go",
+    "internal/bench/stats.go",
+    "internal/bench/stats_test.go",
+    "internal/results/results.go"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-fable-5",
+  "turn_id": "0a555e1626f8",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 31263,
+    "cache_creation_tokens": 1523100,
+    "cache_read_tokens": 94083919,
+    "output_tokens": 301408,
+    "api_call_count": 347
+  },
+  "skill_events_version": 1,
+  "skill_events": [
+    {
+      "id": "prompt-skill-claude-code-review-2026-07-23T11:33:41.790714Z",
+      "event_type": "prompt_invocation",
+      "skill": {
+        "name": "review"
+      },
+      "source": {
+        "agent": "claude-code",
+        "signal": "prompt_slash_command",
+        "confidence": "explicit"
+      },
+      "turn_id": "18f7b30b6425",
+      "timestamp": "2026-07-23T11:33:41.790714Z",
+      "native": {
+        "command": "/review"
+      },
+      "collapse": {
+        "target": "user_message",
+        "label": "/review",
+        "default_collapsed": true
+      }
+    },
+    {
+      "id": "prompt-skill-claude-code-code-review-2026-07-23T11:34:02.663244Z",
+      "event_type": "prompt_invocation",
+      "skill": {
+        "name": "code-review"
+      },
+      "source": {
+        "agent": "claude-code",
+        "signal": "prompt_slash_command",
+        "confidence": "explicit"
+      },
+      "turn_id": "e8c811c1afda",
+      "timestamp": "2026-07-23T11:34:02.663244Z",
+      "native": {
+        "command": "/code-review"
+      },
+      "collapse": {
+        "target": "user_message",
+        "label": "/code-review",
+        "default_collapsed": true
+      }
+    },
+    {
+      "id": "claude-skill-toolu_01UnaydqcMY4vYbCSwCMBUE5",
+      "event_type": "tool_invocation",
+      "skill": {
+        "name": "run"
+      },
+      "source": {
+        "agent": "claude-code",
+        "signal": "skill_tool_use",
+        "confidence": "explicit"
+      },
+      "turn_id": "0a555e1626f8",
+      "transcript_anchor": {
+        "unit": "line",
+        "start": 12,
+        "end": 13,
+        "entry_ids": [
+          "67f4af15-7d3f-45ca-b0b7-aec30e759b60"
+        ],
+        "tool_use_id": "toolu_01UnaydqcMY4vYbCSwCMBUE5"
+      },
+      "native": {
+        "tool_name": "Skill",
+        "tool_use_id": "toolu_01UnaydqcMY4vYbCSwCMBUE5"
+      },
+      "collapse": {
+        "target": "tool_pair",
+        "label": "Skill: run",
+        "default_collapsed": true
+      }
+    }
+  ],
+  "session_metrics": {
+    "turn_count": 31
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-07-23T16:57:52.376276Z",
+    "agent_lines": 0,
+    "agent_removed": 0,
+    "human_added": 0,
+    "human_modified": 61,
+    "human_removed": 1732,
+    "total_committed": 0,
+    "total_lines_changed": 1793,
+    "agent_percentage": 0,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 4855,
+      "user_lines_removed": 1720,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        "README.md": 29,
+        "cmd/forgemark/main.go": 89,
+        "cmd/forgemark/main_test.go": 7,
+        "cmd/forgemark/serve.go": 43,
+        "internal/bench/agent.go": 267,
+        "internal/bench/config.go": 129,
+        "internal/bench/config_test.go": 39,
+        "internal/bench/creds.go": 209,
+        "internal/bench/creds_test.go": 73,
+        "internal/bench/endpoint.go": 112,
+        "internal/bench/endpoint_test.go": 24,
+        "internal/bench/runner.go": 197,
+        "internal/bench/runner_test.go": 33,
+        "internal/bench/session.go": 228,
+        "internal/bench/stats.go": 251,
+        "internal/bench/stats_test.go": 249,
+        "internal/results/results.go": 165,
+        "internal/results/results_test.go": 85,
+        "internal/server/collector.go": 130,
+        "internal/server/collector_test.go": 61,
+        "internal/server/demo.go": 132,
+        "internal/server/events.go": 158,
+        "internal/server/runmgr.go": 581,
+        "internal/server/server.go": 182,
+        "internal/server/server_test.go": 264,
+        "internal/server/static/css/style.css": 250,
+        "internal/server/static/index.html": 24,
+        "internal/server/static/js/api.js": 26,
+        "internal/server/static/js/app.js": 32,
+        "internal/server/static/js/charts.js": 141,
+        "internal/server/static/js/dom.js": 33,
+        "internal/server/static/js/sse.js": 12,
+        "internal/server/static/js/views/dashboard.js": 274,
+        "internal/server/static/js/views/history.js": 122,
+        "internal/server/static/js/views/newrun.js": 173,
+        "internal/server/static/js/views/runs.js": 28,
+        "internal/server/static/vendor/uPlot.iife.min.js": 2,
+        "internal/server/static/vendor/uPlot.min.css": 1
+      },
+      "user_removed_per_file": {
+        "cmd/forgemark/agent.go": 256,
+        "cmd/forgemark/creds.go": 209,
+        "cmd/forgemark/creds_test.go": 73,
+        "cmd/forgemark/endpoint.go": 112,
+        "cmd/forgemark/endpoint_test.go": 24,
+        "cmd/forgemark/main.go": 284,
+        "cmd/forgemark/main_test.go": 69,
+        "cmd/forgemark/session.go": 228,
+        "cmd/forgemark/stats.go": 216,
+        "cmd/forgemark/stats_test.go": 249
+      }
+    },
+    {
+      "checkpoint_number": 2,
+      "user_lines_added": 1,
+      "user_lines_removed": 0,
+      "agent_lines_added": 4855,
+      "agent_lines_removed": 1720,
+      "user_added_per_file": {
+        ".claude/scheduled_tasks.lock": 1
+      }
+    },
+    {
+      "checkpoint_number": 3,
+      "user_lines_added": 1,
+      "user_lines_removed": 0,
+      "agent_lines_added": 4855,
+      "agent_lines_removed": 1720,
+      "user_added_per_file": {
+        ".claude/scheduled_tasks.lock": 1
+      }
+    },
+    {
+      "checkpoint_number": 4,
+      "user_lines_added": 1,
+      "user_lines_removed": 0,
+      "agent_lines_added": 4855,
+      "agent_lines_removed": 1720,
+      "user_added_per_file": {
+        ".claude/scheduled_tasks.lock": 1
+      }
+    },
+    {
+      "checkpoint_number": 5,
+      "user_lines_added": 9,
+      "user_lines_removed": 0,
+      "agent_lines_added": 4996,
+      "agent_lines_removed": 1720,
+      "user_added_per_file": {
+        ".claude/scheduled_tasks.lock": 1,
+        ".claude/settings.local.json": 8
+      }
+    },
+    {
+      "checkpoint_number": 6,
+      "user_lines_added": 9,
+      "user_lines_removed": 0,
+      "agent_lines_added": 5072,
+      "agent_lines_removed": 1720,
+      "user_added_per_file": {
+        ".claude/scheduled_tasks.lock": 1,
+        ".claude/settings.local.json": 8
+      }
+    },
+    {
+      "checkpoint_number": 7,
+      "user_lines_added": 65,
+      "user_lines_removed": 0,
+      "agent_lines_added": 5285,
+      "agent_lines_removed": 1720,
+      "user_added_per_file": {
+        ".claude/scheduled_tasks.lock": 1,
+        ".claude/settings.local.json": 8,
+        "internal/server/static/css/style.css": 56
+      }
+    },
+    {
+      "checkpoint_number": 8,
+      "user_lines_added": 68,
+      "user_lines_removed": 0,
+      "agent_lines_added": 5312,
+      "agent_lines_removed": 1720,
+      "user_added_per_file": {
+        ".claude/scheduled_tasks.lock": 1,
+        ".claude/settings.local.json": 11,
+        "internal/server/static/css/style.css": 56
+      }
+    },
+    {
+      "checkpoint_number": 9,
+      "user_lines_added": 68,
+      "user_lines_removed": 0,
+      "agent_lines_added": 5319,
+      "agent_lines_removed": 1720,
+      "user_added_per_file": {
+        ".claude/scheduled_tasks.lock": 1,
+        ".claude/settings.local.json": 11,
+        "internal/server/static/css/style.css": 56
+      }
+    },
+    {
+      "checkpoint_number": 10,
+      "user_lines_added": 68,
+      "user_lines_removed": 0,
+      "agent_lines_added": 5319,
+      "agent_lines_removed": 1720,
+      "user_added_per_file": {
+        ".claude/scheduled_tasks.lock": 1,
+        ".claude/settings.local.json": 11,
+        "internal/server/static/css/style.css": 56
+      }
+    },
+    {
+      "checkpoint_number": 11,
+      "user_lines_added": 73,
+      "user_lines_removed": 0,
+      "agent_lines_added": 5590,
+      "agent_lines_removed": 1720,
+      "user_added_per_file": {
+        ".claude/scheduled_tasks.lock": 1,
+        ".claude/settings.local.json": 11,
+        "internal/server/static/css/style.css": 61
+      }
+    },
+    {
+      "checkpoint_number": 12,
+      "user_lines_added": 83,
+      "user_lines_removed": 0,
+      "agent_lines_added": 5731,
+      "agent_lines_removed": 1720,
+      "user_added_per_file": {
+        ".claude/scheduled_tasks.lock": 1,
+        ".claude/settings.local.json": 11,
+        "internal/server/static/css/style.css": 71
+      }
+    },
+    {
+      "checkpoint_number": 13,
+      "user_lines_added": 83,
+      "user_lines_removed": 0,
+      "agent_lines_added": 5731,
+      "agent_lines_removed": 1720,
+      "user_added_per_file": {
+        ".claude/scheduled_tasks.lock": 1,
+        ".claude/settings.local.json": 11,
+        "internal/server/static/css/style.css": 71
+      }
+    },
+    {
+      "checkpoint_number": 14,
+      "user_lines_added": 83,
+      "user_lines_removed": 0,
+      "agent_lines_added": 5731,
+      "agent_lines_removed": 1720,
+      "user_added_per_file": {
+        ".claude/scheduled_tasks.lock": 1,
+        ".claude/settings.local.json": 11,
+        "internal/server/static/css/style.css": 71
+      }
+    },
+    {
+      "checkpoint_number": 15,
+      "user_lines_added": 83,
+      "user_lines_removed": 0,
+      "agent_lines_added": 5731,
+      "agent_lines_removed": 1720,
+      "user_added_per_file": {
+        ".claude/scheduled_tasks.lock": 1,
+        ".claude/settings.local.json": 11,
+        "internal/server/static/css/style.css": 71
+      }
+    },
+    {
+      "checkpoint_number": 16,
+      "user_lines_added": 83,
+      "user_lines_removed": 0,
+      "agent_lines_added": 5731,
+      "agent_lines_removed": 1720,
+      "user_added_per_file": {
+        ".claude/scheduled_tasks.lock": 1,
+        ".claude/settings.local.json": 11,
+        "internal/server/static/css/style.css": 71
+      }
+    },
+    {
+      "checkpoint_number": 17,
+      "user_lines_added": 83,
+      "user_lines_removed": 0,
+      "agent_lines_added": 5731,
+      "agent_lines_removed": 1720,
+      "user_added_per_file": {
+        ".claude/scheduled_tasks.lock": 1,
+        ".claude/settings.local.json": 11,
+        "internal/server/static/css/style.css": 71
+      }
+    },
+    {
+      "checkpoint_number": 18,
+      "user_lines_added": 83,
+      "user_lines_removed": 0,
+      "agent_lines_added": 5731,
+      "agent_lines_removed": 1720,
+      "user_added_per_file": {
+        ".claude/scheduled_tasks.lock": 1,
+        ".claude/settings.local.json": 11,
+        "internal/server/static/css/style.css": 71
+      }
+    },
+    {
+      "checkpoint_number": 19,
+      "user_lines_added": 83,
+      "user_lines_removed": 0,
+      "agent_lines_added": 5731,
+      "agent_lines_removed": 1720,
+      "user_added_per_file": {
+        ".claude/scheduled_tasks.lock": 1,
+        ".claude/settings.local.json": 11,
+        "internal/server/static/css/style.css": 71
+      }
+    },
+    {
+      "checkpoint_number": 20,
+      "user_lines_added": 83,
+      "user_lines_removed": 0,
+      "agent_lines_added": 5731,
+      "agent_lines_removed": 1720,
+      "user_added_per_file": {
+        ".claude/scheduled_tasks.lock": 1,
+        ".claude/settings.local.json": 11,
+        "internal/server/static/css/style.css": 71
+      }
+    },
+    {
+      "checkpoint_number": 21,
+      "user_lines_added": 83,
+      "user_lines_removed": 0,
+      "agent_lines_added": 5731,
+      "agent_lines_removed": 1720,
+      "user_added_per_file": {
+        ".claude/scheduled_tasks.lock": 1,
+        ".claude/settings.local.json": 11,
+        "internal/server/static/css/style.css": 71
+      }
+    },
+    {
+      "checkpoint_number": 22,
+      "user_lines_added": 83,
+      "user_lines_removed": 0,
+      "agent_lines_added": 5731,
+      "agent_lines_removed": 1720,
+      "user_added_per_file": {
+        ".claude/scheduled_tasks.lock": 1,
+        ".claude/settings.local.json": 11,
+        "internal/server/static/css/style.css": 71
+      }
+    },
+    {
+      "checkpoint_number": 23,
+      "user_lines_added": 83,
+      "user_lines_removed": 0,
+      "agent_lines_added": 5731,
+      "agent_lines_removed": 1720,
+      "user_added_per_file": {
+        ".claude/scheduled_tasks.lock": 1,
+        ".claude/settings.local.json": 11,
+        "internal/server/static/css/style.css": 71
+      }
+    },
+    {
+      "checkpoint_number": 24,
+      "user_lines_added": 83,
+      "user_lines_removed": 0,
+      "agent_lines_added": 5731,
+      "agent_lines_removed": 1720,
+      "user_added_per_file": {
+        ".claude/scheduled_tasks.lock": 1,
+        ".claude/settings.local.json": 11,
+        "internal/server/static/css/style.css": 71
+      }
+    },
+    {
+      "checkpoint_number": 25,
+      "user_lines_added": 83,
+      "user_lines_removed": 0,
+      "agent_lines_added": 5731,
+      "agent_lines_removed": 1720,
+      "user_added_per_file": {
+        ".claude/scheduled_tasks.lock": 1,
+        ".claude/settings.local.json": 11,
+        "internal/server/static/css/style.css": 71
+      }
+    },
+    {
+      "checkpoint_number": 26,
+      "user_lines_added": 239,
+      "user_lines_removed": 127,
+      "agent_lines_added": 5731,
+      "agent_lines_removed": 1720,
+      "user_added_per_file": {
+        ".claude/scheduled_tasks.lock": 1,
+        ".claude/settings.local.json": 11,
+        "internal/bench/agent.go": 6,
+        "internal/bench/runner.go": 1,
+        "internal/bench/session.go": 4,
+        "internal/bench/stats.go": 18,
+        "internal/bench/stats_test.go": 26,
+        "internal/server/demo.go": 20,
+        "internal/server/events.go": 4,
+        "internal/server/runmgr.go": 77,
+        "internal/server/static/css/style.css": 71
+      },
+      "user_removed_per_file": {
+        "internal/bench/agent.go": 6,
+        "internal/bench/runner.go": 1,
+        "internal/bench/session.go": 4,
+        "internal/bench/stats.go": 30,
+        "internal/bench/stats_test.go": 26,
+        "internal/server/demo.go": 4,
+        "internal/server/events.go": 1,
+        "internal/server/runmgr.go": 55
+      }
+    },
+    {
+      "checkpoint_number": 27,
+      "user_lines_added": 185,
+      "user_lines_removed": 61,
+      "agent_lines_added": 5719,
+      "agent_lines_removed": 1720,
+      "user_added_per_file": {
+        ".claude/scheduled_tasks.lock": 1,
+        ".claude/settings.local.json": 11,
+        "internal/bench/runner.go": 1,
+        "internal/server/demo.go": 20,
+        "internal/server/events.go": 4,
+        "internal/server/runmgr.go": 77,
+        "internal/server/static/css/style.css": 71
+      },
+      "user_removed_per_file": {
+        "internal/bench/runner.go": 1,
+        "internal/server/demo.go": 4,
+        "internal/server/events.go": 1,
+        "internal/server/runmgr.go": 55
+      }
+    },
+    {
+      "checkpoint_number": 28,
+      "user_lines_added": 116,
+      "user_lines_removed": 13,
+      "agent_lines_added": 5924,
+      "agent_lines_removed": 1732,
+      "user_added_per_file": {
+        ".claude/scheduled_tasks.lock": 1,
+        ".claude/settings.local.json": 12,
+        "internal/bench/runner.go": 1,
+        "internal/server/collector_test.go": 7,
+        "internal/server/demo.go": 20,
+        "internal/server/events.go": 4,
+        "internal/server/static/css/style.css": 71
+      },
+      "user_removed_per_file": {
+        "internal/bench/runner.go": 1,
+        "internal/server/collector_test.go": 7,
+        "internal/server/demo.go": 4,
+        "internal/server/events.go": 1
+      }
+    },
+    {
+      "checkpoint_number": 29,
+      "user_lines_added": 45,
+      "user_lines_removed": 13,
+      "agent_lines_added": 6163,
+      "agent_lines_removed": 1732,
+      "user_added_per_file": {
+        ".claude/scheduled_tasks.lock": 1,
+        ".claude/settings.local.json": 12,
+        "internal/bench/runner.go": 1,
+        "internal/server/collector_test.go": 7,
+        "internal/server/demo.go": 20,
+        "internal/server/events.go": 4
+      },
+      "user_removed_per_file": {
+        "internal/bench/runner.go": 1,
+        "internal/server/collector_test.go": 7,
+        "internal/server/demo.go": 4,
+        "internal/server/events.go": 1
+      }
+    },
+    {
+      "checkpoint_number": 30,
+      "user_lines_added": 50,
+      "user_lines_removed": 13,
+      "agent_lines_added": 6321,
+      "agent_lines_removed": 1735,
+      "user_added_per_file": {
+        ".claude/scheduled_tasks.lock": 1,
+        ".claude/settings.local.json": 17,
+        "internal/bench/runner.go": 1,
+        "internal/server/collector_test.go": 7,
+        "internal/server/demo.go": 20,
+        "internal/server/events.go": 4
+      },
+      "user_removed_per_file": {
+        "internal/bench/runner.go": 1,
+        "internal/server/collector_test.go": 7,
+        "internal/server/demo.go": 4,
+        "internal/server/events.go": 1
+      }
+    },
+    {
+      "checkpoint_number": 31,
+      "user_lines_added": 50,
+      "user_lines_removed": 13,
+      "agent_lines_added": 6315,
+      "agent_lines_removed": 1735,
+      "user_added_per_file": {
+        ".claude/scheduled_tasks.lock": 1,
+        ".claude/settings.local.json": 17,
+        "internal/bench/runner.go": 1,
+        "internal/server/collector_test.go": 7,
+        "internal/server/demo.go": 20,
+        "internal/server/events.go": 4
+      },
+      "user_removed_per_file": {
+        "internal/bench/runner.go": 1,
+        "internal/server/collector_test.go": 7,
+        "internal/server/demo.go": 4,
+        "internal/server/events.go": 1
+      }
+    },
+    {
+      "checkpoint_number": 32,
+      "user_lines_added": 50,
+      "user_lines_removed": 13,
+      "agent_lines_added": 6315,
+      "agent_lines_removed": 1735,
+      "user_added_per_file": {
+        ".claude/scheduled_tasks.lock": 1,
+        ".claude/settings.local.json": 17,
+        "internal/bench/runner.go": 1,
+        "internal/server/collector_test.go": 7,
+        "internal/server/demo.go": 20,
+        "internal/server/events.go": 4
+      },
+      "user_removed_per_file": {
+        "internal/bench/runner.go": 1,
+        "internal/server/collector_test.go": 7,
+        "internal/server/demo.go": 4,
+        "internal/server/events.go": 1
+      }
+    }
+  ]
+}

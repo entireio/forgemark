@@ -1,0 +1,45 @@
+{
+  "cli_version": "0.8.42",
+  "checkpoint_id": "99409705cdb8",
+  "strategy": "manual-commit",
+  "branch": "feat/web-gui-race",
+  "checkpoints_count": 31,
+  "files_touched": [
+    "cmd/forgemark/agent.go",
+    "cmd/forgemark/creds.go",
+    "cmd/forgemark/creds_test.go",
+    "cmd/forgemark/endpoint.go",
+    "cmd/forgemark/endpoint_test.go",
+    "cmd/forgemark/main.go",
+    "cmd/forgemark/main_test.go",
+    "cmd/forgemark/session.go",
+    "cmd/forgemark/stats.go",
+    "cmd/forgemark/stats_test.go",
+    "internal/bench/agent.go",
+    "internal/bench/config.go",
+    "internal/bench/creds.go",
+    "internal/bench/creds_test.go",
+    "internal/bench/endpoint.go",
+    "internal/bench/endpoint_test.go",
+    "internal/bench/session.go",
+    "internal/bench/stats.go",
+    "internal/bench/stats_test.go",
+    "internal/results/results.go"
+  ],
+  "sessions": [
+    {
+      "metadata": "/99/409705cdb8/0/metadata.json",
+      "transcript": "/99/409705cdb8/0/full.jsonl",
+      "compact_transcript": "/99/409705cdb8/0/transcript.jsonl",
+      "content_hash": "/99/409705cdb8/0/content_hash.txt",
+      "prompt": "/99/409705cdb8/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 31263,
+    "cache_creation_tokens": 1523100,
+    "cache_read_tokens": 94083919,
+    "output_tokens": 301408,
+    "api_call_count": 347
+  }
+}
