@@ -1,0 +1,41 @@
+{
+  "cli_version": "0.8.42",
+  "checkpoint_id": "f96ce4658f7e",
+  "strategy": "manual-commit",
+  "branch": "feat/web-gui-race",
+  "checkpoints_count": 31,
+  "files_touched": [
+    "cmd/forgemark/serve.go",
+    "internal/server/collector.go",
+    "internal/server/local.go",
+    "internal/server/runmgr.go",
+    "internal/server/runmgr_test.go",
+    "internal/server/server.go",
+    "internal/server/server_test.go",
+    "internal/server/static/css/style.css",
+    "internal/server/static/js/api.js",
+    "internal/server/static/js/app.js",
+    "internal/server/static/js/charts.js",
+    "internal/server/static/js/views/dashboard.js",
+    "internal/server/static/js/views/history.js",
+    "internal/server/static/js/views/newrun.js",
+    "internal/server/static/js/views/race.js",
+    "internal/server/static/js/views/shared.js"
+  ],
+  "sessions": [
+    {
+      "metadata": "/f9/6ce4658f7e/0/metadata.json",
+      "transcript": "/f9/6ce4658f7e/0/full.jsonl",
+      "compact_transcript": "/f9/6ce4658f7e/0/transcript.jsonl",
+      "content_hash": "/f9/6ce4658f7e/0/content_hash.txt",
+      "prompt": "/f9/6ce4658f7e/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 31267,
+    "cache_creation_tokens": 1524201,
+    "cache_read_tokens": 95086959,
+    "output_tokens": 302545,
+    "api_call_count": 349
+  }
+}
