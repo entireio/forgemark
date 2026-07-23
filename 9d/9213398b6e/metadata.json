@@ -1,0 +1,28 @@
+{
+  "cli_version": "0.8.42",
+  "checkpoint_id": "9d9213398b6e",
+  "strategy": "manual-commit",
+  "branch": "feat/web-gui-race",
+  "checkpoints_count": 31,
+  "files_touched": [
+    "scripts/compare-local.sh",
+    "scripts/login.sh",
+    "scripts/pushrace.sh"
+  ],
+  "sessions": [
+    {
+      "metadata": "/9d/9213398b6e/0/metadata.json",
+      "transcript": "/9d/9213398b6e/0/full.jsonl",
+      "compact_transcript": "/9d/9213398b6e/0/transcript.jsonl",
+      "content_hash": "/9d/9213398b6e/0/content_hash.txt",
+      "prompt": "/9d/9213398b6e/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 31398,
+    "cache_creation_tokens": 1525133,
+    "cache_read_tokens": 95589336,
+    "output_tokens": 303191,
+    "api_call_count": 350
+  }
+}
