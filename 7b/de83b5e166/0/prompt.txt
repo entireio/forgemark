@@ -1,0 +1,587 @@
+run the server and show me the UI
+
+---
+
+Check whether forgemark screenshots (forgemark-live.png, forgemark-done.png) were captured and finish showing the UI to the user.
+
+---
+
+Last login: Wed Jul 22 16:41:01 on ttys001
+krk@Karthiks-MacBook-Pro forgemark % gh cli token
+unknown command "cli" for "gh"
+
+Did you mean this?
+    api
+    co
+
+Usage:  gh <command> <subcommand> [flags]
+
+Available commands:
+  agent-task
+  alias
+  api
+  attestation
+  auth
+  browse
+  cache
+  co
+  codespace
+  completion
+  config
+  copilot
+  discussion
+  extension
+  gist
+  gpg-key
+  issue
+  label
+  licenses
+  org
+  pr
+  preview
+  project
+  release
+  repo
+  ruleset
+  run
+  search
+  secret
+  skill
+  ssh-key
+  status
+  variable
+  workflow
+
+krk@Karthiks-MacBook-Pro forgemark % gh token
+unknown command "token" for "gh"
+
+Usage:  gh <command> <subcommand> [flags]
+
+Available commands:
+  agent-task
+  alias
+  api
+  attestation
+  auth
+  browse
+  cache
+  co
+  codespace
+  completion
+  config
+  copilot
+  discussion
+  extension
+  gist
+  gpg-key
+  issue
+  label
+  licenses
+  org
+  pr
+  preview
+  project
+  release
+  repo
+  ruleset
+  run
+  search
+  secret
+  skill
+  ssh-key
+  status
+  variable
+  workflow
+
+krk@Karthiks-MacBook-Pro forgemark % gh auth token
+REDACTED
+krk@Karthiks-MacBook-Pro forgemark % entire auth token
+REDACTED
+krk@Karthiks-MacBook-Pro forgemark %
+✖ GitHub: no repos: pass -repos or -repo-pattern + -repo-count — target removed from the run
+✖ Entire India: no repos: pass -repos or -repo-pattern + -repo-count — target removed from the run
+
+---
+
+Yes. ,that's the point. Can you wire it up for me please? This is something I want people to be able to setup also locally, so they don't have to share token etc. everytime.
+
+---
+
+I mean, for the repo in entire, the usual way is to create a mirror and then clone to test. Simple, like this 
+
+entire repo mirror create https://github.com/entirehq/entiredb aws-ap-south-1.entire.io
+git clone entire://aws-ap-south-1.entire.io/gh/entirehq/entiredb
+
+I have already logged back into entire, can you clean that part of the automation also and build scripts to ensure people can login/authenticate to both terminals
+
+---
+
+Maybe I also want a pushrace mode.Need something a lotle more live and fun -  Same 16 agents pushing checkpoint-sized commits for one minute 8 pushes/sec on GitHub, 331/sec on Entire. something oiek this I want to show.
+
+---
+
+<task-notification>
+<task-id>bemit3tix</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-krk-Desktop-GitStore-forgemark/c11b8d4c-8f8a-4fbd-967b-148d908d89e3/tasks/bemit3tix.output</output-file>
+<status>completed</status>
+<summary>Background command "Screenshot the race mid-run" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>bt5l3mngd</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-krk-Desktop-GitStore-forgemark/c11b8d4c-8f8a-4fbd-967b-148d908d89e3/tasks/bt5l3mngd.output</output-file>
+<status>completed</status>
+<summary>Background command "Screenshot native race mid-run" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+so how do we start this app, how does it work?
+
+---
+
+but I should be able to simulate a push race also from the web interface right? Right now the New run page seems disconnected, because it still has a form that askes for token/secret etc. isn't the point to take all of that via CLI?
+
+---
+
+there should also be other race views, not just push, maybe latency? what other race views can we have? Also, for the sake of science, we should have a subltle text below the race view showcasing what people are watching right? else it is meaningless.
+
+---
+
+/review
+
+---
+
+/code-review
+
+---
+
+<task-notification>
+<task-id>a2702c5d71cddfcb9</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-krk-Desktop-GitStore-forgemark/c11b8d4c-8f8a-4fbd-967b-148d908d89e3/tasks/a2702c5d71cddfcb9.output</output-file>
+<status>completed</status>
+<summary>Agent "Finder: conventions" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>No repo-root, CLAUDE.local.md, or directory-level CLAUDE.md exists anywhere in the repo or in the ancestor directories of the changed files. The only governing file is the user-level /Users/krk/.claude/CLAUDE.md, whose rules address conversational style, responses, research, and drafted communications (Slack, email, posts) — none plainly cover code or repository docs like the README, so no rule in it can be clearly violated by this diff.
+
+[]</result>
+<usage><subagent_tokens>18001</subagent_tokens><tool_uses>2</tool_uses><duration_ms>20121</duration_ms></usage>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>a6eaf7ea63911fd31</task-id>
+<tool-use-id>toolu_01XWfmQo2hYUbUMoich4YVCH</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-krk-Desktop-GitStore-forgemark/c11b8d4c-8f8a-4fbd-967b-148d908d89e3/tasks/a6eaf7ea63911fd31.output</output-file>
+<status>completed</status>
+<summary>Agent "Finder: reuse" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>I have verified all the hot spots. Final findings:
+
+- serve.go `isLoopback` duplicates server.go `isLoopbackHost` (confirmed, near-identical bodies).
+- main.go `writeResults` hand-builds a `map[string]any` whose keys mirror `results.Doc`'s format-1 json tags exactly, plus re-implements the mkdir/marshal/write that `results.Write` does.
+- race.js `tickClock` and dashboard.js `tickProgress` duplicate the level countdown math; both also duplicate the "Results saved to" banner in `run_done`.
+- compare-local.sh re-implements the exact discovery that `local.go` `suggestEntire`/`suggestGitHub` expose via `GET /api/local/suggest` (local.go's own comment admits it), and the script already guarantees the server is up.
+- The github.com abuse warning (threshold 16 + message text) is copy-pasted between main.go and runmgr.go.
+- Percentile logic is properly reused (`bench.Percentile`), `SplitCSV` is reused, `fmtInt` is unique to race.js — no violations there.
+
+[
+  {
+    "file": "cmd/forgemark/serve.go",
+    "line": 37,
+    "summary": "isLoopback re-implements isLoopbackHost from internal/server/server.go:89 (same localhost check + net.ParseIP().IsLoopback()); export the server package's helper (e.g. server.IsLoopbackHost) and call it instead.",
+    "failure_scenario": "Two copies of the security-relevant loopback predicate: if one is later taught about e.g. IPv6 zone suffixes, 'localhost.' with trailing dot, or *.localhost, the other silently keeps the old behavior, so the CLI warning and the Origin/CSRF guard disagree about what counts as local."
+  },
+  {
+    "file": "cmd/forgemark/main.go",
+    "line": 268,
+    "summary": "writeResults hand-builds a map[string]any whose keys (run_id, target, strategy, duration, warmup, repo_count, commit, levels) duplicate results.Doc's format-1 json tags, and re-implements the MkdirAll+MarshalIndent+WriteFile 0600 sequence in results.Write; it should marshal a results.Doc (format-1 fields populated) instead.",
+    "failure_scenario": "results.Load parses the very files this writes: if a Doc json tag is renamed or a field added, the CLI's string-literal map won't follow, and history/GET /api/history silently drops or mis-reads CLI runs with no compile error, since the schema exists in two disconnected places."
+  },
+  {
+    "file": "internal/server/static/js/views/race.js",
+    "line": 130,
+    "summary": "tickClock duplicates dashboard.js tickProgress (line 131): both compute t0=Date.parse(l.at)/1000, total=warmup_sec+duration_sec, clamped elapsed, remaining seconds, and the warming-up/measuring phase split from the same level_start payload; extract one levelCountdown(level) helper (e.g. in sse.js or a shared util) both views consume.",
+    "failure_scenario": "The countdown math is timing-sensitive (Math.ceil vs Math.round of remain already differ between the two copies); any fix like clock-skew correction or handling a paused level applied to the dashboard leaves the race view's clock and phase label wrong, and vice versa."
+  },
+  {
+    "file": "internal/server/static/js/views/race.js",
+    "line": 229,
+    "summary": "The run_done 'Results saved to &lt;file&gt; — compare in history' banner is copy-pasted from dashboard.js lines 251-255 (identical h() tree including the #history/&lt;file&gt; link and inline accent style); extract a shared resultsSavedBanner(ev) helper.",
+    "failure_scenario": "When the history deep-link format or banner styling changes (e.g. #history/&lt;run_id&gt; instead of file name, or a download link is added), one view updates and the other keeps emitting a stale/broken link, since the same DOM construction lives in two files."
+  },
+  {
+    "file": "scripts/compare-local.sh",
+    "line": 97,
+    "summary": "The Entire discovery block (awk parsing of Jurisdiction:/Context:/User: from `entire auth status`, .auth. base-domain derivation, and the python default-cluster selection from /api/v1/clusters) re-implements internal/server/local.go suggestEntire/statusField, which the already-running server exposes as GET /api/local/suggest; curl that endpoint instead.",
+    "failure_scenario": "local.go line 78 even documents them as 'the same discovery': when `entire auth status` output format or the clusters API shape changes, the Go copy gets fixed while the awk/python copy silently derives a wrong token_url/jurisdiction/cluster, and runs fail only at push time with an auth error far from the real cause."
+  },
+  {
+    "file": "internal/server/runmgr.go",
+    "line": 250,
+    "summary": "The github.com abuse warning (bench.IsGitHubDotCom + slices.Max(concurrency) &gt; 16 with near-verbatim message text) duplicates cmd/forgemark/main.go lines 90-94; hoist it into internal/bench (e.g. bench.GitHubAbuseWarning(remote string, conc []int) (string, bool)) and have both the CLI and the server call it.",
+    "failure_scenario": "The threshold 16 and the advice text ('keep it low (e.g. 1,4)') live in two places: when GitHub's secondary-rate-limit behavior changes and the threshold is tuned in one caller, CLI users and GUI users get contradictory warnings for the identical workload."
+  }
+]</result>
+<usage><subagent_tokens>73813</subagent_tokens><tool_uses>16</tool_uses><duration_ms>130016</duration_ms></usage>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>a64d64c3eacf7c68f</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-krk-Desktop-GitStore-forgemark/c11b8d4c-8f8a-4fbd-967b-148d908d89e3/tasks/a64d64c3eacf7c68f.output</output-file>
+<status>completed</status>
+<summary>Agent "Finder: altitude" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>[
+  {
+    "file": "internal/server/runmgr.go",
+    "line": 493,
+    "summary": "emitBucket persists only the push half of BucketStats into results.SeriesPoint (OK/CAS/Err/P50..) and silently drops all clone_* fields, so the saved series is a lossy special-case of the event the collector already emits; the deeper fix is to make SeriesPoint mirror the full bucket event shape (or store BucketStats directly).",
+    "failure_scenario": "Run a strategy=clone or session benchmark: the live dashboard shows clone throughput, but the persisted format-2 doc's series has ok=0 everywhere, so the history view re-renders the finished run as flatlines and any later 'replay from results file' feature reports the wrong winner."
+  },
+  {
+    "file": "internal/server/static/js/views/race.js",
+    "line": 252,
+    "summary": "race.js (bucket handler, isClone ternaries at 252-263) and dashboard.js (lines 51-52, 197-227) each re-implement strategy dispatch on raw clone_*/push bucket fields; the collector/hello event should declare or emit a normalized primary series per strategy so views never branch on workload.strategy.",
+    "failure_scenario": "Adding a strategy or op type (fetch, lfs) or renaming a clone_* field means hunting every view for its private ternaries; already drifting: for strategy=session (which does clones AND pushes) race.js counts only pushes, so clone failures vanish from the reliability lane while dashboard.js shows them as a dashed series."
+  },
+  {
+    "file": "internal/bench/runner.go",
+    "line": 52,
+    "summary": "The entiredb backend is selected by the mere presence of TokenURL/Jurisdiction (documented as intentional in config.go:20-21), leaking type dispatch through TargetSpec, bench.Target, and NewRunner instead of an explicit target kind resolved once at the wire boundary.",
+    "failure_scenario": "The first generic forge that needs an OAuth token endpoint (e.g. GitLab OAuth client-credentials) cannot be expressed: setting token_url silently reroutes it down setupEntiredb's jurisdiction-exchange + node-discovery path, and the fix then requires touching the wire spec, bench.Target, and both setup funcs at once."
+  },
+  {
+    "file": "scripts/compare-local.sh",
+    "line": 98,
+    "summary": "The script derives jurisdiction/token-URL/cluster by awk-scraping the human-readable `entire auth status` text, and internal/server/local.go:162 (statusField) duplicates the same scrape in Go; the deeper fix is one structured source — `entire auth status --json` (or the script calling the server's existing /api/local/suggest endpoint) so discovery logic exists once.",
+    "failure_scenario": "The entire CLI rewords its status output (localizes 'Jurisdiction:', adds a two-word value, or reorders lines) and both copies break independently: the bash awk yields an empty slug and builds https://.$domain endpoints that fail cryptically at token exchange, while the Go parser fails differently, and each must be patched separately."
+  },
+  {
+    "file": "internal/server/runmgr.go",
+    "line": 244,
+    "summary": "resolveSecretSource runs synchronously inside RunManager.start (the POST /api/runs handler path), exec-ing CLIs serially per target with a 15s timeout each and snapshotting the token once, instead of living in the credential layer bench already has (credentialProvider) and resolving during coordinate()'s concurrent target-setup phase.",
+    "failure_scenario": "A slow or re-authenticating gh/entire CLI makes the start request hang up to 15s per target (30s+ for the standard two-target run, tripping curl/browser timeouts while the run never starts); and any future long-run or queued-run feature breaks because the token is frozen at POST time with no refresh hook, unlike the entiredb path which already refreshes via jurisdictionCreds."
+  },
+  {
+    "file": "internal/server/static/js/app.js",
+    "line": 18,
+    "summary": "The hash router captures everything after the first '/' as one opaque arg, so race.js:22 splits 'runId/metric' itself and rewrites the hash via history.replaceState (race.js:50) behind the router's back, while history.js consumes the same slot as a whole filename — the router should own segment splitting and hand views an args array.",
+    "failure_scenario": "The next view needing a sub-arg (e.g. #run/&lt;id&gt;/&lt;level&gt; deep links, or #history/&lt;file&gt;/&lt;target&gt;) either re-implements its own split or, for history, misparses because the filename arrives fused with the sub-arg; and any router-level change (query params, nav highlighting on sub-routes) must special-case race's self-managed replaceState hash."
+  }
+]</result>
+<usage><subagent_tokens>59915</subagent_tokens><tool_uses>17</tool_uses><duration_ms>117210</duration_ms></usage>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>aac95347b03290a96</task-id>
+<tool-use-id>toolu_019T8xAvyDgWGL1vzunV9rAo</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-krk-Desktop-GitStore-forgemark/c11b8d4c-8f8a-4fbd-967b-148d908d89e3/tasks/aac95347b03290a96.output</output-file>
+<status>completed</status>
+<summary>Agent "Finder: efficiency" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>I have enough evidence across the diff and untracked files. Verified: events.go is capped (100k) and replays from Last-Event-ID (not everything); creds.go caches the jurisdiction token with singleflight; collector/emitBucket are cheap; latRows is bounded by the same 100k event cap. The real wasted-work items are in the shell scripts, the suggest endpoint's serialized CLI calls, and per-event chart/DOM rebuilds during SSE replay.
+
+[{"file": "scripts/compare-local.sh", "line": 97, "summary": "`entire auth status` is executed twice back-to-back — once discarded for the auth check (line 93) and again to capture the same output — doubling a CLI call that can hit the network to validate the session.", "failure_scenario": "Every compare-local.sh/pushrace.sh invocation pays two `entire auth status` round trips where one suffices; capture the output once into ENTIRE_STATUS and branch on the command's exit status for the auth check."}, {"file": "scripts/compare-local.sh", "line": 196, "summary": "The POST failure path re-executes the entire `curl -X POST /api/runs` request a second time just to print the error body, and that duplicate request can actually start a benchmark run.", "failure_scenario": "On a transient failure (or `-f` tripping on a 4xx that a retry survives) the second POST silently launches a run whose ID is thrown away while the script exits 1 — a full multi-minute load-generation run wasted against real forges; cheaper: one curl with `-w '%{http_code}'` and the body saved to a variable/temp file, then branch on the status."}, {"file": "internal/server/local.go", "line": 122, "summary": "suggestEntire serializes `entire auth status` and `entire api /api/v1/clusters` even though the clusters call does not depend on the status output (the slug is only needed afterward to filter the parsed list).", "failure_scenario": "Every 'Add from CLI logins' click waits for two sequential CLI invocations, each allowed up to the 15s cliTimeout — worst case 30s and typically 2x the necessary latency; launch both via goroutines (as handleLocalSuggest already does for gh vs entire) and join before filtering."}, {"file": "internal/server/static/js/views/dashboard.js", "line": 194, "summary": "The bucket handler does three full uPlot setData redraws per event (charts.js push re-feeds the whole accumulated arrays), and SSE replay dispatches every historical bucket individually, so a late join or reconnect performs O(n^2) canvas work.", "failure_scenario": "Opening or reconnecting to a run 30+ minutes in replays ~1800 bucket events, each triggering 3 full-history chart redraws plus tile DOM writes (~5400 redraws), freezing the tab for seconds and growing quadratically with run length; cheaper: coalesce pushes with requestAnimationFrame (or detect replay by event seq vs. now) and issue a single setData once caught up."}, {"file": "internal/server/static/js/views/race.js", "line": 266, "summary": "The bucket handler forces a synchronous layout (`void l.els.big.offsetWidth`) to restart the pop animation and re-renders all lane DOM via updateLanes() for every event, including every replayed one when a finished run's race view loads.", "failure_scenario": "Viewing a completed run replays every bucket event through this path — one forced reflow per target per event plus a full updateLanes DOM pass per event — thousands of synchronous layouts before the podium appears; cheaper: skip the pop animation and per-event updateLanes during replay (batch to one updateLanes on catch-up, e.g. rAF-coalesced)."}, {"file": "scripts/login.sh", "line": 19, "summary": "The already-authenticated branch runs `entire auth status` three times (the check plus two command substitutions in the echo) to print a single status line.", "failure_scenario": "Each invocation can revalidate the session over the network, so the no-op happy path pays 3 identical CLI/network calls on every login.sh run; capture the output once into a variable and awk the User/Context fields out of it."}]</result>
+<usage><subagent_tokens>87257</subagent_tokens><tool_uses>17</tool_uses><duration_ms>176373</duration_ms></usage>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>a0f654cb2f158409d</task-id>
+<tool-use-id>toolu_017R1cGMawvqvCHH6iHof62a</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-krk-Desktop-GitStore-forgemark/c11b8d4c-8f8a-4fbd-967b-148d908d89e3/tasks/a0f654cb2f158409d.output</output-file>
+<status>completed</status>
+<summary>Agent "Finder A: line-by-line scan" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>JSON findings from the line-by-line scan:
+
+```json
+[
+  {
+    "file": "internal/server/runmgr.go",
+    "line": 82,
+    "summary": "withDefaults unconditionally coerces CloneDepth 0 to 1, making a full-history clone impossible via the server API even though the UI ('Clone depth (0 = full)') and CLI (-clone-depth 0=full history) both define 0 as full clone.",
+    "failure_scenario": "User selects clone/session strategy in the GUI and enters 0 in the 'Clone depth (0 = full)' field (or POSTs clone_depth:0); the first guard skips clone/session strategies but the second `if ws.CloneDepth == 0 { ws.CloneDepth = 1 }` fires anyway, so agents run depth-1 shallow clones and the benchmark silently measures the wrong workload."
+  },
+  {
+    "file": "cmd/forgemark/serve.go",
+    "line": 38,
+    "summary": "isLoopback treats an empty host as loopback, so `forgemark serve -addr :8377` — which binds ALL interfaces — never triggers the non-loopback security warning.",
+    "failure_scenario": "Operator runs `forgemark serve -addr :8377`; net.SplitHostPort yields host \"\", isLoopback returns true, the credential-exposure warning is suppressed, yet net/http listens on 0.0.0.0 so anyone on the LAN can reach the control panel that pulls tokens from `gh auth token`/`entire auth token` and starts load runs."
+  },
+  {
+    "file": "scripts/compare-local.sh",
+    "line": 196,
+    "summary": "The curl failure path re-POSTs the same /api/runs request a second time just to capture the error body, which can start a duplicate or orphaned benchmark run.",
+    "failure_scenario": "First `curl -sf` POST fails transiently (timeout after the server accepted it, or a momentary 5xx); the fallback `curl -s` POSTs the identical body again — if it succeeds, a real benchmark run (sustained git load, on github.com by default) starts while the script prints a failure message, discards the run ID, and exits 1 with no way to watch or cancel it."
+  },
+  {
+    "file": "internal/server/static/js/views/newrun.js",
+    "line": 176,
+    "summary": "Concurrency parsing silently drops all non-numeric entries, and an empty result makes the server substitute its default sweep [1,8,32,128] instead of rejecting the input.",
+    "failure_scenario": "User types '1;8;32' or 'abc' in the concurrency field; split(',')+parseInt+filter yields [] (or just [1] for '1;8;32'), the POST carries concurrency:[] and WorkloadSpec.withDefaults fills {1,8,32,128} — the run silently sweeps up to 128 concurrent agents, which against github.com is exactly the abuse-limit scenario the UI warns about, with no error shown."
+  },
+  {
+    "file": "internal/server/runmgr.go",
+    "line": 64,
+    "summary": "The warmup default sentinel is backwards: an omitted warmup_sec decodes to 0 = 'no warmup', contradicting the WorkloadSpec doc ('Zero fields take the CLI's flag defaults, so a minimal curl body works') since only an explicit -1 — which no client ever sends — yields the CLI default 10s.",
+    "failure_scenario": "curl POST to /api/runs with a minimal body omitting warmup_sec: WarmupSec decodes to 0, `if ws.WarmupSec &lt; 0` never fires, the run executes with zero warm-up and cold-start latency pollutes the measured window — silently different from the same workload run via the CLI (default -warmup 10s)."
+  },
+  {
+    "file": "internal/server/local.go",
+    "line": 146,
+    "summary": "suggestEntire validates slug and loginHost from `entire auth status` but never validates handle, so a missing/unparsed 'User:' line yields the garbage repo path 'et/forgemark-/forgemark-target'.",
+    "failure_scenario": "`entire auth status` output lacks a 'User:' line (or formats it differently); statusField returns \"\", the empty-check on line 114 only covers slug and loginHost, and the GUI's 'Add from CLI logins' fills a target whose repo path 'et/forgemark-/forgemark-target' points at a nonexistent per-user project — the run then fails at start with a confusing repo error instead of a parse error."
+  }
+]
+```</result>
+<usage><subagent_tokens>114109</subagent_tokens><tool_uses>29</tool_uses><duration_ms>297860</duration_ms></usage>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>ab05e385a397ee122</task-id>
+<tool-use-id>toolu_016iW63jWUf9dHyXmJdJkG1j</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-krk-Desktop-GitStore-forgemark/c11b8d4c-8f8a-4fbd-967b-148d908d89e3/tasks/ab05e385a397ee122.output</output-file>
+<status>completed</status>
+<summary>Agent "Finder: simplification" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>[{"file": "internal/bench/stats.go", "line": 60, "summary": "Two hand-synced identical structs (`sample` at line 29 and exported `Sample` at line 39) force field-by-field conversion loops in `SummarizeSamples` (lines 62-65) and `agent.record` (agent.go line 58), plus `Percentile` at line 70 wrapping `percentile` verbatim; using the exported `Sample` internally deletes both copy loops, the wrapper func, and one of the two type definitions.", "failure_scenario": "Every new sample field (e.g. a retry count) must be added in three places — both structs and both conversion sites — and a missed spot silently drops the field from server-side results; the O(n) per-level copy is pure overhead."}, {"file": "scripts/compare-local.sh", "line": 195, "summary": "The failure branch of the run-start curl re-executes the entire POST a second time just to print the error body (`RESP=\"$(curl -sf ...)\" || { echo ... $(curl -s -X POST ...) }`); a single `curl -s` without `-f` capturing body once and checking it for an id/error is the simpler form.", "failure_scenario": "The 'print the error' path actually issues a second run-start request — against a server that enforces one-active-run, the retry can 409 with a different error than the one that failed, so the operator debugs a misleading message; any future fix to the request body must be duplicated in both curl invocations."}, {"file": "internal/server/static/js/views/dashboard.js", "line": 99, "summary": "state.totals initializes {ok, cas, err, lastOps, p95} per target, but `ok` is accumulated (line 224) and never read, and `lastOps`/`p95` are never written or read after init; only the err+cas sum ever reaches the DOM, so a single failure counter per target replaces the five-field object.", "failure_scenario": "Three dead fields plus one dead accumulation invite the next maintainer to trust `totals.ok`/`totals.p95` as live data (they are 0/stale), and every reader must re-derive which of the five fields is actually maintained."}, {"file": "internal/server/static/js/views/race.js", "line": 256, "summary": "lane.attempts is third-copy bookkeeping — it is incremented as `ok + err` right after `l.ok += ok` and `l.errs += err`, so it always equals `l.ok + l.errs`; computing that sum at the three use sites (lines 117, 122, 192) removes the field.", "failure_scenario": "A future change that adjusts ok or errs in one place (e.g. excluding CAS from failures) but forgets the attempts line silently skews the reliability percentage, the exact metric the race view ranks winners by."}, {"file": "internal/server/runmgr.go", "line": 79, "summary": "In withDefaults, the strategy-guarded `if ws.CloneDepth == 0 &amp;&amp; ws.Strategy != \"clone\" &amp;&amp; ws.Strategy != \"session\"` default is immediately followed by an unconditional `if ws.CloneDepth == 0 { ws.CloneDepth = 1 }` that produces the identical result for every input, making the first conditional dead; keep only the second.", "failure_scenario": "The dead guard reads as if clone/session strategies get a different CloneDepth default than other strategies (they don't), so anyone tuning clone-depth defaulting edits the wrong branch and observes no behavior change."}, {"file": "internal/server/collector.go", "line": 42, "summary": "BucketStats.Ops and Clones (plus the cur.ops/cur.clones counters feeding them) are serialized into every per-second SSE bucket and stored, yet no consumer reads them — dashboard.js and race.js derive attempts from ok+cas+err — and both are exactly derivable (ops = ok+cas+err, clones = clone_ok+clone_err); drop the fields and counters.", "failure_scenario": "Two redundant counters ride along in every bucket event and in the collector's hot OnSample path forever, and because they are derivable they can drift from the sum after a future edit, giving the wire format two disagreeing sources of truth for attempt counts."}]</result>
+<usage><subagent_tokens>96334</subagent_tokens><tool_uses>27</tool_uses><duration_ms>264739</duration_ms></usage>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>af3cd151ead179845</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-krk-Desktop-GitStore-forgemark/c11b8d4c-8f8a-4fbd-967b-148d908d89e3/tasks/af3cd151ead179845.output</output-file>
+<status>completed</status>
+<summary>Agent "Finder C: cross-file tracer" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>Tracing complete. I traced the server-emitted JSON contracts against every frontend consumer, the TargetSpec flow (newrun → runmgr → local suggest), the scripts' env-var plumbing, and the CLI-vs-server workload defaulting. Verified clean: bucket/level_result/hello field names all match consumers; `#race/&lt;id&gt;/&lt;metric&gt;` routing survives app.js's regex split; compare-local.sh exports every env var its python heredoc reads; suggest-entry JSON matches `addFromCLI`.
+
+[
+  {
+    "file": "internal/server/runmgr.go",
+    "line": 82,
+    "summary": "WorkloadSpec.withDefaults unconditionally coerces CloneDepth 0 to 1, so a full-history clone ('0 = full', which the CLI's -clone-depth and the engine's cloneConfig support) is unreachable through the server API, and the strategy-guarded block at lines 79-81 is dead code.",
+    "failure_scenario": "User picks clone/session strategy in the GUI and enters 0 in the 'Clone depth (0 = full)' field (newrun.js line 47's label promises this) → server silently runs depth-1 shallow clones → benchmark measures tip-only clone cost while the UI and results claim a full-history clone workload."
+  },
+  {
+    "file": "internal/server/runmgr.go",
+    "line": 492,
+    "summary": "emitBucket persists only push-side counters (st.OK/Err/P50…) into results.SeriesPoint, never the clone_* fields, so a clone-strategy run's stored series is all zeros.",
+    "failure_scenario": "Run a clone-strategy GUI run (all samples are OpClone, so collector's ok/err/p50 stay 0) → finished doc's targets[].series has ok=0, p50_ms=0 for every second → History 'Timeline replay — throughput' renders a flat zero line and the latency replay renders nothing (history.js line 90 nulls rows where p.ok&lt;=0), while the sweep charts beside them show hundreds of clones/s."
+  },
+  {
+    "file": "internal/server/demo.go",
+    "line": 113,
+    "summary": "demoRunner synthesizes every sample with the zero-value Op (OpPush) regardless of workload strategy, so demo:// targets produce no clone samples under clone/session strategies.",
+    "failure_scenario": "New run with strategy=clone plus the 'Add demo pair' targets → collector buckets count the samples as pushes but dashboard.js/race.js read clone_ok/clone_p50_ms (isClone path) → live tiles, throughput chart, and race lanes all show 0/'–' the whole run; the final LevelResult is also all zeros because summarize's clone-strategy branch swaps in Clone* counters that were never incremented."
+  },
+  {
+    "file": "internal/server/local.go",
+    "line": 146,
+    "summary": "suggestEntire validates slug and loginHost but not handle, so a missing/unparsable 'User:' line in `entire auth status` yields the malformed repo path et/forgemark-/forgemark-target.",
+    "failure_scenario": "`entire auth status` output lacks a 'User: @name' line (or formats it differently) → statusField returns \"\" → /api/local/suggest returns repos:[\"et/forgemark-/forgemark-target\"] → addFromCLI populates the target and the run start fails against a nonexistent (and never-provisionable) repo path instead of surfacing a discovery error."
+  },
+  {
+    "file": "scripts/compare-local.sh",
+    "line": 196,
+    "summary": "The failure branch of the run-start curl re-POSTs the same request body a second time just to capture the error message, which can start a real duplicate run.",
+    "failure_scenario": "First `curl -sf` POST fails transiently (e.g. response read timeout after the server already accepted, or momentary connect failure) → the || branch POSTs /api/runs again → either a second benchmark run starts generating load while the script prints its response as an 'error' and exits 1, or the retry hits 409 'run already active' masking the original error."
+  },
+  {
+    "file": "internal/server/events.go",
+    "line": 54,
+    "summary": "emit silently drops events once the log reaches maxBufferedEvents, including the terminal run_done event, so SSE clients never learn the run finished.",
+    "failure_scenario": "A very long run (~1 bucket event/sec plus level events; ≥100k events ≈ 27h, or a lower effective ceiling with many targets/levels) fills the log → run_done at runmgr.go finish() is discarded by the cap check → dashboard.js/race.js never receive run_done, the badge stays 'running', cancel button stays live, EventSource is never closed, and every future page load replays a stream that never terminates."
+  }
+]</result>
+<usage><subagent_tokens>103994</subagent_tokens><tool_uses>25</tool_uses><duration_ms>299759</duration_ms></usage>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>a25a58ddc1b3645e3</task-id>
+<tool-use-id>toolu_0117jSEHSTxMxBLFqnHAeM9L</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-krk-Desktop-GitStore-forgemark/c11b8d4c-8f8a-4fbd-967b-148d908d89e3/tasks/a25a58ddc1b3645e3.output</output-file>
+<status>completed</status>
+<summary>Agent "Finder B: removed-behavior audit" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>All findings audited. Final answer below.
+
+[{"file": "internal/server/runmgr.go", "line": 82, "summary": "The unconditional `if ws.CloneDepth == 0 { ws.CloneDepth = 1 }` makes the strategy-gated carve-out at line 79 dead code, so the CLI's documented `-clone-depth 0` (full-history clone) is unrepresentable via the server API.", "failure_scenario": "POST /api/runs with {\"workload\":{\"strategy\":\"clone\",\"clone_depth\":0}} intending a full-history clone benchmark (CLI parity: `-clone-depth 0` = full history per the flag help in cmd/forgemark/main.go:180) → withDefaults silently rewrites depth to 1 and the run measures shallow tip-only clones; the result doc is recorded as if the requested workload ran, and no error or warning is emitted."}, {"file": "cmd/forgemark/serve.go", "line": 38, "summary": "isLoopback treats an empty host as loopback, but an empty host in a listen address means wildcard bind, so `forgemark serve -addr :8377` binds all interfaces with the README-promised non-loopback warning suppressed.", "failure_scenario": "Run `forgemark serve -addr :8377` → net.SplitHostPort yields host \"\" → isLoopback returns true → no warning printed, yet http.Server listens on 0.0.0.0:8377, exposing the credential-holding load-generation control panel (POST /api/runs accepts pasted tokens and secret_source exec of `gh auth token`) to the whole network; README explicitly promises 'a warning prints if it isn't loopback'."}, {"file": "internal/server/runmgr.go", "line": 64, "summary": "An absent warmup_sec (JSON zero value) yields Warmup=0 instead of the CLI's 10s default, contradicting the WorkloadSpec doc 'Zero fields take the CLI's flag defaults' — only an explicit -1 gets the default.", "failure_scenario": "Minimal curl body POST /api/runs {\"confirm_authorized\":true,\"targets\":[...]} → run executes with 0s warmup while the equivalent bare CLI invocation uses 10s (cmd/forgemark/main.go:172); cold-start samples (TLS/conn setup, first-push pack negotiation) are included in the measured percentiles, so server results silently aren't comparable to CLI results for the 'same' workload."}, {"file": "internal/server/runmgr.go", "line": 67, "summary": "withDefaults conflates explicit zero with absent for validated fields: files_min:0 (and file_size:0, duration_sec:0) are silently rewritten to defaults where the old CLI hard-errored ('-files-min must be &gt;= 1', formerly enforced at cmd/forgemark/main.go parseFlags at HEAD, now bench.Workload.Validate).", "failure_scenario": "POST a push-strategy run with {\"files_min\":0,\"files_max\":0} expecting the documented &gt;=1 validation error → withDefaults rewrites to 1/10 before Validate ever sees the zeros, the run executes 1-10-file commits, and the result doc records commit shape \"1-10 x 2048B\" the user never requested; the CLI rejects the identical configuration."}, {"file": "internal/bench/config.go", "line": 27, "summary": "Target.Secret's 'Never serialized.' invariant is comment-only — the field has no json:\"-\" tag, whereas at HEAD the secret only ever lived in a local variable that never outlived setup and could not be marshaled.", "failure_scenario": "Any json.Marshal of bench.Target or a struct embedding it (e.g. a future debug field on the hello/status payloads in internal/server/runmgr.go, which already stores it as targetState.spec and only zeroes it asynchronously in coordinate() at runmgr.go:330 after start() has returned) emits {\"Secret\":\"&lt;forge token&gt;\"} into an API response or event log — a leak class the pre-refactor design made structurally impossible."}, {"file": "internal/server/runmgr.go", "line": 250, "summary": "The server's github.com abuse warning drops the CLI's entiredb gate: main.go warns only when TokenURL and Jurisdiction are empty, while runmgr.start warns on IsGitHubDotCom(remote) unconditionally, and neither place blocks the run — the warning is returned in the 201 body where a fire-and-forget curl client never surfaces it.", "failure_scenario": "curl POST /api/runs with a github.com target and concurrency [128], discarding the response body (scripted usage) → the 'likely to trip secondary rate limits / abuse detection' warning formerly printed on stderr at HEAD (cmd/forgemark/main.go setupGeneric) is only present in the ignored JSON warnings array; the 128-writer sweep against github.com proceeds silently."}]</result>
+<usage><subagent_tokens>111357</subagent_tokens><tool_uses>20</tool_uses><duration_ms>363512</duration_ms></usage>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>ae2ac1adf5102d14b</task-id>
+<tool-use-id>toolu_01YW2xHeEPiuvnWnpNxko1bM</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-krk-Desktop-GitStore-forgemark/c11b8d4c-8f8a-4fbd-967b-148d908d89e3/tasks/ae2ac1adf5102d14b.output</output-file>
+<status>completed</status>
+<summary>Agent "Verify frontend candidates" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>All four candidates verified against the source.
+
+**C10 — newrun.js:176 / runmgr.go:58**
+Parse is `w.concurrency.value.split(',').map((s) =&gt; parseInt(s.trim(), 10)).filter((n) =&gt; n &gt; 0)` (newrun.js:176). `'abc'` → `[NaN]` → filtered → `[]`. Server side: `start()` calls `req.Workload.withDefaults()` (runmgr.go:225) *before* `bw.Validate()`, and withDefaults does `if len(ws.Concurrency) == 0 { ws.Concurrency = []int{1, 8, 32, 128} }` (runmgr.go:58-60). Validate's "no concurrency levels" check (config.go:65) never fires because defaults are applied first; no client-side guard exists. One correction to the candidate text: `'1;8;32'` yields `[1]` (parseInt parses the leading digit), not `[]` — only fully non-numeric input hits the 128-sweep path.
+
+**C11 — dashboard.js:194 / charts.js:91**
+`timeChart.push()` does `data[0].push(ts); vals.forEach(...); u.setData(data)` — every push re-feeds the entire accumulated arrays and triggers a full uPlot redraw (charts.js:91-94). The dashboard bucket handler calls push on three charts per bucket (dashboard.js:203, 212, 214). Server SSE replays every event after Last-Event-ID (or 0 on fresh open) — events.go:26-29, 108-134 — so a late join synchronously dispatches every historical bucket, each doing 3 full setData redraws: O(n²) canvas work. Replay is bounded by maxBufferedEvents but that's thousands of events for a long run. Mechanism fully confirmed; "freeze the tab" is a plausible consequence, not directly observed.
+
+**C12 — race.js:252 / collector.go**
+Session buckets carry both push fields (`ok/cas/err/p50_ms...`) and separate clone fields (`clone_ok/clone_err/clone_p50_ms...`) — collector.go:41-57, with OpClone routed to the clone counters (collector.go:63-72). race.js sets `state.isClone = ev.workload.strategy === 'clone'` (race.js:239) only, so for session `ok = v.ok` and `err = v.err + (v.cas || 0)` (race.js:252-253) — `clone_err` and clone latency are never read, so reliability's `attempts` excludes clones entirely. dashboard.js does show clones for session as a dashed series (dashboard.js:64-65, 202).
+
+**C13 — race.js:130-140 vs dashboard.js:131-142; race.js:229-233 vs dashboard.js:251-255**
+Countdown math is duplicated: both compute `t0 = Date.parse(l.at) / 1000`, `total = l.warmup_sec + l.duration_sec`, `elapsed = Math.min(Date.now() / 1000 - t0, total)`, `remain` from `total - elapsed` (dashboard uses Math.round, race uses Math.ceil), then render differently (progress bar vs mm:ss clock). The run_done banner is near-verbatim in both: `'Results saved to ', h('code', {}, ev.results_file), ' — ', h('a', { href: \`#history/${ev.results_file}\`, style: { color: 'var(--accent)' } }, 'compare in history')` (dashboard.js:252-254, race.js:230-232). Real duplication; the banner is verbatim, the clock math shares core logic with divergent rendering.
+
+---
+C10: CONFIRMED — withDefaults substitutes [1,8,32,128] for empty concurrency before Validate runs and no other guard rejects it ('abc' → []; note '1;8;32' actually yields [1], not []).
+C11: CONFIRMED — charts.js push() calls u.setData with the full arrays on every bucket (3 charts per bucket) and events.go replays all historical buckets on late join/reconnect, giving O(n²) redraw work.
+C12: CONFIRMED — session buckets carry separate clone_* fields (collector.go) but race.js only branches on strategy==='clone', so for session it reads v.ok/v.err/v.cas and clone failures/latency are invisible in all lanes including reliability, while dashboard.js plots session clones as a dashed series.
+C13: CONFIRMED — tickClock/tickProgress duplicate the t0/total/elapsed/remain countdown math (rendering differs) and the "Results saved to … compare in history" banner is near-verbatim identical in both views.</result>
+<usage><subagent_tokens>52792</subagent_tokens><tool_uses>9</tool_uses><duration_ms>71678</duration_ms></usage>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>a6661c17210ebcbff</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-krk-Desktop-GitStore-forgemark/c11b8d4c-8f8a-4fbd-967b-148d908d89e3/tasks/a6661c17210ebcbff.output</output-file>
+<status>completed</status>
+<summary>Agent "Verify runmgr candidates" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>C1: CONFIRMED — runmgr.go:79-84: the unconditional `if ws.CloneDepth == 0 { ws.CloneDepth = 1 }` immediately after the strategy-gated default makes the gated branch redundant and rewrites every clone_depth:0 (including clone/session) to 1, so the "0 = full history" promised by main.go:180 (`"clone/session strategy: shallow clone depth (1=tip; 0=full history)"`) and the GUI label "Clone depth (0 = full)" (newrun.js:56) is unrepresentable via the API; runs silently execute depth-1.
+
+C2: CONFIRMED — an omitted warmup_sec decodes to 0 and only `ws.WarmupSec &lt; 0` (runmgr.go:64) triggers the 10s default, so a minimal POST body gets 0s warmup vs the CLI's 10s (main.go:172), contradicting the struct doc "Zero fields take the CLI's flag defaults... so a minimal curl body works" (runmgr.go:35-36); the -1 sentinel is deliberate per the withDefaults comment, but the divergence for bare API clients is real, and only bare clients are affected — the GUI form pre-fills warmup_sec:'10' (newrun.js:40) and always sends a numeric value.
+
+C3: CONFIRMED — withDefaults rewrites files_min:0→1, file_size:0→2048, duration_sec:0→60 (runmgr.go:61-75) before Validate runs, so an explicit zero the CLI hard-rejects ("-files-min must be &gt;= 1", "-duration must be &gt; 0" in config.go:73-88 after parseFlags passes the explicit value through) silently runs a defaulted workload via the API; inherent to the zero-as-absent JSON design but the behavioral divergence is real.
+
+C4: REFUTED — the server does deliver the warning to the client in the 201 body (server.go:114 `writeJSON(w, http.StatusCreated, map[string]any{"id": run.ID, "warnings": warnings})`), which is the HTTP analogue of the CLI's stderr, and the surface move is explicitly intentional (main.go:88-89: "The abuse warning is a CLI concern: the server surfaces the same check in its UI instead of on stderr"); a curl client discarding the response body is the same self-inflicted loss as a CLI user piping stderr to /dev/null, and the GUI persists and surfaces the warnings (newrun.js:194-196), so no regression in where the warning lands.
+
+C5: CONFIRMED — resolveSecretSource (runmgr.go:244) is called serially per target inside `start`, which runs synchronously in the POST /api/runs handler (server.go:105), and each call execs the CLI with a 15s timeout (local.go:22,48), so two slow/re-authenticating secret_source targets can stall the POST up to ~30s while the concurrent phase that could absorb this (coordinate's per-target setup goroutines, runmgr.go:316-344) runs only after the handler returns; the mechanism is fully code-verified, with the mitigating note that typical `gh auth token` returns in well under a second and pre-resolving in the handler is what lets auth failures come back as a synchronous 4xx.</result>
+<usage><subagent_tokens>41816</subagent_tokens><tool_uses>6</tool_uses><duration_ms>94733</duration_ms></usage>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>ab0ddf4142544460b</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-krk-Desktop-GitStore-forgemark/c11b8d4c-8f8a-4fbd-967b-148d908d89e3/tasks/ab0ddf4142544460b.output</output-file>
+<status>completed</status>
+<summary>Agent "Verify scripts/CLI candidates" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>All four verified against source.
+
+C18 details: line 195-196 of compare-local.sh — `RESP="$(curl -sf -X POST "http://$ADDR/api/runs" ... &lt;&lt;&lt;"$BODY")" || { echo "...: $(curl -s -X POST "http://$ADDR/api/runs" ... &lt;&lt;&lt;"$BODY")" &gt;&amp;2; exit 1; }` — the fallback curl in the error echo POSTs the identical `$BODY` to the same endpoint, so a transient first failure makes the retry actually start a run whose ID is discarded.
+
+C19 details: compare-local.sh lines 97-116 awk-scrape `Jurisdiction:`/`Context:`/`User:` from `entire auth status` and python-filter `/api/v1/clusters` for the default cluster; internal/server/local.go `suggestEntire` (lines 106-158) plus `statusField` (162-172) implement the same scraping and cluster selection in Go, and `GET /api/local/suggest` is registered at server.go:48 while the script guarantees the server is up at lines 53-65 before the discovery block. login.sh line 17-18 runs `entire auth status` three times (one check, two awk captures); compare-local.sh runs it twice (check at 93, capture at 97).
+
+C20 details: main.go writeResults (lines 260-287) builds `map[string]any` with keys run_id/target/strategy/duration/warmup/repo_count/commit/levels, which exactly mirror the format-1 json tags on results.Doc (results.go lines 29-45), and duplicates the MkdirAll+MarshalIndent+WriteFile sequence in results.Write (lines 87-102). results.Load (lines 158-161) has a dedicated legacy branch (`Format == 0 &amp;&amp; len(Targets) == 0`) that normalizes CLI docs, so history parsing depends on the CLI map staying in sync with Doc's tags by hand. One mitigating fact: results.Write enforces the `forgemark-*.json` filename regex, so the CLI's arbitrary `-out` path could not use Write unchanged.
+
+C21 details: stats.go lines 29-35 (`sample`) and 39-45 (`Sample`) are field-for-field identical; conversion sites are the copy loop in SummarizeSamples (lines 63-65) and agent.go:58 (`a.sink.OnSample(Sample{Offset: s.offset, ...})`); the `Percentile` wrapper is stats.go:70. One caveat: unifying the type deletes both conversions but not the Percentile wrapper, which exists because `percentile` the function is unexported.
+
+C18: CONFIRMED — both curls POST the same $BODY to POST /api/runs (compare-local.sh:195-196), so the error-message retry can genuinely start a discarded run or 409.
+C19: CONFIRMED — compare-local.sh:97-116 duplicates local.go suggestEntire/statusField scraping while /api/local/suggest is served (server.go:48) by the server the script itself starts first; login.sh runs `entire auth status` 3x where one capture suffices.
+C20: CONFIRMED — writeResults' map keys mirror results.Doc format-1 tags and re-implement results.Write's mkdir/marshal/write, and results.Load's Format==0 branch parses CLI docs today (only caveat: Write's filename regex would reject arbitrary -out paths).
+C21: CONFIRMED — sample/Sample are structurally identical with conversions at stats.go:63-65 and agent.go:58 plus the Percentile wrapper at stats.go:70 (minor over-claim: one type removes the conversions but not the function wrapper).</result>
+<usage><subagent_tokens>40255</subagent_tokens><tool_uses>8</tool_uses><duration_ms>67521</duration_ms></usage>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>a17231f2e47ceb2f1</task-id>
+<tool-use-id>toolu_018goVcbFzNq3rqMvbbPJ1pM</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-krk-Desktop-GitStore-forgemark/c11b8d4c-8f8a-4fbd-967b-148d908d89e3/tasks/a17231f2e47ceb2f1.output</output-file>
+<status>completed</status>
+<summary>Agent "Verify collector/events/demo candidates" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>All four verified against the code.
+
+**C14** — `results.SeriesPoint` (results.go:57-66) has only `OK/CAS/Err/P50/P95/P99`; `emitBucket` (runmgr.go:493-496) copies exactly those from `BucketStats`, dropping all `Clone*` fields. The collector routes `OpClone` samples exclusively to clone counters (collector.go:63-73), so under strategy=clone every persisted point is zeros. history.js:88-90 replays `p.ok` and `p.p95_ms` (flat zero / all-null), while the sweep charts read `l.ops_per_sec` from `LevelResult`, which `summarize` remaps to clone numbers for strategy "clone" (stats.go:222-235) — so sweeps show real throughput, timeline is flat. Exactly as claimed.
+
+**C15** — `OpPush` is the zero value (`OpPush OpKind = iota`, stats.go:22). demo.go:113 builds `bench.Sample{Offset: ..., Dur: ...}` with no `Op`, unconditionally, and demoRunner is selected purely by `demo://` scheme regardless of strategy (runmgr.go:325). So the collector counts everything as push; live clone-strategy views read `clone_ok`/`clone_p50_ms` (dashboard.js:201-227, race.js:252-261) → zeros/dashes. Final `LevelResult` via `SummarizeSamples(..., d.w.Strategy, ...)`: with strategy "clone", `r.Pushes = r.Clones` (0), `r.OK = r.CloneOK` (0), percentiles zeroed (stats.go:222-235) — empty result. Exactly as claimed.
+
+**C16** — The cap check is a silent drop, not evict-oldest: `if l.closed || len(l.events) &gt;= maxBufferedEvents { return }` (events.go:54), and `run_done` goes through the same `emit` with no bypass (runmgr.go:433). One caveat on the claimed symptom: `finish` still calls `r.log.close()`, which closes all subscriber channels, so the server-side stream does end — but the client only clears its state on the `run_done` event (race.js:281-286, dashboard.js:244-256) and `onerror` just shows "reconnecting…", so the browser reconnect-loops forever and the badge never settles; the described user-visible effect holds. Reachability is low: bucket events are one per second for all targets combined (single ticker, runmgr.go:352-368), so 100,000 events needs a ~28-hour run — a real soak-test hazard, not a typical run.
+
+**C17** — No JS reads `.ops` or `.clones` from bucket stats (the only `t._tile.ops` hit is a DOM element name). Consumers derive attempts as `ok + err(+cas)` (race.js:252-257) and read only `ok/cas/err/clone_ok/clone_err` plus percentiles. And both are exactly derivable from the collector's increments: every push sample bumps `ops` and exactly one of `ok/cas/errs`; every clone sample bumps `clones` and one of `cloneOK/cloneErr` (collector.go:59-84). Dead wire weight confirmed (severity is trivial — a few bytes per event).
+
+C14: CONFIRMED — SeriesPoint carries no clone fields and emitBucket copies only push-side stats, so clone-strategy series persist as zeros while sweep charts (remapped LevelResult) show real data.
+C15: CONFIRMED — demo.go:113 synthesizes samples with zero-value Op (=OpPush) regardless of strategy, so under strategy=clone the collector/live views' clone_* fields stay zero and summarize's clone remap zeroes the final LevelResult.
+C16: CONFIRMED — emit silently drops (not evicts) at the 100k cap with no run_done bypass, and clients only terminate on run_done so they reconnect-loop forever; caveat: log.close() does close the server stream, and at ~1 event/sec the cap needs a ~28-hour run.
+C17: CONFIRMED — no frontend code reads BucketStats.Ops or .Clones, and both are exact sums of the ok/cas/err and clone_ok/clone_err counters already sent.</result>
+<usage><subagent_tokens>54129</subagent_tokens><tool_uses>10</tool_uses><duration_ms>92983</duration_ms></usage>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>a8e908c12097ad4cb</task-id>
+<tool-use-id>toolu_01Q2U9KsK84krAAKq2FAvFYR</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-krk-Desktop-GitStore-forgemark/c11b8d4c-8f8a-4fbd-967b-148d908d89e3/tasks/a8e908c12097ad4cb.output</output-file>
+<status>completed</status>
+<summary>Agent "Verify serve/local/config candidates" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>C6: CONFIRMED — Verified by execution: `net.SplitHostPort(":8377")` returns host `""` with nil err, `isLoopback` (serve.go:38) returns true for `""`, and `http.Server{Addr: ":8377"}` (server.go:57) wildcard-binds all interfaces, so the warning is suppressed exactly in the all-interfaces case.
+
+C7: CONFIRMED — local.go:113-114 only checks `slug == "" || loginHost == ""`; `handle` is never validated, so a missing "User:" line yields `handle == ""` and the suggestion returns repo `et/forgemark-/forgemark-target` (line 146) instead of a discovery error.
+
+C8: CONFIRMED — `runCLI("entire", "auth", "status")` (local.go:107) and `runCLI("entire", "api", "/api/v1/clusters")` (line 122) run sequentially though the clusters argv is fixed and independent of status output; each is bounded by the 15s `cliTimeout`, so worst case ~30s serial where handleLocalSuggest (lines 82-84) already demonstrates the parallel pattern.
+
+C9: PLAUSIBLE — The "Never serialized." comment (config.go:27) has no `json:"-"` enforcement and `targetState.spec` holds the live token until `coordinate()` zeroes it (runmgr.go:330), but I traced every current marshal path (writeJSON of runStatus/targetStatus/TargetInfo/suggestEntry, eventLog payloads, results.Doc, CLI MarshalIndent) and none touches `bench.Target`, so it is a real latent risk with no current leak.</result>
+<usage><subagent_tokens>34009</subagent_tokens><tool_uses>8</tool_uses><duration_ms>128197</duration_ms></usage>
+</task-notification>
+
+---
+
+Fix all Findings
+
+---
+
+Check whether the remaining code-review verifier agents have completed; then compile the final ranked findings JSON (max 10, most-severe first) per the /code-review instructions and output it.
+
+---
+
+Finish the fixes please sorry
+
+---
+
+Now we need to get this ready to be open sourced. first off, let's clean up the UX, right now, the form is too confusing right? Can we also use the same design language as entire.io please?
+
+---
+
+I also want to add for gitlab can you do that?
+
+---
+
+Okay, I would love to please get rid of the demo race please.
+
+---
+
+give me what the PR draft will look like
+
+---
+
+Create the branch first and do commits to the branch to I can save to remote

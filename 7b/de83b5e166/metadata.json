@@ -1,0 +1,26 @@
+{
+  "cli_version": "0.8.42",
+  "checkpoint_id": "7bde83b5e166",
+  "strategy": "manual-commit",
+  "branch": "feat/web-gui-race",
+  "checkpoints_count": 31,
+  "files_touched": [
+    "README.md"
+  ],
+  "sessions": [
+    {
+      "metadata": "/7b/de83b5e166/0/metadata.json",
+      "transcript": "/7b/de83b5e166/0/full.jsonl",
+      "compact_transcript": "/7b/de83b5e166/0/transcript.jsonl",
+      "content_hash": "/7b/de83b5e166/0/content_hash.txt",
+      "prompt": "/7b/de83b5e166/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 31398,
+    "cache_creation_tokens": 1525133,
+    "cache_read_tokens": 95589336,
+    "output_tokens": 303191,
+    "api_call_count": 350
+  }
+}
