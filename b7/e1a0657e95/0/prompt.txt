@@ -1,0 +1,11 @@
+Maybe we should never have built a web UI, maybe it should have always been the same concepts, but via TUI, which is closer to forgemark originally right?
+
+---
+
+Perfect. Then, we should keep the web as a demo surface only and keep the core of forgemark largely pure to the original state. Is that possible? This way then we can do a TUI for the same
+
+---
+
+Let's isolate the web stuff on a different branch, the core components that are shared by the web as well as the TUI on another branch and then the TUI itseld on another branch. 
+
+First, let's work on a PR for the elements that will be commonly required, wether TUI or Web and PR that first. what say?
