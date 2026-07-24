@@ -22,7 +22,8 @@
 // (clone+push loop per agent).
 //
 // The benchmark engine itself lives in internal/bench; this package is the
-// flag-driven CLI over it.
+// flag-driven CLI over it, and `forgemark serve` is the web demo GUI over the
+// same engine.
 //
 // Only ever run this against infrastructure you own or are explicitly
 // authorized to load-test.
@@ -47,6 +48,15 @@ import (
 )
 
 func main() {
+	// `forgemark serve` starts the web demo GUI; anything else is the classic
+	// flag-driven CLI (which takes no positional args, so this can't collide).
+	if len(os.Args) > 1 && os.Args[1] == "serve" {
+		if err := runServe(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "forgemark: "+err.Error())
+			os.Exit(1)
+		}
+		return
+	}
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, "forgemark: "+err.Error())
 		os.Exit(1)

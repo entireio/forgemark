@@ -1,0 +1,621 @@
+package server
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net/url"
+	"slices"
+	"strconv"
+	"sync"
+	"time"
+
+	"github.com/entireio/forgemark/internal/bench"
+	"github.com/entireio/forgemark/internal/results"
+)
+
+// maxTargets bounds one comparison run. Eight matches the UI's fixed target
+// palette, and more than eight concurrent load generators from one laptop
+// would perturb each other anyway.
+const maxTargets = 8
+
+// keepFinishedRuns is how many completed runs stay resident (with their full
+// event logs) for the UI session; older ones live on only as result docs.
+const keepFinishedRuns = 20
+
+// levelRunner is what the coordinator drives, one per target: bench.Runner for
+// a real forge, demoRunner for the synthetic offline target.
+type levelRunner interface {
+	Label() string
+	Nodes() int
+	ObjectFormat() string
+	RunLevel(ctx context.Context, concurrency int) (bench.LevelResult, error)
+}
+
+// WorkloadSpec is the wire shape of a workload. The numeric fields are
+// pointers so an ABSENT field (nil → the CLI flag default, a minimal curl
+// body works) is distinguishable from an EXPLICIT value — an explicit 0 is
+// meaningful for warmup_sec (no warm-up) and clone_depth (full history), and
+// an explicit invalid 0 (files_min, duration_sec) must reach Validate and be
+// rejected exactly like the CLI rejects it, not silently defaulted.
+type WorkloadSpec struct {
+	Strategy       string   `json:"strategy"`
+	Concurrency    []int    `json:"concurrency"`
+	DurationSec    *float64 `json:"duration_sec"`
+	WarmupSec      *float64 `json:"warmup_sec"`
+	FilesMin       *int     `json:"files_min"`
+	FilesMax       *int     `json:"files_max"`
+	FileSize       *int     `json:"file_size"`
+	BranchPrefix   string   `json:"branch_prefix"`
+	SessionCommits *int     `json:"session_commits"`
+	CloneDepth     *int     `json:"clone_depth"`
+	BaseRef        string   `json:"base_ref"`
+}
+
+// orDefault fills an absent (nil) field with its CLI flag default. Explicit
+// values — including zeros — pass through untouched for Validate to judge.
+func orDefault[T any](p *T, def T) *T {
+	if p == nil {
+		return &def
+	}
+	return p
+}
+
+// withDefaults fills absent fields with the CLI flag defaults. Only nil means
+// absent: an explicit `"concurrency": []` stays empty and fails Validate, and
+// explicit zeros keep their documented meanings (warmup 0 = none, clone_depth
+// 0 = full history) or their documented errors (files_min/duration).
+func (ws WorkloadSpec) withDefaults() WorkloadSpec {
+	if ws.Strategy == "" {
+		ws.Strategy = "branch"
+	}
+	if ws.Concurrency == nil {
+		ws.Concurrency = []int{1, 8, 32, 128}
+	}
+	ws.DurationSec = orDefault(ws.DurationSec, 60)
+	ws.WarmupSec = orDefault(ws.WarmupSec, 10)
+	ws.FilesMin = orDefault(ws.FilesMin, 1)
+	ws.FilesMax = orDefault(ws.FilesMax, 10)
+	ws.FileSize = orDefault(ws.FileSize, 2048)
+	ws.SessionCommits = orDefault(ws.SessionCommits, 5)
+	ws.CloneDepth = orDefault(ws.CloneDepth, 1)
+	return ws
+}
+
+// toWorkload assumes withDefaults already ran, so every pointer is non-nil.
+func (ws WorkloadSpec) toWorkload(runID string) bench.Workload {
+	return bench.Workload{
+		RunID:          runID,
+		Strategy:       ws.Strategy,
+		BranchPrefix:   ws.BranchPrefix,
+		Concurrency:    ws.Concurrency,
+		Duration:       time.Duration(*ws.DurationSec * float64(time.Second)),
+		Warmup:         time.Duration(*ws.WarmupSec * float64(time.Second)),
+		Commit:         bench.CommitConfig{FilesMin: *ws.FilesMin, FilesMax: *ws.FilesMax, FileSize: *ws.FileSize},
+		SessionCommits: *ws.SessionCommits,
+		CloneDepth:     *ws.CloneDepth,
+		BaseRef:        ws.BaseRef,
+	}
+}
+
+// TargetSpec is the wire shape of one target as POSTed. Secret exists ONLY
+// here: it is consumed into the bench.Target and never stored on the run, so
+// no status/list/event payload can leak it. SecretSource ("gh" | "entire")
+// makes the server pull the credential from the operator's CLI at run start
+// instead — see local.go — so the browser never holds the token at all.
+type TargetSpec struct {
+	Name         string   `json:"name"`
+	Remote       string   `json:"remote"`
+	Repos        []string `json:"repos"`
+	User         string   `json:"user"`
+	Secret       string   `json:"secret,omitempty"`
+	SecretSource string   `json:"secret_source,omitempty"`
+	Insecure     bool     `json:"insecure"`
+	ObjectFormat string   `json:"object_format"`
+	TokenURL     string   `json:"token_url"`
+	Jurisdiction string   `json:"jurisdiction"`
+	ClientID     string   `json:"client_id"`
+}
+
+func (ts TargetSpec) toTarget() bench.Target {
+	return bench.Target{
+		Name: ts.Name, Remote: ts.Remote, Repos: ts.Repos, User: ts.User,
+		Secret: ts.Secret, Insecure: ts.Insecure, ObjectFmt: ts.ObjectFormat,
+		TokenURL: ts.TokenURL, Jurisdiction: ts.Jurisdiction, ClientID: ts.ClientID,
+	}
+}
+
+// TargetInfo is the redacted, stable identity of a target within a run.
+type TargetInfo struct {
+	ID     int    `json:"id"`
+	Name   string `json:"name"`
+	Remote string `json:"remote"`
+}
+
+type startRequest struct {
+	ConfirmAuthorized bool         `json:"confirm_authorized"`
+	Workload          WorkloadSpec `json:"workload"`
+	Targets           []TargetSpec `json:"targets"`
+}
+
+// targetState is one target's live state inside a run. dead/fatalErr/results
+// are guarded by the run's mutex; the collector has its own.
+type targetState struct {
+	id     int
+	name   string
+	spec   bench.Target // Secret is zeroed as soon as the runner is built
+	runner levelRunner
+	col    *collector
+
+	label    string
+	dead     bool
+	fatalErr string
+	results  []bench.LevelResult
+	series   []results.SeriesPoint // 1s buckets, retained for the result doc
+}
+
+// Run is one comparison run: N targets driven through one workload with
+// level-aligned starts.
+type Run struct {
+	ID        string
+	StartedAt time.Time
+	log       *eventLog
+	ctx       context.Context
+	cancel    context.CancelFunc
+
+	workload WorkloadSpec // normalized, as accepted
+	bw       bench.Workload
+
+	mu          sync.Mutex
+	state       string // starting | running | done | cancelled | failed
+	targets     []*targetState
+	levelIdx    int
+	levelConc   int
+	resultsFile string
+}
+
+var errRunActive = errors.New("a benchmark run is already active; cancel it or wait for it to finish")
+
+// RunManager owns every run of a server session and enforces the
+// one-active-run-at-a-time rule: overlapping load generators would corrupt
+// each other's numbers.
+type RunManager struct {
+	mu         sync.Mutex
+	runs       map[string]*Run
+	order      []string // creation order, for pruning
+	active     *Run
+	resultsDir string
+}
+
+func newRunManager(resultsDir string) *RunManager {
+	return &RunManager{runs: make(map[string]*Run), resultsDir: resultsDir}
+}
+
+func (m *RunManager) get(id string) *Run {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.runs[id]
+}
+
+func (m *RunManager) list() []*Run {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]*Run, 0, len(m.order))
+	for i := len(m.order) - 1; i >= 0; i-- { // newest first
+		out = append(out, m.runs[m.order[i]])
+	}
+	return out
+}
+
+// start validates a request and launches its coordinator. It returns
+// user-facing warnings (e.g. the github.com abuse note) alongside the run.
+func (m *RunManager) start(req startRequest) (*Run, []string, error) {
+	if !req.ConfirmAuthorized {
+		return nil, nil, errors.New("confirm_authorized must be true: only benchmark infrastructure you own or are explicitly authorized to load-test")
+	}
+	if len(req.Targets) == 0 {
+		return nil, nil, errors.New("at least one target is required")
+	}
+	if len(req.Targets) > maxTargets {
+		return nil, nil, fmt.Errorf("at most %d targets per run", maxTargets)
+	}
+
+	ws := req.Workload.withDefaults()
+	runID := bench.NewRunID()
+	bw := ws.toWorkload(runID)
+	if err := bw.Validate(); err != nil {
+		return nil, nil, err
+	}
+
+	var warnings []string
+	targets := make([]*targetState, len(req.Targets))
+	for i, ts := range req.Targets {
+		bt := ts.toTarget()
+		name := ts.Name
+		if name == "" {
+			name = defaultTargetName(bt.Remote, i)
+		}
+		if ts.SecretSource != "" && ts.Secret != "" {
+			return nil, nil, fmt.Errorf("target %s: pass secret or secret_source, not both", name)
+		}
+		if bench.IsGitHubDotCom(bt.Remote) {
+			if hi := slices.Max(bw.Concurrency); hi > 16 {
+				warnings = append(warnings, fmt.Sprintf(
+					"concurrency %d against github.com is likely to trip secondary rate limits / abuse detection — keep it low (e.g. 1,4)", hi))
+			}
+		}
+		targets[i] = &targetState{id: i, name: name, spec: bt, col: &collector{}}
+	}
+
+	// Resolve CLI-sourced secrets concurrently: each exec can block on a slow
+	// CLI (15s timeout apiece), and serial resolution would stack that latency
+	// into this synchronous POST handler. Failures still surface here as a 400
+	// so a bad login is immediate feedback, not a mid-run target death.
+	var (
+		secWG   sync.WaitGroup
+		secMu   sync.Mutex
+		secErrs []error
+	)
+	for i, ts := range req.Targets {
+		if ts.SecretSource == "" {
+			continue
+		}
+		secWG.Add(1)
+		go func(t *targetState, source string) {
+			defer secWG.Done()
+			user, secret, err := resolveSecretSource(source, t.spec.Remote)
+			if err != nil {
+				secMu.Lock()
+				secErrs = append(secErrs, fmt.Errorf("target %s: %w", t.name, err))
+				secMu.Unlock()
+				return
+			}
+			t.spec.Secret = secret
+			if user != "" && t.spec.User == "" {
+				t.spec.User = user // e.g. glab → oauth2; explicit -user still wins
+			}
+		}(targets[i], ts.SecretSource)
+	}
+	secWG.Wait()
+	if len(secErrs) > 0 {
+		return nil, nil, errors.Join(secErrs...)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	run := &Run{
+		ID: runID, StartedAt: time.Now(), log: newEventLog(),
+		ctx: ctx, cancel: cancel,
+		workload: ws, bw: bw, state: "starting", targets: targets,
+	}
+
+	m.mu.Lock()
+	if m.active != nil {
+		m.mu.Unlock()
+		cancel()
+		return nil, nil, errRunActive
+	}
+	m.active = run
+	m.runs[run.ID] = run
+	m.order = append(m.order, run.ID)
+	m.pruneLocked()
+	m.mu.Unlock()
+
+	run.log.emit("hello", run.helloEvent())
+	go run.coordinate(m)
+	return run, warnings, nil
+}
+
+// pruneLocked drops the oldest finished runs beyond keepFinishedRuns.
+// Caller holds m.mu.
+func (m *RunManager) pruneLocked() {
+	finished := 0
+	for i := len(m.order) - 1; i >= 0; i-- {
+		r := m.runs[m.order[i]]
+		if r == m.active {
+			continue
+		}
+		finished++
+		if finished > keepFinishedRuns {
+			delete(m.runs, m.order[i])
+			m.order = append(m.order[:i], m.order[i+1:]...)
+		}
+	}
+}
+
+func (m *RunManager) clearActive(r *Run) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.active == r {
+		m.active = nil
+	}
+}
+
+// coordinate is the run's driver goroutine: build runners, then walk the
+// concurrency sweep with a barrier per level so every target starts each
+// level at the same instant (the whole point of a comparison run).
+func (r *Run) coordinate(m *RunManager) {
+	defer r.cancel()
+
+	// Resolve every target concurrently — entiredb setup probes the cluster.
+	// A target that fails setup is dead but doesn't kill the comparison.
+	var wg sync.WaitGroup
+	for _, t := range r.targets {
+		wg.Add(1)
+		go func(t *targetState) {
+			defer wg.Done()
+			var (
+				lr  levelRunner
+				err error
+			)
+			if isDemoRemote(t.spec.Remote) {
+				lr, err = newDemoRunner(t.spec.Remote, r.bw, t.col)
+			} else {
+				lr, err = bench.NewRunner(r.ctx, t.spec, r.bw, t.col)
+			}
+			t.spec.Secret = "" // consumed; nothing on the run retains it
+			if err != nil {
+				r.markDead(t, -1, err)
+				return
+			}
+			r.mu.Lock()
+			t.runner = lr
+			t.label = lr.Label()
+			r.mu.Unlock()
+			r.log.emit("target_ready", map[string]any{
+				"target": t.id, "label": lr.Label(), "nodes": lr.Nodes(), "object_format": lr.ObjectFormat(),
+			})
+		}(t)
+	}
+	wg.Wait()
+
+	if r.aliveTargets() == nil {
+		r.finish(m, "failed")
+		return
+	}
+	r.setState("running")
+
+	// One ticker per run: a single bucket event per second carries every
+	// target's stats, so chart columns align by construction.
+	tickerDone := make(chan struct{})
+	tickerStopped := make(chan struct{})
+	go func() {
+		defer close(tickerStopped)
+		tick := time.NewTicker(time.Second)
+		defer tick.Stop()
+		for {
+			select {
+			case <-tick.C:
+				r.emitBucket()
+			case <-tickerDone:
+				return
+			}
+		}
+	}()
+
+	for li, c := range r.bw.Concurrency {
+		if r.ctx.Err() != nil || r.aliveTargets() == nil {
+			break
+		}
+		r.mu.Lock()
+		r.levelIdx = li
+		r.levelConc = c
+		r.mu.Unlock()
+		r.log.emit("level_start", map[string]any{
+			"level_index": li, "concurrency": c,
+			"warmup_sec": r.bw.Warmup.Seconds(), "duration_sec": r.bw.Duration.Seconds(),
+			"at": time.Now().UTC(),
+		})
+
+		var lwg sync.WaitGroup
+		for _, t := range r.aliveTargets() {
+			lwg.Add(1)
+			go func(t *targetState) {
+				defer lwg.Done()
+				t.col.reset()
+				res, err := t.runner.RunLevel(r.ctx, c)
+				if err != nil {
+					r.markDead(t, li, err)
+					return
+				}
+				r.mu.Lock()
+				t.results = append(t.results, res)
+				r.mu.Unlock()
+			}(t)
+		}
+		lwg.Wait()
+
+		results := map[string]bench.LevelResult{}
+		r.mu.Lock()
+		for _, t := range r.targets {
+			if len(t.results) > li {
+				results[strconv.Itoa(t.id)] = t.results[li]
+			}
+		}
+		r.mu.Unlock()
+		r.log.emit("level_result", map[string]any{
+			"level_index": li, "concurrency": c, "targets": results,
+		})
+	}
+
+	close(tickerDone)
+	<-tickerStopped
+
+	state := "done"
+	if r.ctx.Err() != nil {
+		state = "cancelled"
+	} else if r.aliveTargets() == nil {
+		state = "failed"
+	}
+	r.finish(m, state)
+}
+
+func (r *Run) finish(m *RunManager, state string) {
+	r.setState(state)
+	resultsFile := r.persistResults(m.resultsDir)
+	r.mu.Lock()
+	r.resultsFile = resultsFile
+	r.mu.Unlock()
+	r.log.emit("run_done", map[string]any{
+		"state": state, "results_file": resultsFile, "at": time.Now().UTC(),
+	})
+	r.log.close()
+	m.clearActive(r)
+}
+
+// persistResults writes the run's format-2 result doc and returns its bare
+// filename ("" on failure — the run still finishes; persistence is
+// best-effort).
+func (r *Run) persistResults(dir string) string {
+	r.mu.Lock()
+	doc := results.Doc{
+		Format:   2,
+		RunID:    r.ID,
+		Strategy: r.workload.Strategy,
+		Duration: r.bw.Duration.String(),
+		Warmup:   r.bw.Warmup.String(),
+		Commit:   r.bw.CommitDesc(),
+		State:    r.state,
+	}
+	for _, t := range r.targets {
+		doc.Targets = append(doc.Targets, results.TargetResult{
+			Name: t.name, Label: t.label, Error: t.fatalErr,
+			Levels: slices.Clone(t.results), Series: slices.Clone(t.series),
+		})
+	}
+	r.mu.Unlock()
+
+	file := "forgemark-" + r.ID + ".json"
+	if err := results.Write(dir, file, doc); err != nil {
+		r.log.emit("target_error", map[string]any{
+			"target": -1, "level_index": -1, "fatal": false,
+			"message": "persist results: " + err.Error(),
+		})
+		return ""
+	}
+	return file
+}
+
+func (r *Run) emitBucket() {
+	r.mu.Lock()
+	li, c := r.levelIdx, r.levelConc
+	alive := make([]*targetState, 0, len(r.targets))
+	for _, t := range r.targets {
+		if !t.dead {
+			alive = append(alive, t)
+		}
+	}
+	r.mu.Unlock()
+	if len(alive) == 0 {
+		return
+	}
+	now := time.Now().Unix()
+	stats := make(map[string]BucketStats, len(alive))
+	for _, t := range alive {
+		st := t.col.snapshot()
+		stats[strconv.Itoa(t.id)] = st
+		r.mu.Lock()
+		if len(t.series) < maxBufferedEvents {
+			t.series = append(t.series, results.SeriesPoint{
+				T: now, Level: li, OK: st.OK, CAS: st.CAS, Err: st.Err,
+				P50: st.P50, P95: st.P95, P99: st.P99,
+				CloneOK: st.CloneOK, CloneErr: st.CloneErr,
+				CloneP50: st.CloneP50, CloneP95: st.CloneP95, CloneP99: st.CloneP99,
+			})
+		}
+		r.mu.Unlock()
+	}
+	r.log.emit("bucket", map[string]any{
+		"level_index": li, "concurrency": c, "t": now, "targets": stats,
+	})
+}
+
+func (r *Run) markDead(t *targetState, levelIdx int, err error) {
+	r.mu.Lock()
+	t.dead = true
+	t.fatalErr = err.Error()
+	r.mu.Unlock()
+	r.log.emit("target_error", map[string]any{
+		"target": t.id, "level_index": levelIdx, "message": err.Error(), "fatal": true,
+	})
+}
+
+// aliveTargets returns the targets still participating, or nil when none are.
+func (r *Run) aliveTargets() []*targetState {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []*targetState
+	for _, t := range r.targets {
+		if !t.dead {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+func (r *Run) setState(s string) {
+	r.mu.Lock()
+	r.state = s
+	r.mu.Unlock()
+}
+
+func (r *Run) helloEvent() map[string]any {
+	infos := make([]TargetInfo, len(r.targets))
+	for i, t := range r.targets {
+		infos[i] = TargetInfo{ID: t.id, Name: t.name, Remote: t.spec.Remote}
+	}
+	return map[string]any{
+		"run_id":     r.ID,
+		"state":      "starting",
+		"started_at": r.StartedAt.UTC(),
+		"workload":   r.workload,
+		"targets":    infos,
+		"levels":     r.bw.Concurrency,
+	}
+}
+
+// targetStatus is the redacted per-target view in GET responses.
+type targetStatus struct {
+	TargetInfo
+	Label   string              `json:"label,omitempty"`
+	Dead    bool                `json:"dead,omitempty"`
+	Error   string              `json:"error,omitempty"`
+	Results []bench.LevelResult `json:"results,omitempty"`
+}
+
+// runStatus is the redacted run view for GET /api/runs and /api/runs/{id}.
+type runStatus struct {
+	ID          string         `json:"id"`
+	State       string         `json:"state"`
+	StartedAt   time.Time      `json:"started_at"`
+	Workload    WorkloadSpec   `json:"workload"`
+	Levels      []int          `json:"levels"`
+	LevelIndex  int            `json:"level_index"`
+	Targets     []targetStatus `json:"targets"`
+	ResultsFile string         `json:"results_file,omitempty"`
+}
+
+func (r *Run) status() runStatus {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	st := runStatus{
+		ID: r.ID, State: r.state, StartedAt: r.StartedAt.UTC(),
+		Workload: r.workload, Levels: r.bw.Concurrency, LevelIndex: r.levelIdx,
+		ResultsFile: r.resultsFile,
+	}
+	for _, t := range r.targets {
+		st.Targets = append(st.Targets, targetStatus{
+			TargetInfo: TargetInfo{ID: t.id, Name: t.name, Remote: t.spec.Remote},
+			Label:      t.label, Dead: t.dead, Error: t.fatalErr,
+			Results: slices.Clone(t.results),
+		})
+	}
+	return st
+}
+
+// defaultTargetName labels an unnamed target by its remote host.
+func defaultTargetName(remote string, i int) string {
+	if u, err := url.Parse(remote); err == nil && u.Host != "" {
+		return u.Host
+	}
+	return fmt.Sprintf("target-%d", i+1)
+}
