@@ -1,4 +1,4 @@
-package main
+package bench
 
 import (
 	"context"
@@ -47,7 +47,7 @@ func (a *agent) runClones(ctx context.Context, start time.Time) {
 			return
 		}
 		res := readOutcome(err)
-		a.samples = append(a.samples, sample{offset: t0.Sub(start), dur: time.Since(t0), res: res, op: opClone, msg: errMsg(res, err)})
+		a.record(Sample{Offset: t0.Sub(start), Dur: time.Since(t0), Res: res, Op: OpClone, Msg: errMsg(res, err)})
 	}
 }
 
@@ -64,7 +64,7 @@ func (a *agent) runSessions(ctx context.Context, start time.Time) {
 			return
 		}
 		res := readOutcome(err)
-		a.samples = append(a.samples, sample{offset: t0.Sub(start), dur: time.Since(t0), res: res, op: opClone, msg: errMsg(res, err)})
+		a.record(Sample{Offset: t0.Sub(start), Dur: time.Since(t0), Res: res, Op: OpClone, Msg: errMsg(res, err)})
 		if err != nil {
 			continue // clone failed — next session retries
 		}
@@ -74,7 +74,7 @@ func (a *agent) runSessions(ctx context.Context, start time.Time) {
 		pushed := false
 		for k := 0; k < a.sess.commits && ctx.Err() == nil; k++ {
 			if err := a.commit(rng, k); err != nil {
-				a.samples = append(a.samples, sample{offset: time.Since(start), res: outcomeErr, op: opPush, msg: err.Error()})
+				a.record(Sample{Offset: time.Since(start), Res: OutcomeErr, Op: OpPush, Msg: err.Error()})
 				continue
 			}
 			t1 := time.Now()
@@ -86,7 +86,7 @@ func (a *agent) runSessions(ctx context.Context, start time.Time) {
 				break // window closed mid-push: stop, but still clean up sessRef
 			}
 			o := classify(perr)
-			a.samples = append(a.samples, sample{offset: t1.Sub(start), dur: time.Since(t1), res: o, op: opPush, msg: errMsg(o, perr)})
+			a.record(Sample{Offset: t1.Sub(start), Dur: time.Since(t1), Res: o, Op: OpPush, Msg: errMsg(o, perr)})
 		}
 		// Abandon the session branch by deleting it, so ephemeral …-sN refs don't
 		// accumulate on the target repo across the sweep (a growing receive-pack
@@ -219,10 +219,10 @@ func normalizeBaseRef(ref string) plumbing.ReferenceName {
 	return plumbing.NewBranchReferenceName(ref)
 }
 
-// readOutcome maps a clone/fetch result to an outcome (reads have no CAS).
-func readOutcome(err error) outcome {
+// readOutcome maps a clone/fetch result to an Outcome (reads have no CAS).
+func readOutcome(err error) Outcome {
 	if err == nil {
-		return outcomeOK
+		return OutcomeOK
 	}
-	return outcomeErr
+	return OutcomeErr
 }

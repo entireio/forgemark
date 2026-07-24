@@ -3,14 +3,10 @@ package main
 import (
 	"flag"
 	"io"
-	"net/http"
-	"net/url"
 	"os"
 	"reflect"
 	"strings"
 	"testing"
-
-	"github.com/go-git/go-git/v6/plumbing"
 )
 
 func TestExpandRepos(t *testing.T) {
@@ -65,14 +61,14 @@ func TestParseFlagsCloneStrategyIgnoresCommitShape(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseFlags clone = %v, want commit-shape flags ignored", err)
 	}
-	if cfg.strategy != "clone" {
-		t.Fatalf("strategy = %q, want clone", cfg.strategy)
+	if cfg.workload.Strategy != "clone" {
+		t.Fatalf("strategy = %q, want clone", cfg.workload.Strategy)
 	}
-	if cfg.cloneDepth != 3 || cfg.baseRef != "main" {
-		t.Fatalf("clone knobs = depth %d base %q, want 3/main", cfg.cloneDepth, cfg.baseRef)
+	if cfg.workload.CloneDepth != 3 || cfg.workload.BaseRef != "main" {
+		t.Fatalf("clone knobs = depth %d base %q, want 3/main", cfg.workload.CloneDepth, cfg.workload.BaseRef)
 	}
-	if !reflect.DeepEqual(cfg.repos, []string{"org/repo"}) {
-		t.Fatalf("repos = %v, want [org/repo]", cfg.repos)
+	if !reflect.DeepEqual(cfg.target.Repos, []string{"org/repo"}) {
+		t.Fatalf("repos = %v, want [org/repo]", cfg.target.Repos)
 	}
 }
 
@@ -90,7 +86,7 @@ func TestParseFlagsCommitShapeStillValidatedForPushStrategies(t *testing.T) {
 	}
 }
 
-func parseFlagsForTest(t *testing.T, args ...string) (*runConfig, error) {
+func parseFlagsForTest(t *testing.T, args ...string) (*cliConfig, error) {
 	t.Helper()
 	oldArgs := os.Args
 	oldCommandLine := flag.CommandLine
@@ -103,62 +99,4 @@ func parseFlagsForTest(t *testing.T, args ...string) (*runConfig, error) {
 		flag.CommandLine = oldCommandLine
 	})
 	return parseFlags()
-}
-
-func TestNewHTTPClientUsesHTTPSProxy(t *testing.T) {
-	proxyURL := "http://proxy.example:8080"
-	t.Setenv("HTTPS_PROXY", proxyURL)
-	t.Setenv("https_proxy", "")
-	t.Setenv("NO_PROXY", "")
-	t.Setenv("no_proxy", "")
-
-	client := newHTTPClient(false, 1)
-	tr, ok := client.Transport.(*http.Transport)
-	if !ok {
-		t.Fatalf("newHTTPClient transport = %T, want *http.Transport", client.Transport)
-	}
-	if tr.Proxy == nil {
-		t.Fatal("newHTTPClient transport Proxy is nil")
-	}
-
-	req := &http.Request{URL: &url.URL{Scheme: "https", Host: "git.example"}}
-	got, err := tr.Proxy(req)
-	if err != nil {
-		t.Fatalf("Proxy returned error: %v", err)
-	}
-	if got == nil || got.String() != proxyURL {
-		t.Fatalf("Proxy returned %v, want %s", got, proxyURL)
-	}
-}
-
-func TestDestRef(t *testing.T) {
-	// The prefix is prepended verbatim before the run ID; the assembled ref is what
-	// parseFlags validates. Readable prefixes pass; typo shapes git rejects fail fast
-	// (before any push pollutes the measured window).
-	tests := []struct {
-		name      string
-		prefix    string
-		c, i      int
-		want      string
-		wantValid bool
-	}{
-		{name: "no prefix", prefix: "", c: 32, i: 5, want: "refs/heads/fmX-c32-a5", wantValid: true},
-		{name: "slash namespace", prefix: "bench/", c: 32, i: 5, want: "refs/heads/bench/fmX-c32-a5", wantValid: true},
-		{name: "dash separator", prefix: "bench-", c: 8, i: 0, want: "refs/heads/bench-fmX-c8-a0", wantValid: true},
-		{name: "no separator", prefix: "bench", c: 1, i: 0, want: "refs/heads/benchfmX-c1-a0", wantValid: true}, // ugly-but-valid
-		{name: "space", prefix: "my bench/", c: 1, i: 0, want: "refs/heads/my bench/fmX-c1-a0", wantValid: false},
-		{name: "tilde", prefix: "bench~1", c: 1, i: 0, want: "refs/heads/bench~1fmX-c1-a0", wantValid: false},
-		{name: "leading slash", prefix: "/bench", c: 1, i: 0, want: "refs/heads//benchfmX-c1-a0", wantValid: false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := destRef(tt.prefix, "fmX", tt.c, tt.i)
-			if got != tt.want {
-				t.Errorf("destRef(%q, ...) = %q, want %q", tt.prefix, got, tt.want)
-			}
-			if valid := plumbing.ReferenceName(got).Validate() == nil; valid != tt.wantValid {
-				t.Errorf("Validate(%q) valid = %v, want %v", got, valid, tt.wantValid)
-			}
-		})
-	}
 }

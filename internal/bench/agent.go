@@ -1,4 +1,4 @@
-package main
+package bench
 
 import (
 	"context"
@@ -38,21 +38,32 @@ type agent struct {
 	ref      string // destination ref, e.g. refs/heads/<run>-a7
 	objFmt   formatcfg.ObjectFormat
 
-	cfg   *commitConfig
+	cfg   *CommitConfig
 	creds credentialProvider
 	httpc *http.Client
 	clone *cloneConfig   // non-nil → "clone" strategy (clone-only loop)
 	sess  *sessionConfig // non-nil → "session" strategy (clone+push loop)
+	sink  Sink           // optional live observer; nil on the CLI path
 
 	repo    *git.Repository
-	samples []sample
+	samples []Sample
 }
 
-// commitConfig is the subset of run config an agent needs.
-type commitConfig struct {
-	filesMin int
-	filesMax int
-	fileSize int
+// record appends a sample to the agent's authoritative post-hoc log and, when
+// a sink is attached, forwards it live. Every sample the agent takes goes
+// through here.
+func (a *agent) record(s Sample) {
+	a.samples = append(a.samples, s)
+	if a.sink != nil {
+		a.sink.OnSample(s)
+	}
+}
+
+// CommitConfig is the subset of run config an agent needs.
+type CommitConfig struct {
+	FilesMin int
+	FilesMax int
+	FileSize int
 }
 
 // authorEmail stamps the synthetic load commits. .invalid is the RFC 2606
@@ -68,10 +79,10 @@ const resetEvery = 128
 // newAgent builds an agent. In branch/repo mode it initialises its in-memory
 // repo up front (object format matched to the remote). In clone/session mode
 // the repo is created per clone by the clone loop, so init is skipped.
-func newAgent(id int, repoPath, node, ref string, objFmt formatcfg.ObjectFormat, cfg *commitConfig, creds credentialProvider, httpc *http.Client, clone *cloneConfig, sess *sessionConfig) (*agent, error) {
+func newAgent(id int, repoPath, node, ref string, objFmt formatcfg.ObjectFormat, cfg *CommitConfig, creds credentialProvider, httpc *http.Client, clone *cloneConfig, sess *sessionConfig, sink Sink) (*agent, error) {
 	a := &agent{
 		id: id, repoPath: repoPath, node: node, ref: ref, objFmt: objFmt,
-		cfg: cfg, creds: creds, httpc: httpc, clone: clone, sess: sess,
+		cfg: cfg, creds: creds, httpc: httpc, clone: clone, sess: sess, sink: sink,
 	}
 	if clone == nil && sess == nil {
 		if err := a.initRepo(); err != nil {
@@ -118,7 +129,7 @@ func (a *agent) run(ctx context.Context, start time.Time) {
 	for ctx.Err() == nil {
 		if iter > 0 && iter%resetEvery == 0 {
 			if err := a.initRepo(); err != nil {
-				a.samples = append(a.samples, sample{offset: time.Since(start), res: outcomeErr, msg: err.Error()})
+				a.record(Sample{Offset: time.Since(start), Res: OutcomeErr, Msg: err.Error()})
 				iter++
 				continue
 			}
@@ -127,7 +138,7 @@ func (a *agent) run(ctx context.Context, start time.Time) {
 			// A local commit failure is a harness bug, not a server signal —
 			// record it as an error and keep going so one bad agent doesn't
 			// silently drop out of the concurrency level.
-			a.samples = append(a.samples, sample{offset: time.Since(start), res: outcomeErr, msg: err.Error()})
+			a.record(Sample{Offset: time.Since(start), Res: OutcomeErr, Msg: err.Error()})
 			iter++
 			continue
 		}
@@ -140,12 +151,12 @@ func (a *agent) run(ctx context.Context, start time.Time) {
 			break
 		}
 		o := classify(err)
-		a.samples = append(a.samples, sample{offset: t0.Sub(start), dur: dur, res: o, msg: errMsg(o, err)})
+		a.record(Sample{Offset: t0.Sub(start), Dur: dur, Res: o, Msg: errMsg(o, err)})
 		iter++
 	}
 }
 
-// commit writes filesMin..filesMax small files and records a commit on the
+// commit writes FilesMin..FilesMax small files and records a commit on the
 // local default branch (refs/heads/master). Stable filenames mean later commits
 // are modifications, the realistic shape of an agent editing a working set.
 func (a *agent) commit(rng *rand.Rand, iter int) error {
@@ -153,11 +164,11 @@ func (a *agent) commit(rng *rand.Rand, iter int) error {
 	if err != nil {
 		return fmt.Errorf("worktree: %w", err)
 	}
-	n := a.cfg.filesMin
-	if a.cfg.filesMax > a.cfg.filesMin {
-		n += rng.Intn(a.cfg.filesMax - a.cfg.filesMin + 1)
+	n := a.cfg.FilesMin
+	if a.cfg.FilesMax > a.cfg.FilesMin {
+		n += rng.Intn(a.cfg.FilesMax - a.cfg.FilesMin + 1)
 	}
-	buf := make([]byte, a.cfg.fileSize)
+	buf := make([]byte, a.cfg.FileSize)
 	for i := range n {
 		name := fmt.Sprintf("file-%d.txt", i)
 		f, err := wt.Filesystem().Create(name)
@@ -206,24 +217,24 @@ func (a *agent) push(ctx context.Context) error {
 	return nil
 }
 
-// classify maps a push result to an outcome. A nil error or "already
+// classify maps a push result to an Outcome. A nil error or "already
 // up-to-date" is success; a CAS / non-fast-forward rejection is contention;
 // everything else is an error.
-func classify(err error) outcome {
+func classify(err error) Outcome {
 	switch {
 	case err == nil, errors.Is(err, git.NoErrAlreadyUpToDate):
-		return outcomeOK
+		return OutcomeOK
 	case errors.Is(err, git.ErrNonFastForwardUpdate):
-		return outcomeCAS
+		return OutcomeCAS
 	default:
 		msg := strings.ToLower(err.Error())
 		if strings.Contains(msg, "non-fast-forward") ||
 			strings.Contains(msg, "reference has changed") ||
 			strings.Contains(msg, "fetch first") ||
 			strings.Contains(msg, "stale info") {
-			return outcomeCAS
+			return OutcomeCAS
 		}
-		return outcomeErr
+		return OutcomeErr
 	}
 }
 

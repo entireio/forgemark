@@ -1,4 +1,4 @@
-package main
+package bench
 
 import (
 	"context"
@@ -51,25 +51,25 @@ func newGenericEndpoint(base string, objFmt formatcfg.ObjectFormat) *endpoint {
 // info/refs?service=git-receive-pack, which the load balancer does forward,
 // using the caller's credential. The repo path is appended verbatim (the caller
 // supplies the full path in -repos / -repo-pattern), same as a plain forge.
-func newEntireEndpoint(ctx context.Context, cfg *runConfig, creds credentialProvider, httpc *http.Client) (*endpoint, error) {
-	base := strings.TrimRight(cfg.remote, "/")
+func newEntireEndpoint(ctx context.Context, remote, objectFmt, repo string, creds credentialProvider, httpc *http.Client) (*endpoint, error) {
+	base := strings.TrimRight(remote, "/")
 
 	// Object format: explicit flag wins; otherwise default sha1 (entiredb repos
 	// today are sha1) and let the advertisement upgrade it to sha256 if seen.
 	objFmt := formatcfg.SHA1
-	switch cfg.objectFmt {
+	switch objectFmt {
 	case "sha256":
 		objFmt = formatcfg.SHA256
 	case "sha1", "auto", "":
 	default:
-		return nil, fmt.Errorf("invalid -object-format %q (sha1|sha256|auto)", cfg.objectFmt)
+		return nil, fmt.Errorf("invalid -object-format %q (sha1|sha256|auto)", objectFmt)
 	}
 
-	auth, err := creds.basicAuth(ctx, cfg.repos[0])
+	auth, err := creds.basicAuth(ctx, repo)
 	if err != nil {
 		return nil, err
 	}
-	url := verbatimURLFor(base, cfg.repos[0]) + "/info/refs?service=git-receive-pack"
+	url := verbatimURLFor(base, repo) + "/info/refs?service=git-receive-pack"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("build info/refs request: %w", err)
@@ -88,20 +88,20 @@ func newEntireEndpoint(ctx context.Context, cfg *runConfig, creds credentialProv
 		return nil, fmt.Errorf("info/refs probe: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
-	if cfg.objectFmt == "auto" || cfg.objectFmt == "" {
+	if objectFmt == "auto" || objectFmt == "" {
 		if strings.Contains(string(body), "object-format=sha256") {
 			objFmt = formatcfg.SHA256
 		}
 	}
 
-	nodes := splitCSV(resp.Header.Get("X-Entire-Replicas"))
+	nodes := SplitCSV(resp.Header.Get("X-Entire-Replicas"))
 	if len(nodes) == 0 {
 		nodes = []string{base} // single-node / dev: talk to the entry host
 	}
 	return &endpoint{nodes: nodes, objFmt: objFmt, label: base}, nil
 }
 
-func splitCSV(s string) []string {
+func SplitCSV(s string) []string {
 	var out []string
 	for _, p := range strings.Split(s, ",") {
 		if p = strings.TrimSpace(p); p != "" {
