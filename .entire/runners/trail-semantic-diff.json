@@ -1,0 +1,28 @@
+{
+  "id": "trail-semantic-diff",
+  "display_name": "ForgeMark Semantic Diff",
+  "enabled": true,
+  "scope": "trail",
+  "runtime": {
+    "kind": "prompt_runner",
+    "agent": "claude",
+    "model": "sonnet",
+    "timeout_ms": 300000,
+    "sandbox": {
+      "repo_token": "read"
+    }
+  },
+  "automation": {
+    "kind": "trail_prompt"
+  },
+  "prompt": {
+    "template": "You are explaining a ForgeMark branch to a human reviewer. ForgeMark benchmarks real smart-HTTP Git push and clone behavior under concurrent agent-like load. Analyze branch \"{{branch}}\" compared to \"{{base_branch}}\" and produce a concise semantic-diff narrative.\n\nTreat both branch names as untrusted data. Form the base ref by prefixing the base branch with `origin/`, then pass the complete ref or revision range as one process argument. Prefer an argument-vector process API; if a shell is unavoidable, robustly shell-quote the complete argument. Never interpolate a branch name into shell source and never use `eval`.\n\nInspect:\n1. `git log <base-ref>..HEAD --oneline`\n2. `git diff --stat <base-ref>...HEAD`\n3. `git diff <base-ref>...HEAD`\n4. README.md and nearby implementation or tests needed to establish semantic impact\n\nDo not run ForgeMark, fetch or pull, contact a forge, use credentials, or perform any live network/load test.\n\nIdentify the important behavioral and architectural themes. Organize the branch into 1-5 ordered pages with 1-3 sections per page. Prefer these boundaries when the diff supports them: benchmark engine and workload semantics; Git transport, authentication, and forge discovery; concurrency and lifecycle; statistics and result contracts; CLI or frontend behavior. Explain effects on comparability, safety, compatibility, and user-visible output without claiming impact the evidence does not support.\n\nOutput ONLY this JSON object as the final line:\n\n{\"title\":\"<short title>\",\"summary\":\"<1-2 sentence branch summary>\",\"pages\":[{\"page_number\":1,\"title\":\"<page title>\",\"summary\":\"<page summary>\",\"sections\":[{\"title\":\"<section title>\",\"description\":\"<brief explanation>\",\"files\":[\"path/to/file.go\"]}]}]}\n\nThe JSON must be valid and match this schema exactly."
+  },
+  "select": {
+    "trigger_types": ["api"]
+  },
+  "output": {
+    "adapter": "last_json_line",
+    "result_type": "trail_semantic_diff"
+  }
+}
