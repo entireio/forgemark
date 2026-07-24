@@ -105,7 +105,9 @@ export function renderRace(app, arg) {
         l.els.crown.textContent = lanes.length > 1 && l.ok === leader && l.ok > 0 ? '👑' : '';
       }
     } else if (metric === 'latency') {
-      const p50s = lanes.filter((l) => l.lat).map((l) => l.lat.p50);
+      // Only positive p50s are meaningful; a sub-millisecond p50 can round to 0
+      // and must not become the divisor (NaN width) or a shared crowned "best".
+      const p50s = lanes.map((l) => l.lat && l.lat.p50 > 0 ? l.lat.p50 : null).filter((v) => v != null);
       const best = p50s.length ? Math.min(...p50s) : 0;
       for (const l of lanes) {
         l.els.big.textContent = l.lat ? fmtMs(l.lat.p50) : '–';
@@ -113,8 +115,9 @@ export function renderRace(app, arg) {
         l.els.side.textContent = l.lat ? `p95 ${fmtMs(l.lat.p95)}` : '–';
         // bar = relative speed: the fastest lane fills the track, a lane at
         // 2× its p50 reaches halfway. Lower latency literally looks faster.
-        l.els.bar.style.width = `${Math.max(2, l.lat ? (best / l.lat.p50) * 100 : 2)}%`;
-        l.els.crown.textContent = lanes.length > 1 && l.lat && l.lat.p50 === best ? '👑' : '';
+        const p50 = l.lat && l.lat.p50 > 0 ? l.lat.p50 : 0;
+        l.els.bar.style.width = `${Math.max(2, p50 > 0 ? (best / p50) * 100 : 2)}%`;
+        l.els.crown.textContent = lanes.length > 1 && best > 0 && p50 === best ? '👑' : '';
       }
     } else { // reliability: ALL ops — for session, clones count alongside pushes
       const attempts = (l) => l.good + l.errs;

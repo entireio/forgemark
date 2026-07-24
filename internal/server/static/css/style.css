@@ -1,7 +1,7 @@
 /* ForgeMark — warm-black theme aligned with entire.io's design language:
    near-black stone surfaces, an orange (#fe6e00) accent, warm-gray muted ink,
-   and mono eyebrow labels. The categorical --s1..--s8 slots are the chart
-   palette (data colors, kept distinct from the brand accent). */
+   and mono eyebrow labels. The categorical chart palette (data colors, kept
+   distinct from the brand accent) is the PALETTE array in js/charts.js. */
 
 :root {
   --page:        #0a0a0a;
@@ -20,15 +20,6 @@
   --accent-soft: rgba(254, 110, 0, 0.12);
 
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-
-  --s1: #3987e5; /* blue    */
-  --s2: #199e70; /* aqua    */
-  --s3: #c98500; /* yellow  */
-  --s4: #008300; /* green   */
-  --s5: #9085e9; /* violet  */
-  --s6: #e66767; /* red     */
-  --s7: #d55181; /* magenta */
-  --s8: #d95926; /* orange  */
 }
 
 * { box-sizing: border-box; }
@@ -387,6 +378,3 @@ details.disclose > .dbody { padding: 4px 16px 16px; }
 .add-row { display: flex; gap: 10px; margin-top: 4px; }
 .start-row { display: flex; align-items: center; gap: 16px; margin-top: 4px; }
 .race-toggle { display: flex; align-items: center; gap: 7px; margin: 0; font-size: 13px; color: var(--ink-2); }
-.cred-row { display: flex; gap: 8px; }
-.cred-row select { flex: 0 0 auto; width: auto; }
-.cred-row input { flex: 1; min-width: 0; }

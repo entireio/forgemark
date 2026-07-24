@@ -91,7 +91,9 @@ export function renderHistory(app, preselect) {
         const tput = timeChart(tputEl, { series: withSeries.map((t) => ({ label: t.name, color: colors.get(t) || targetColor(0) })), unit: fmtNum });
         tput.setAll(mkRows(okOf));
         const lat = timeChart(latEl, { series: withSeries.map((t) => ({ label: t.name, color: colors.get(t) || targetColor(0) })), unit: fmtMs });
-        lat.setAll(mkRows((p) => (okOf(p) > 0 ? p95Of(p) : null)));
+        // Gate on the recorded rolling p95, not this second's completions, so a
+        // quiet bucket doesn't drop a point the stored window still covered.
+        lat.setAll(mkRows((p) => (p95Of(p) > 0 ? p95Of(p) : null)));
         liveCharts.push(tput, lat);
       }
     }

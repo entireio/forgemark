@@ -97,7 +97,7 @@ export function renderDashboard(app, runId) {
   function buildTiles(targets) {
     tiles.innerHTML = '';
     for (const t of targets) {
-      state.totals[t.id] = { ok: 0, cas: 0, err: 0, lastOps: 0, p95: 0 };
+      state.totals[t.id] = { cas: 0, err: 0 };
       t._tile = {
         ops: h('b', {}, '–'), p95: h('b', {}, '–'), errs: h('b', {}, '0'),
         label: h('div', { class: 'tlabel' }, t.remote),
@@ -199,12 +199,17 @@ export function renderDashboard(app, runId) {
       if (state.strategy === 'session') tputVals.push(...vals.map((v) => (v ? v.clone_ok || 0 : null)));
       charts.tput.push(ev.t, tputVals);
 
-      // latency rows retained for percentile switching
-      const latVals = vals.map((v) => v && (isClone ? v.clone_ok : v.ok) > 0
-        ? (isClone
+      // latency rows retained for percentile switching. Gate on the rolling
+      // window having data (p95 > 0), NOT this second's completion count: the
+      // collector keeps a 10s window precisely so a quiet second doesn't blank
+      // the line, and BucketStats.ok is only that one second's successes.
+      const latVals = vals.map((v) => {
+        if (!v) return null;
+        const p = isClone
           ? { p50: v.clone_p50_ms, p95: v.clone_p95_ms, p99: v.clone_p99_ms }
-          : { p50: v.p50_ms, p95: v.p95_ms, p99: v.p99_ms })
-        : null);
+          : { p50: v.p50_ms, p95: v.p95_ms, p99: v.p99_ms };
+        return p.p95 > 0 ? p : null;
+      });
       state.latRows.push({ ts: ev.t, vals: latVals });
       charts.lat.push(ev.t, latVals.map((v) => (v ? v[pct] : null)));
 
@@ -218,7 +223,6 @@ export function renderDashboard(app, runId) {
         const v = vals[i];
         if (!v || !t._tile) return;
         const tot = state.totals[t.id];
-        tot.ok += isClone ? v.clone_ok || 0 : v.ok;
         tot.err += (isClone ? v.clone_err || 0 : v.err);
         tot.cas += v.cas || 0;
         t._tile.ops.textContent = fmtNum(isClone ? v.clone_ok || 0 : v.ok);

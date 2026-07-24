@@ -119,10 +119,15 @@ PY
 )"
 
   export FM_ENTIRE_NAME="${FM_ENTIRE_NAME:-$SUG_NAME}"
-  export FM_ENTIRE_REMOTE="${FM_ENTIRE_REMOTE:-$SUG_REMOTE}"
   export FM_ENTIRE_TOKEN_URL="${FM_ENTIRE_TOKEN_URL:-$SUG_TOKEN_URL}"
   export FM_ENTIRE_JURISDICTION="${FM_ENTIRE_JURISDICTION:-$SUG_JURISDICTION}"
-  ENTIRE_CLUSTER="${FM_ENTIRE_CLUSTER:-${FM_ENTIRE_REMOTE#https://}}"
+  # The cluster and the benchmarked remote must move together: FM_ENTIRE_CLUSTER
+  # (else an explicit FM_ENTIRE_REMOTE, else the suggest default) sets both the
+  # provisioning host and the remote posted to /api/runs. Otherwise setting only
+  # FM_ENTIRE_CLUSTER would provision on one cluster but benchmark another.
+  ENTIRE_CLUSTER="${FM_ENTIRE_CLUSTER:-${FM_ENTIRE_REMOTE:-$SUG_REMOTE}}"
+  ENTIRE_CLUSTER="${ENTIRE_CLUSTER#https://}"
+  export FM_ENTIRE_REMOTE="${FM_ENTIRE_REMOTE:-https://$ENTIRE_CLUSTER}"
 
   if [ "${FM_ENTIRE_NATIVE:-0}" = "1" ]; then
     # Native EntireDB repo: no GitHub in the write path. The suggest endpoint

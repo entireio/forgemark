@@ -238,6 +238,20 @@ func (m *RunManager) start(req startRequest) (*Run, []string, error) {
 		if ts.SecretSource != "" && ts.Secret != "" {
 			return nil, nil, fmt.Errorf("target %s: pass secret or secret_source, not both", name)
 		}
+		// Fast-fail real targets at the request instead of letting them die
+		// mid-run inside NewRunner (which the browser only learns from a
+		// target_error event). demo:// targets need no repos or credential.
+		if !isDemoRemote(bt.Remote) {
+			if len(bt.Repos) == 0 {
+				return nil, nil, fmt.Errorf("target %s: no repos", name)
+			}
+			if bw.Strategy == "repo" && len(bt.Repos) < 2 {
+				return nil, nil, fmt.Errorf("target %s: strategy=repo needs >= 2 repos", name)
+			}
+			if ts.Secret == "" && ts.SecretSource == "" {
+				return nil, nil, fmt.Errorf("target %s: no credential (pass secret or secret_source)", name)
+			}
+		}
 		if bench.IsGitHubDotCom(bt.Remote) {
 			if hi := slices.Max(bw.Concurrency); hi > 16 {
 				warnings = append(warnings, fmt.Sprintf(
@@ -245,6 +259,17 @@ func (m *RunManager) start(req startRequest) (*Run, []string, error) {
 			}
 		}
 		targets[i] = &targetState{id: i, name: name, spec: bt, col: &collector{}}
+	}
+
+	// Reject a second concurrent start before doing any credential work:
+	// resolving a secret_source execs the operator's CLIs, which is wasted (and
+	// needlessly materializes tokens) for a request we're about to refuse. The
+	// authoritative check under m.mu below still guards the start/set race.
+	m.mu.Lock()
+	active := m.active != nil
+	m.mu.Unlock()
+	if active {
+		return nil, nil, errRunActive
 	}
 
 	// Resolve CLI-sourced secrets concurrently: each exec can block on a slow

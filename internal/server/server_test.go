@@ -117,6 +117,17 @@ func TestStartRunValidation(t *testing.T) {
 	if code, msg := post(`{"confirm_authorized":true,"targets":[{"remote":"demo://x","secret_source":"bogus"}]}`); code != http.StatusBadRequest || !strings.Contains(msg, "secret_source") {
 		t.Fatalf("unknown-source POST = %d %q, want 400 secret_source", code, msg)
 	}
+	// Real (non-demo) targets are fast-failed at the request, not left to die
+	// mid-run inside NewRunner. demo:// targets skip these checks.
+	if code, msg := post(`{"confirm_authorized":true,"targets":[{"remote":"https://git.example","secret":"tok"}]}`); code != http.StatusBadRequest || !strings.Contains(msg, "no repos") {
+		t.Fatalf("no-repos target = %d %q, want 400 no repos", code, msg)
+	}
+	if code, msg := post(`{"confirm_authorized":true,"targets":[{"remote":"https://git.example","repos":["a/b"]}]}`); code != http.StatusBadRequest || !strings.Contains(msg, "no credential") {
+		t.Fatalf("no-credential target = %d %q, want 400 no credential", code, msg)
+	}
+	if code, msg := post(`{"confirm_authorized":true,"workload":{"strategy":"repo"},"targets":[{"remote":"https://git.example","repos":["a/b"],"secret":"t"}]}`); code != http.StatusBadRequest || !strings.Contains(msg, ">= 2 repos") {
+		t.Fatalf("repo-strategy one-repo target = %d %q, want 400 >= 2 repos", code, msg)
+	}
 }
 
 func TestRunLifecycleSSEAndRedaction(t *testing.T) {

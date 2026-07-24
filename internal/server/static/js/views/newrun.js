@@ -229,7 +229,15 @@ export function renderNewRun(app) {
       return;
     }
 
-    const allDemo = targets.every((t) => isDemo(t.remote));
+    // Only remote-bearing rows are real targets — a blank card is not posted.
+    // Compute allDemo over the same set updateGate() uses, so the confirm-gate
+    // the UI showed and the confirm_authorized we send can't disagree.
+    const active = targets.filter((t) => t.remote.trim());
+    if (!active.length) {
+      showError('Add at least one target with a remote.');
+      return;
+    }
+    const allDemo = active.every((t) => isDemo(t.remote));
     const spec = {
       confirm_authorized: confirm.checked || allDemo,
       workload: {
@@ -241,7 +249,7 @@ export function renderNewRun(app) {
         branch_prefix: w.branch_prefix.value,
         session_commits: num(w.session_commits), clone_depth: num(w.clone_depth), base_ref: w.base_ref.value,
       },
-      targets: targets.map((t) => ({
+      targets: active.map((t) => ({
         name: t.name, remote: t.remote,
         repos: t.repos.split(',').map((s) => s.trim()).filter(Boolean),
         user: t.user, secret: t.secret, secret_source: t.secret_source,

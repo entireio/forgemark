@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"net"
@@ -19,6 +20,9 @@ func runServe(args []string) error {
 	addr := fs.String("addr", "127.0.0.1:8377", "listen address; keep it loopback — this is a load-generation control panel")
 	resultsDir := fs.String("results", "results", "directory for result JSON docs (shared with the CLI)")
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil // -h/-help already printed usage; a help request isn't a failure
+		}
 		return err
 	}
 	// An empty host (":8377") is a wildcard bind — all interfaces — so it must
