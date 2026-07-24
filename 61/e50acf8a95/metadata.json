@@ -1,0 +1,27 @@
+{
+  "cli_version": "0.8.42",
+  "checkpoint_id": "61e50acf8a95",
+  "strategy": "manual-commit",
+  "branch": "refactor/engine-core",
+  "checkpoints_count": 6,
+  "files_touched": [
+    "cmd/forgemark/main_test.go",
+    "internal/results/results_test.go"
+  ],
+  "sessions": [
+    {
+      "metadata": "/61/e50acf8a95/0/metadata.json",
+      "transcript": "/61/e50acf8a95/0/full.jsonl",
+      "compact_transcript": "/61/e50acf8a95/0/transcript.jsonl",
+      "content_hash": "/61/e50acf8a95/0/content_hash.txt",
+      "prompt": "/61/e50acf8a95/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 435,
+    "cache_creation_tokens": 30829,
+    "cache_read_tokens": 13301987,
+    "output_tokens": 21200,
+    "api_call_count": 24
+  }
+}

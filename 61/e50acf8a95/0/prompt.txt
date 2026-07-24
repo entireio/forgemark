@@ -1,0 +1,21 @@
+give me a draft for the PR first
+
+---
+
+We don't have to say what isn't in this PR :)
+
+---
+
+Open the PR
+
+---
+
+/review
+
+---
+
+review 11 first
+
+---
+
+Submit a commit to fix the test, fix the PR body as well
