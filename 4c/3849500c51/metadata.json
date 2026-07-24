@@ -1,0 +1,26 @@
+{
+  "cli_version": "0.8.42",
+  "checkpoint_id": "4c3849500c51",
+  "strategy": "manual-commit",
+  "branch": "feat/web-demo",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "cmd/forgemark/main.go"
+  ],
+  "sessions": [
+    {
+      "metadata": "/4c/3849500c51/0/metadata.json",
+      "transcript": "/4c/3849500c51/0/full.jsonl",
+      "compact_transcript": "/4c/3849500c51/0/transcript.jsonl",
+      "content_hash": "/4c/3849500c51/0/content_hash.txt",
+      "prompt": "/4c/3849500c51/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 147,
+    "cache_creation_tokens": 569062,
+    "cache_read_tokens": 4686607,
+    "output_tokens": 10053,
+    "api_call_count": 9
+  }
+}
