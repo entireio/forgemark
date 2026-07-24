@@ -1,0 +1,21 @@
+Hey there! Time to build runners for the foregemark repo now. We already did that for entire-graph right? Take the same inspiration. Use the cli and the entire.io repos as the base, what runners could we configure?
+
+---
+
+Implement
+
+---
+
+9 seems too much righ
+
+---
+
+Perfect. then let's do just those 5
+
+---
+
+Let's get this into a PR
+
+---
+
+I am logged in
