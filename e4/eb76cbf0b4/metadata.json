@@ -1,0 +1,51 @@
+{
+  "cli_version": "0.8.42",
+  "checkpoint_id": "e4eb76cbf0b4",
+  "strategy": "manual-commit",
+  "branch": "feat/web-demo",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "cmd/forgemark/main.go",
+    "cmd/forgemark/serve.go",
+    "internal/server/collector.go",
+    "internal/server/collector_test.go",
+    "internal/server/demo.go",
+    "internal/server/events.go",
+    "internal/server/local.go",
+    "internal/server/runmgr.go",
+    "internal/server/runmgr_test.go",
+    "internal/server/server.go",
+    "internal/server/server_test.go",
+    "internal/server/static/css/style.css",
+    "internal/server/static/index.html",
+    "internal/server/static/js/api.js",
+    "internal/server/static/js/app.js",
+    "internal/server/static/js/charts.js",
+    "internal/server/static/js/dom.js",
+    "internal/server/static/js/sse.js",
+    "internal/server/static/js/views/dashboard.js",
+    "internal/server/static/js/views/history.js",
+    "internal/server/static/js/views/newrun.js",
+    "internal/server/static/js/views/race.js",
+    "internal/server/static/js/views/runs.js",
+    "internal/server/static/js/views/shared.js",
+    "internal/server/static/vendor/uPlot.iife.min.js",
+    "internal/server/static/vendor/uPlot.min.css"
+  ],
+  "sessions": [
+    {
+      "metadata": "/e4/eb76cbf0b4/0/metadata.json",
+      "transcript": "/e4/eb76cbf0b4/0/full.jsonl",
+      "compact_transcript": "/e4/eb76cbf0b4/0/transcript.jsonl",
+      "content_hash": "/e4/eb76cbf0b4/0/content_hash.txt",
+      "prompt": ""
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 2,
+    "cache_creation_tokens": 1269,
+    "cache_read_tokens": 587906,
+    "output_tokens": 2458,
+    "api_call_count": 1
+  }
+}
