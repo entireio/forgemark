@@ -21,30 +21,29 @@
 // repo (spread across N repos), clone (clone-only read loop), session
 // (clone+push loop per agent).
 //
+// The benchmark engine itself lives in internal/bench; this package is the
+// flag-driven CLI over it.
+//
 // Only ever run this against infrastructure you own or are explicitly
 // authorized to load-test.
 package main
 
 import (
 	"context"
-	"crypto/tls"
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
-	"net/http"
-	"net/url"
 	"os"
 	"os/signal"
+	"slices"
 	"strconv"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
-	"github.com/go-git/go-git/v6/plumbing"
-	formatcfg "github.com/go-git/go-git/v6/plumbing/format/config"
+	"github.com/entireio/forgemark/internal/bench"
+	"github.com/entireio/forgemark/internal/results"
 )
 
 func main() {
@@ -54,33 +53,14 @@ func main() {
 	}
 }
 
-type runConfig struct {
-	remote       string
-	tokenFile    string // path to the credential secret ("-" = stdin); preferred over $ACCESS_TOKEN
-	user         string // basic-auth username (default x-access-token; token forges ignore it)
-	repos        []string
-	strategy     string
-	branchPrefix string
-	concurrency  []int
-	duration     time.Duration
-	warmup       time.Duration
-	commit       commitConfig
-	objectFmt    string
-	insecure     bool
-	out          string
-	runID        string
-
-	// session strategy
-	sessionCommits int
-	cloneDepth     int
-	baseRef        string
-
-	// entiredb: supplying -jurisdiction/-token-url selects the entiredb path
-	// (jurisdiction-token exchange + node discovery). Meaningless to any other
-	// forge, so their presence is the signal — no separate -target flag.
-	tokenURL     string
-	jurisdiction string
-	clientID     string
+// cliConfig is the parsed flag set: the single benchmark target, the shared
+// workload shape, and CLI-only concerns (where the secret comes from, where
+// results go).
+type cliConfig struct {
+	target    bench.Target
+	workload  bench.Workload
+	tokenFile string // path to the credential secret ("-" = stdin); preferred over $ACCESS_TOKEN
+	out       string
 }
 
 func run() error {
@@ -89,27 +69,40 @@ func run() error {
 		return err
 	}
 
-	httpc := newHTTPClient(cfg.insecure, maxInt(cfg.concurrency)+8)
+	secret, err := readSecret(cfg.tokenFile)
+	if err != nil {
+		return err
+	}
+	cfg.target.Secret = secret
+
+	// github.com throttles high-volume writes; warn on stderr before a sweep
+	// that's likely to trip its abuse detection.
+	if cfg.target.TokenURL == "" && cfg.target.Jurisdiction == "" && bench.IsGitHubDotCom(cfg.target.Remote) {
+		if hi := slices.Max(cfg.workload.Concurrency); hi > 16 {
+			fmt.Fprintf(os.Stderr, "forgemark: warning: concurrency %d against github.com is likely to trip "+
+				"secondary rate limits / abuse detection — keep it low (e.g. -concurrency 1,4)\n", hi)
+		}
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	creds, ep, err := setupTarget(ctx, cfg, httpc)
+	r, err := bench.NewRunner(ctx, cfg.target, cfg.workload, nil)
 	if err != nil {
 		return err
 	}
 
 	fmt.Printf("forgemark: target=%s strategy=%s repos=%d nodes=%d object-format=%s commit=%s\n",
-		ep.label, cfg.strategy, len(cfg.repos), len(ep.nodes), ep.objFmt, cfg.commitDesc())
-	fmt.Printf("           sweep=%v duration=%s warmup=%s\n", cfg.concurrency, cfg.duration, cfg.warmup)
+		r.Label(), cfg.workload.Strategy, len(cfg.target.Repos), r.Nodes(), r.ObjectFormat(), cfg.workload.CommitDesc())
+	fmt.Printf("           sweep=%v duration=%s warmup=%s\n", cfg.workload.Concurrency, cfg.workload.Duration, cfg.workload.Warmup)
 	fmt.Println()
 
-	var results []levelResult
-	for _, c := range cfg.concurrency {
+	var results []bench.LevelResult
+	for _, c := range cfg.workload.Concurrency {
 		if ctx.Err() != nil {
 			break
 		}
-		res, err := runLevel(ctx, cfg, creds, ep, httpc, c)
+		res, err := r.RunLevel(ctx, c)
 		if err != nil {
 			return fmt.Errorf("concurrency=%d: %w", c, err)
 		}
@@ -117,88 +110,7 @@ func run() error {
 		printRow(res)
 	}
 
-	return writeResults(cfg, ep, results)
-}
-
-// setupTarget builds the credential provider and resolved endpoint, inferring
-// the forge from the flags rather than an explicit switch:
-//
-//   - Supplying -jurisdiction or -token-url selects entiredb (they mean nothing
-//     to any other forge). A partial set is a hard error, not a silent fallback.
-//   - Otherwise it's a plain smart-HTTP forge with a static credential. If the
-//     remote host is github.com, the abuse-detection warning applies — that's
-//     the only thing that ever distinguished "github".
-func setupTarget(ctx context.Context, cfg *runConfig, httpc *http.Client) (credentialProvider, *endpoint, error) {
-	if cfg.tokenURL != "" || cfg.jurisdiction != "" {
-		return setupEntiredb(ctx, cfg, httpc)
-	}
-	return setupGeneric(cfg)
-}
-
-func setupGeneric(cfg *runConfig) (credentialProvider, *endpoint, error) {
-	if cfg.remote == "" {
-		return nil, nil, errors.New("-remote required (e.g. https://gitlab.com); for entiredb also pass -token-url and -jurisdiction")
-	}
-	github := isGitHubDotCom(cfg.remote)
-	if github && cfg.objectFmt == "sha256" {
-		return nil, nil, errors.New("github.com is sha1; drop -object-format sha256")
-	}
-	if github {
-		if hi := maxInt(cfg.concurrency); hi > 16 {
-			fmt.Fprintf(os.Stderr, "forgemark: warning: concurrency %d against github.com is likely to trip "+
-				"secondary rate limits / abuse detection — keep it low (e.g. -concurrency 1,4)\n", hi)
-		}
-	}
-	objFmt, err := parseObjectFormat(cfg.objectFmt)
-	if err != nil {
-		return nil, nil, err
-	}
-	secret, err := readSecret(cfg)
-	if err != nil {
-		return nil, nil, err
-	}
-	user := cfg.user
-	if user == "" {
-		user = "x-access-token" // token forges ignore the username; the token is the password
-	}
-	return staticCreds{username: user, password: secret}, newGenericEndpoint(cfg.remote, objFmt), nil
-}
-
-func setupEntiredb(ctx context.Context, cfg *runConfig, httpc *http.Client) (credentialProvider, *endpoint, error) {
-	var missing []string
-	if cfg.remote == "" {
-		missing = append(missing, "-remote (cluster base URL)")
-	}
-	if cfg.tokenURL == "" {
-		missing = append(missing, "-token-url")
-	}
-	if cfg.jurisdiction == "" {
-		missing = append(missing, "-jurisdiction")
-	}
-	if len(missing) > 0 {
-		return nil, nil, fmt.Errorf("entire target (selected by -token-url/-jurisdiction) also needs: %s", strings.Join(missing, ", "))
-	}
-	subject, err := readSecret(cfg) // the subject token to exchange
-	if err != nil {
-		return nil, nil, err
-	}
-	creds := newJurisdictionCreds(httpc, cfg.tokenURL, cfg.jurisdiction, cfg.clientID, subject, "token")
-	ep, err := newEntireEndpoint(ctx, cfg, creds, httpc)
-	if err != nil {
-		return nil, nil, err
-	}
-	return creds, ep, nil
-}
-
-// isGitHubDotCom reports whether remote points at github.com (so the abuse
-// warning + sha1 constraint apply). Any other host — GHES, GitLab, Gitea — is
-// just a generic forge.
-func isGitHubDotCom(remote string) bool {
-	u, err := url.Parse(remote)
-	if err != nil {
-		return false
-	}
-	return strings.EqualFold(u.Hostname(), "github.com")
+	return writeResults(cfg, r.Label(), results)
 }
 
 // readSecret returns the credential secret from the most secure source
@@ -206,16 +118,16 @@ func isGitHubDotCom(remote string) bool {
 // ACCESS_TOKEN env var. A raw token on argv is intentionally unsupported — it
 // would leak via ps(1) and shell history. The secret is the forge access token
 // for a plain forge, or the subject token to exchange for Entire.
-func readSecret(cfg *runConfig) (string, error) {
-	if cfg.tokenFile != "" {
+func readSecret(tokenFile string) (string, error) {
+	if tokenFile != "" {
 		var (
 			b   []byte
 			err error
 		)
-		if cfg.tokenFile == "-" {
+		if tokenFile == "-" {
 			b, err = io.ReadAll(os.Stdin)
 		} else {
-			b, err = os.ReadFile(cfg.tokenFile)
+			b, err = os.ReadFile(tokenFile)
 		}
 		if err != nil {
 			return "", fmt.Errorf("read -token-file: %w", err)
@@ -231,171 +143,62 @@ func readSecret(cfg *runConfig) (string, error) {
 	return "", errors.New("no credential: pass -token-file <path|-> (recommended) or set ACCESS_TOKEN")
 }
 
-func parseObjectFormat(s string) (formatcfg.ObjectFormat, error) {
-	switch s {
-	case "sha256":
-		return formatcfg.SHA256, nil
-	case "sha1", "auto", "": // generic doesn't probe; auto degrades to sha1
-		return formatcfg.SHA1, nil
-	default:
-		return "", fmt.Errorf("invalid -object-format %q (sha1|sha256|auto)", s)
-	}
-}
-
-// runLevel runs a single concurrency level: spin up c agents for
-// warmup+duration, then fold their samples into one result.
-func runLevel(ctx context.Context, cfg *runConfig, creds credentialProvider, ep *endpoint, httpc *http.Client, c int) (levelResult, error) {
-	var clone *cloneConfig
-	var sess *sessionConfig
-	switch cfg.strategy {
-	case "clone":
-		clone = &cloneConfig{cloneDepth: cfg.cloneDepth, baseRef: cfg.baseRef}
-	case "session":
-		sess = &sessionConfig{
-			cloneConfig: cloneConfig{cloneDepth: cfg.cloneDepth, baseRef: cfg.baseRef},
-			commits:     cfg.sessionCommits,
-		}
-	}
-	agents := make([]*agent, c)
-	for i := range c {
-		repoPath := cfg.repos[0]
-		if cfg.strategy == "repo" {
-			repoPath = cfg.repos[i%len(cfg.repos)]
-		}
-		node := ep.nodes[i%len(ep.nodes)]
-		ref := destRef(cfg.branchPrefix, cfg.runID, c, i)
-		a, err := newAgent(i, repoPath, node, ref, ep.objFmt, &cfg.commit, creds, httpc, clone, sess)
-		if err != nil {
-			return levelResult{}, fmt.Errorf("new agent %d: %w", i, err)
-		}
-		agents[i] = a
-	}
-
-	total := cfg.warmup + cfg.duration
-	lvlCtx, cancel := context.WithTimeout(ctx, total)
-	defer cancel()
-
-	start := time.Now()
-	var wg sync.WaitGroup
-	for _, a := range agents {
-		wg.Add(1)
-		go func(a *agent) {
-			defer wg.Done()
-			a.run(lvlCtx, start)
-		}(a)
-	}
-	wg.Wait()
-
-	var all []sample
-	for _, a := range agents {
-		all = append(all, a.samples...)
-	}
-	reposUsed := 1
-	if cfg.strategy == "repo" {
-		reposUsed = min(c, len(cfg.repos))
-	}
-	return summarize(all, c, cfg.strategy, reposUsed, len(ep.nodes), cfg.warmup, cfg.duration, cfg.commitDesc()), nil
-}
-
-func newHTTPClient(insecure bool, maxConns int) *http.Client {
-	tr := &http.Transport{
-		Proxy:               http.ProxyFromEnvironment,
-		MaxIdleConns:        maxConns * 2,
-		MaxIdleConnsPerHost: maxConns,
-		MaxConnsPerHost:     0, // unbounded: don't queue pushes behind a conn cap
-		IdleConnTimeout:     90 * time.Second,
-	}
-	if insecure {
-		tr.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} //nolint:gosec // load-test opt-in
-	}
-	return &http.Client{Transport: tr, Timeout: 120 * time.Second}
-}
-
-func (c *runConfig) commitDesc() string {
-	return fmt.Sprintf("%d-%d x %dB", c.commit.filesMin, c.commit.filesMax, c.commit.fileSize)
-}
-
-func parseFlags() (*runConfig, error) {
-	cfg := &runConfig{}
+func parseFlags() (*cliConfig, error) {
+	cfg := &cliConfig{}
 	var reposCSV, pattern, concCSV string
 	var repoCount int
+	var durationFlag, warmupFlag time.Duration
 
-	flag.StringVar(&cfg.remote, "remote", "", "base URL of the forge, e.g. https://gitlab.com (repos are appended verbatim as <base>/<repo>); for Entire, the cluster base URL")
+	flag.StringVar(&cfg.target.Remote, "remote", "", "base URL of the forge, e.g. https://gitlab.com (repos are appended verbatim as <base>/<repo>); for Entire, the cluster base URL")
 	flag.StringVar(&cfg.tokenFile, "token-file", "", "path to a file holding the credential secret (Entire: the subject token); \"-\" reads stdin. Preferred over $ACCESS_TOKEN — keeps the secret off argv")
-	flag.StringVar(&cfg.user, "user", "", "basic-auth username for the credential (default x-access-token; token forges ignore it)")
+	flag.StringVar(&cfg.target.User, "user", "", "basic-auth username for the credential (default x-access-token; token forges ignore it)")
 	flag.StringVar(&reposCSV, "repos", "", "comma-separated repo paths, appended to -remote verbatim (e.g. you/bench.git)")
 	flag.StringVar(&pattern, "repo-pattern", "", "repo path template; {n} is replaced by the index (1..N), used with -repo-count (e.g. you/bench-{n})")
 	flag.IntVar(&repoCount, "repo-count", 0, "number of repos for -repo-pattern (expands {n} = 1..N)")
-	flag.StringVar(&cfg.strategy, "strategy", "branch", "branch (one repo, per-agent branches) | repo (spread across repos) | clone (clone-only read loop) | session (clone+push loop per agent)")
-	flag.StringVar(&cfg.branchPrefix, "branch-prefix", "", "prefix prepended verbatim to branch names, before the run ID (e.g. bench/ → refs/heads/bench/fm...-c1-a0); empty keeps the default")
+	flag.StringVar(&cfg.workload.Strategy, "strategy", "branch", "branch (one repo, per-agent branches) | repo (spread across repos) | clone (clone-only read loop) | session (clone+push loop per agent)")
+	flag.StringVar(&cfg.workload.BranchPrefix, "branch-prefix", "", "prefix prepended verbatim to branch names, before the run ID (e.g. bench/ → refs/heads/bench/fm...-c1-a0); empty keeps the default")
 	flag.StringVar(&concCSV, "concurrency", "1,8,32,128", "comma-separated writer counts to sweep")
-	flag.DurationVar(&cfg.duration, "duration", 60*time.Second, "measured window per concurrency level")
-	flag.DurationVar(&cfg.warmup, "warmup", 10*time.Second, "warm-up before measuring (excluded from stats)")
-	flag.IntVar(&cfg.commit.filesMin, "files-min", 1, "min changed files per commit")
-	flag.IntVar(&cfg.commit.filesMax, "files-max", 10, "max changed files per commit")
-	flag.IntVar(&cfg.commit.fileSize, "file-size", 2048, "bytes per changed file")
-	flag.StringVar(&cfg.objectFmt, "object-format", "auto", "auto | sha1 | sha256 (auto probes the entiredb advertisement; generic/github default sha1)")
-	flag.BoolVar(&cfg.insecure, "insecure", false, "skip TLS verification (dev/self-signed hosts)")
+	flag.DurationVar(&durationFlag, "duration", 60*time.Second, "measured window per concurrency level")
+	flag.DurationVar(&warmupFlag, "warmup", 10*time.Second, "warm-up before measuring (excluded from stats)")
+	flag.IntVar(&cfg.workload.Commit.FilesMin, "files-min", 1, "min changed files per commit")
+	flag.IntVar(&cfg.workload.Commit.FilesMax, "files-max", 10, "max changed files per commit")
+	flag.IntVar(&cfg.workload.Commit.FileSize, "file-size", 2048, "bytes per changed file")
+	flag.StringVar(&cfg.target.ObjectFmt, "object-format", "auto", "auto | sha1 | sha256 (auto probes the entiredb advertisement; generic/github default sha1)")
+	flag.BoolVar(&cfg.target.Insecure, "insecure", false, "skip TLS verification (dev/self-signed hosts)")
 	flag.StringVar(&cfg.out, "out", "", "write JSON results here (default: results/forgemark-<id>.json)")
-	flag.IntVar(&cfg.sessionCommits, "session-commits", 5, "session strategy: commit+push checkpoints per cloned session")
-	flag.IntVar(&cfg.cloneDepth, "clone-depth", 1, "clone/session strategy: shallow clone depth (1=tip; 0=full history)")
-	flag.StringVar(&cfg.baseRef, "base-ref", "", "clone/session strategy: branch to clone — bare name (main) or full ref (refs/heads/main); default: remote default branch")
+	flag.IntVar(&cfg.workload.SessionCommits, "session-commits", 5, "session strategy: commit+push checkpoints per cloned session")
+	flag.IntVar(&cfg.workload.CloneDepth, "clone-depth", 1, "clone/session strategy: shallow clone depth (1=tip; 0=full history)")
+	flag.StringVar(&cfg.workload.BaseRef, "base-ref", "", "clone/session strategy: branch to clone — bare name (main) or full ref (refs/heads/main); default: remote default branch")
 
 	// entiredb: presence of -token-url/-jurisdiction selects the entiredb path.
-	flag.StringVar(&cfg.tokenURL, "token-url", "", "entiredb: core /oauth/token endpoint, e.g. https://<region>.auth.example.com/oauth/token (selects entiredb)")
-	flag.StringVar(&cfg.jurisdiction, "jurisdiction", "", "entiredb: jurisdiction audience host (bare origin), e.g. https://<region>.example.com (selects entiredb)")
-	flag.StringVar(&cfg.clientID, "client-id", "entire-cli", "entiredb: public OAuth client id for the exchange")
+	flag.StringVar(&cfg.target.TokenURL, "token-url", "", "entiredb: core /oauth/token endpoint, e.g. https://<region>.auth.example.com/oauth/token (selects entiredb)")
+	flag.StringVar(&cfg.target.Jurisdiction, "jurisdiction", "", "entiredb: jurisdiction audience host (bare origin), e.g. https://<region>.example.com (selects entiredb)")
+	flag.StringVar(&cfg.target.ClientID, "client-id", "entire-cli", "entiredb: public OAuth client id for the exchange")
 	flag.Parse()
+
+	cfg.workload.Duration = durationFlag
+	cfg.workload.Warmup = warmupFlag
 
 	repos, err := expandRepos(reposCSV, pattern, repoCount)
 	if err != nil {
 		return nil, err
 	}
-	cfg.repos = repos
-	if cfg.strategy != "branch" && cfg.strategy != "repo" && cfg.strategy != "clone" && cfg.strategy != "session" {
-		return nil, fmt.Errorf("invalid -strategy %q (branch|repo|clone|session)", cfg.strategy)
-	}
-	if cfg.strategy == "repo" && len(cfg.repos) < 2 {
+	cfg.target.Repos = repos
+	if cfg.workload.Strategy == "repo" && len(repos) < 2 {
 		return nil, errors.New("strategy=repo needs >= 2 repos")
 	}
-	if cfg.strategy == "session" && cfg.sessionCommits < 1 {
-		return nil, errors.New("-session-commits must be >= 1")
-	}
-	for _, p := range splitCSV(concCSV) {
+	for _, p := range bench.SplitCSV(concCSV) {
 		n, err := strconv.Atoi(p)
 		if err != nil || n < 1 {
 			return nil, fmt.Errorf("invalid concurrency %q", p)
 		}
-		cfg.concurrency = append(cfg.concurrency, n)
+		cfg.workload.Concurrency = append(cfg.workload.Concurrency, n)
 	}
-	if len(cfg.concurrency) == 0 {
-		return nil, errors.New("no concurrency levels")
-	}
-	if cfg.strategy != "clone" {
-		if cfg.commit.filesMin < 1 {
-			return nil, errors.New("-files-min must be >= 1 (a commit needs a change to push)")
-		}
-		if cfg.commit.filesMax < cfg.commit.filesMin {
-			return nil, errors.New("-files-max < -files-min")
-		}
-		if cfg.commit.fileSize < 1 {
-			return nil, errors.New("-file-size must be >= 1 (empty blobs reproduce → ErrEmptyCommit)")
-		}
-	}
-	cfg.runID = "fm" + strconv.FormatInt(time.Now().Unix(), 36)
-	// Validate the assembled ref, not the prefix alone: validity is context-dependent
-	// (a trailing "/" or bare word is fine mid-ref, invalid standalone). c/a are arbitrary —
-	// only the prefix can invalidate it — so this one parse-time check covers the whole sweep.
-	if err := plumbing.ReferenceName(destRef(cfg.branchPrefix, cfg.runID, 1, 0)).Validate(); err != nil {
-		return nil, fmt.Errorf("invalid -branch-prefix %q: %w", cfg.branchPrefix, err)
+	cfg.workload.RunID = bench.NewRunID()
+	if err := cfg.workload.Validate(); err != nil {
+		return nil, err
 	}
 	return cfg, nil
-}
-
-// destRef builds an agent's destination branch ref, prepending branchPrefix
-// verbatim before the run ID. Empty prefix reproduces the default name.
-func destRef(branchPrefix, runID string, c, i int) string {
-	return fmt.Sprintf("refs/heads/%s%s-c%d-a%d", branchPrefix, runID, c, i)
 }
 
 // expandRepos builds the target repo list from the mutually-exclusive
@@ -403,7 +206,7 @@ func destRef(branchPrefix, runID string, c, i int) string {
 // endpoint appends them to the node with no rewriting), so this only validates
 // and expands {n}; it never rewrites the path shape.
 func expandRepos(reposCSV, pattern string, count int) ([]string, error) {
-	repos := splitCSV(reposCSV)
+	repos := bench.SplitCSV(reposCSV)
 	switch {
 	case len(repos) > 0 && pattern != "":
 		return nil, errors.New("pass -repos or -repo-pattern, not both")
@@ -430,7 +233,7 @@ func expandRepos(reposCSV, pattern string, count int) ([]string, error) {
 	}
 }
 
-func printRow(r levelResult) {
+func printRow(r bench.LevelResult) {
 	if r.Strategy == "clone" {
 		fmt.Printf("  c=%-4d clone_ok=%-6d clone/s=%-8.1f p50=%-7.1f p95=%-8.1f p99=%-8.1f max=%-8.1f clone_err=%d\n",
 			r.Concurrency, r.OK, r.OpsPerSec, r.P50ms, r.P95ms, r.P99ms, r.Maxms, r.OtherErrors)
@@ -444,39 +247,27 @@ func printRow(r levelResult) {
 	}
 }
 
-func writeResults(cfg *runConfig, ep *endpoint, results []levelResult) error {
+// writeResults persists the run as a legacy format-1 doc (the shape the CLI
+// has always written) through the results package, so the document schema and
+// the parser that history reads it back with live in one place.
+func writeResults(cfg *cliConfig, label string, levels []bench.LevelResult) error {
 	out := cfg.out
 	if out == "" {
-		if err := os.MkdirAll("results", 0o750); err != nil {
-			return fmt.Errorf("mkdir results: %w", err)
-		}
-		out = fmt.Sprintf("results/forgemark-%s.json", cfg.runID)
+		out = fmt.Sprintf("results/forgemark-%s.json", cfg.workload.RunID)
 	}
-	doc := map[string]any{
-		"run_id":     cfg.runID,
-		"target":     ep.label,
-		"strategy":   cfg.strategy,
-		"duration":   cfg.duration.String(),
-		"warmup":     cfg.warmup.String(),
-		"repo_count": len(cfg.repos),
-		"commit":     cfg.commitDesc(),
-		"levels":     results,
+	doc := results.Doc{
+		RunID:     cfg.workload.RunID,
+		Strategy:  cfg.workload.Strategy,
+		Duration:  cfg.workload.Duration.String(),
+		Warmup:    cfg.workload.Warmup.String(),
+		Commit:    cfg.workload.CommitDesc(),
+		Target:    label,
+		RepoCount: len(cfg.target.Repos),
+		Levels:    levels,
 	}
-	b, err := json.MarshalIndent(doc, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal results: %w", err)
-	}
-	if err := os.WriteFile(out, b, 0o600); err != nil {
-		return fmt.Errorf("write results: %w", err)
+	if err := results.Save(out, doc); err != nil {
+		return err
 	}
 	fmt.Printf("\nwrote %s\n", out)
 	return nil
-}
-
-func maxInt(xs []int) int {
-	m := 0
-	for _, x := range xs {
-		m = max(m, x)
-	}
-	return m
 }
