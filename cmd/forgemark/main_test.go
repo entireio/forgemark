@@ -1,12 +1,17 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"io"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/entireio/forgemark/internal/bench"
 )
 
 func TestExpandRepos(t *testing.T) {
@@ -83,6 +88,44 @@ func TestParseFlagsCommitShapeStillValidatedForPushStrategies(t *testing.T) {
 	_, err := parseFlagsForTest(t, "-strategy", "branch", "-repos", "org/repo", "-files-min", "0")
 	if err == nil || !strings.Contains(err.Error(), "-files-min") {
 		t.Fatalf("parseFlags branch with -files-min 0 err = %v, want -files-min validation", err)
+	}
+}
+
+// The CLI must keep writing the legacy format-1 document (no "format" field,
+// a single "target" plus "repo_count" and "levels") so existing tooling and
+// internal/results.Load keep reading its output after the engine refactor.
+func TestWriteResultsEmitsLegacyFormat(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "out.json")
+	cfg := &cliConfig{out: out}
+	cfg.workload.RunID = "fmtest"
+	cfg.workload.Strategy = "branch"
+	cfg.workload.Duration = 60 * time.Second
+	cfg.workload.Warmup = 10 * time.Second
+	cfg.workload.Commit = bench.CommitConfig{FilesMin: 1, FilesMax: 10, FileSize: 2048}
+	cfg.target.Repos = []string{"org/repo"}
+	levels := []bench.LevelResult{{Concurrency: 4, OK: 12, OpsPerSec: 2}}
+
+	if err := writeResults(cfg, "https://git.example", levels); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := m["format"]; ok {
+		t.Errorf("legacy doc must not carry a format field, got %v", m["format"])
+	}
+	for _, k := range []string{"run_id", "target", "strategy", "duration", "warmup", "repo_count", "commit", "levels"} {
+		if _, ok := m[k]; !ok {
+			t.Errorf("missing legacy field %q", k)
+		}
+	}
+	if m["target"] != "https://git.example" || m["run_id"] != "fmtest" {
+		t.Errorf("target/run_id = %v/%v, want https://git.example/fmtest", m["target"], m["run_id"])
 	}
 }
 

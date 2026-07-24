@@ -1,6 +1,7 @@
 package results
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -27,6 +28,30 @@ func TestWriteLoadRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got.Format != 2 || len(got.Targets) != 1 || got.Targets[0].Series[0].P95 != 42.5 {
+		t.Fatalf("round trip mismatch: %+v", got)
+	}
+}
+
+// Save is the CLI's -out escape hatch: an arbitrary path, outside the
+// discoverable forgemark-*.json shape, whose parent dirs must be created.
+func TestSaveCreatesParentDirsAtArbitraryPath(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "nested", "sub", "out.json")
+	doc := Doc{
+		RunID: "fmx", Strategy: "branch", Target: "https://x", RepoCount: 1,
+		Levels: []bench.LevelResult{{Concurrency: 1, OK: 5}},
+	}
+	if err := Save(path, doc); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("parent dirs not created / file missing: %v", err)
+	}
+	var got Doc
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.RunID != "fmx" || len(got.Levels) != 1 || got.Levels[0].OK != 5 {
 		t.Fatalf("round trip mismatch: %+v", got)
 	}
 }
