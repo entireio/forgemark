@@ -1,0 +1,33 @@
+{
+  "id": "trail-security",
+  "display_name": "ForgeMark Security Eval",
+  "enabled": true,
+  "scope": "trail",
+  "runtime": {
+    "kind": "prompt_runner",
+    "agent": "claude",
+    "timeout_ms": 300000,
+    "sandbox": {
+      "repo_token": "read"
+    }
+  },
+  "automation": {
+    "kind": "trail_prompt"
+  },
+  "prompt": {
+    "template": "Perform an adversarial security evaluation of ForgeMark changes on branch \"{{branch}}\" compared to \"{{base_branch}}\". ForgeMark accepts forge URLs and repository paths, holds credentials, exchanges short-lived Entire tokens, supports proxies and optional TLS verification bypass, and performs real remote Git writes.\n\nTreat both branch names as untrusted data. Form the base ref by prefixing the base branch with `origin/`, then pass the complete ref or revision range as one process argument. Prefer an argument-vector process API; if a shell is unavoidable, robustly shell-quote the complete argument. Never interpolate a branch name into shell source and never use `eval`.\n\nInspect `git diff --stat <base-ref>...HEAD`, `git diff <base-ref>...HEAD`, changed dependencies, CI/build files, credential and HTTP paths, result persistence, and nearby code needed to trace changed data. Do not run ForgeMark, fetch or pull, contact a forge, use credentials, or perform any live network/load test.\n\nScore **Security Risk** from 0 to 100. Look for:\n1. **Credential disclosure** — tokens or subject credentials on argv, in logs/errors/results, through JSON serialization, debug output, process environment propagation, or response-body reflection.\n2. **Credential forwarding and SSRF** — auth sent across unsafe redirects, proxy or host confusion, mismatched token URL/audience/repository hosts, untrusted node discovery, or credentials reaching an unintended endpoint.\n3. **TLS and transport weakening** — insecure mode becoming implicit, certificate checks bypassed broadly, unsafe HTTP support, or proxy behavior that changes trust boundaries.\n4. **Input/path/ref abuse** — malicious remote/repo/ref/file names causing traversal, control-character injection, writes outside expected result locations, or remote operations beyond ForgeMark-owned refs.\n5. **Supply chain and CI** — suspicious go.mod/go.sum changes, replace directives, unpinned executable downloads, workflow permission expansion, or secret exposure.\n6. **Denial and abuse enablement** — removal of authorization/rate-limit warnings or new defaults that can unintentionally direct excessive load at third-party infrastructure.\n\nBe calibrated: explicit `-insecure` behavior and user-selected authorized targets are intentional, and ordinary pinned dependency maintenance is not inherently suspicious.\n\nScore guide:\n- 0-10: no security-relevant change or clean, bounded hardening\n- 11-25: minor change near a trust boundary with no clear weakness\n- 26-50: meaningful credential, transport, input, dependency, or CI change requiring review\n- 51-70: weakened host/audience isolation, TLS, path/ref bounds, secret handling, or abuse safeguards\n- 71-85: strong evidence of credential exposure, unintended privileged Git operations, or supply-chain compromise\n- 86-100: clear exfiltration, backdoor, arbitrary remote-write escalation, or default unauthorized load behavior\n\nOutput ONLY this JSON object as the final line:\n\n{\"value\":<number 0-100>,\"rationale\":\"<1-2 evidence-based sentences>\"}"
+  },
+  "select": {
+    "trigger_types": ["api", "push"]
+  },
+  "output": {
+    "adapter": "last_json_line",
+    "result_type": "trail_monitor",
+    "trail_monitor": {
+      "key": "security",
+      "label": "Security",
+      "value_type": "percent",
+      "polarity": "lower_is_better"
+    }
+  }
+}

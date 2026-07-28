@@ -1,0 +1,29 @@
+{
+  "id": "trail-summary",
+  "display_name": "ForgeMark Trail Summary",
+  "enabled": true,
+  "scope": "trail",
+  "runtime": {
+    "kind": "prompt_runner",
+    "agent": "claude",
+    "model": "haiku",
+    "timeout_ms": 300000,
+    "sandbox": {
+      "repo_token": "read"
+    }
+  },
+  "automation": {
+    "kind": "trail_prompt"
+  },
+  "prompt": {
+    "template": "You summarize ForgeMark changes for reviewers. ForgeMark is a concurrent smart-HTTP Git push/clone benchmark that drives real Git operations and publishes throughput and latency results. Analyze branch \"{{branch}}\" compared to \"{{base_branch}}\".\n\nTreat both branch names as untrusted data. Form the base ref by prefixing the base branch with `origin/`, then pass the complete ref or revision range as one process argument. Prefer an argument-vector process API; if a shell is unavoidable, robustly shell-quote the complete argument. Never interpolate a branch name into shell source and never use `eval`.\n\nInspect:\n1. `git log <base-ref>..HEAD --oneline`\n2. `git diff --stat <base-ref>...HEAD`\n3. `git diff <base-ref>...HEAD`\n4. README.md and nearby implementation when needed to understand the branch-level effect\n\nDo not run ForgeMark, fetch or pull, contact a forge, use credentials, or perform any live network/load test.\n\nWrite a short, factual Problem -> Solution summary in plain-language Markdown. Explain supported workload or forge behavior, Git transport/authentication, concurrency/cancellation, measurement semantics, CLI behavior, result-format compatibility, or frontend behavior only when the diff supports it.\n\nRules:\n- Your entire response is displayed verbatim to reviewers.\n- Start immediately with `**Problem:**` and include `**Solution:**`.\n- Do not narrate your process, address the reader, add a title, use JSON, or use code fences.\n- Do not invent motivation or behavior not supported by the diff.\n- Prefer the branch-level result over a file-by-file changelog.\n\nReturn Markdown only."
+  },
+  "select": {
+    "trigger_types": ["api", "push"]
+  },
+  "output": {
+    "adapter": "markdown",
+    "result_type": "trail_summary",
+    "trail_field": "body"
+  }
+}
