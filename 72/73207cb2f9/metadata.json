@@ -1,0 +1,52 @@
+{
+  "cli_version": "0.8.42",
+  "checkpoint_id": "7273207cb2f9",
+  "strategy": "manual-commit",
+  "branch": "feat/web-demo",
+  "checkpoints_count": 3,
+  "files_touched": [
+    "README.md",
+    "cmd/forgemark/main.go",
+    "cmd/forgemark/main_test.go",
+    "cmd/forgemark/serve.go",
+    "internal/bench/agent.go",
+    "internal/bench/config.go",
+    "internal/bench/stats.go",
+    "internal/results/results.go",
+    "internal/results/results_test.go",
+    "internal/server/collector.go",
+    "internal/server/demo.go",
+    "internal/server/local.go",
+    "internal/server/runmgr.go",
+    "internal/server/runmgr_test.go",
+    "internal/server/server.go",
+    "internal/server/static/css/style.css",
+    "internal/server/static/js/api.js",
+    "internal/server/static/js/app.js",
+    "internal/server/static/js/charts.js",
+    "internal/server/static/js/views/dashboard.js",
+    "internal/server/static/js/views/history.js",
+    "internal/server/static/js/views/newrun.js",
+    "internal/server/static/js/views/race.js",
+    "internal/server/static/js/views/shared.js",
+    "scripts/compare-local.sh",
+    "scripts/login.sh",
+    "scripts/pushrace.sh"
+  ],
+  "sessions": [
+    {
+      "metadata": "/72/73207cb2f9/0/metadata.json",
+      "transcript": "/72/73207cb2f9/0/full.jsonl",
+      "compact_transcript": "/72/73207cb2f9/0/transcript.jsonl",
+      "content_hash": "/72/73207cb2f9/0/content_hash.txt",
+      "prompt": "/72/73207cb2f9/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 46553,
+    "cache_creation_tokens": 4270808,
+    "cache_read_tokens": 195930930,
+    "output_tokens": 497686,
+    "api_call_count": 510
+  }
+}
