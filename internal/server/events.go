@@ -148,7 +148,7 @@ func serveSSE(w http.ResponseWriter, r *http.Request, l *eventLog) {
 			writeSSE(w, e)
 			fl.Flush()
 		case <-heartbeat.C:
-			fmt.Fprint(w, ": ping\n\n")
+			_, _ = fmt.Fprint(w, ": ping\n\n")
 			fl.Flush()
 		case <-r.Context().Done():
 			return
@@ -157,5 +157,5 @@ func serveSSE(w http.ResponseWriter, r *http.Request, l *eventLog) {
 }
 
 func writeSSE(w http.ResponseWriter, e event) {
-	fmt.Fprintf(w, "id: %d\nevent: %s\ndata: %s\n\n", e.seq, e.name, e.data)
+	_, _ = fmt.Fprintf(w, "id: %d\nevent: %s\ndata: %s\n\n", e.seq, e.name, e.data)
 }

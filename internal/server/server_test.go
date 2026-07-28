@@ -30,7 +30,7 @@ func startDemoRun(t *testing.T, ts *httptest.Server, body string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 	var out struct {
 		ID    string `json:"id"`
 		Error string `json:"error"`
@@ -67,7 +67,7 @@ func collectSSE(t *testing.T, ts *httptest.Server, runID, lastEventID string) ([
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 
 	var names []string
 	var raw strings.Builder
@@ -95,7 +95,7 @@ func TestStartRunValidation(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer res.Body.Close()
+		defer func() { _ = res.Body.Close() }()
 		var out map[string]any
 		_ = json.NewDecoder(res.Body).Decode(&out)
 		msg, _ := out["error"].(string)
@@ -139,7 +139,7 @@ func TestRunLifecycleSSEAndRedaction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	res.Body.Close()
+	_ = res.Body.Close()
 	if res.StatusCode != http.StatusConflict {
 		t.Fatalf("concurrent start = HTTP %d, want 409", res.StatusCode)
 	}
@@ -178,7 +178,7 @@ func TestRunLifecycleSSEAndRedaction(t *testing.T) {
 		}
 		b := make([]byte, 1<<20)
 		n, _ := res.Body.Read(b)
-		res.Body.Close()
+		_ = res.Body.Close()
 		if strings.Contains(string(b[:n]), testSecret) {
 			t.Fatalf("secret leaked via GET %s", path)
 		}
@@ -210,7 +210,7 @@ func TestCancelRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	res.Body.Close()
+	_ = res.Body.Close()
 
 	names, raw := collectSSE(t, ts, runID, "")
 	if names[len(names)-1] != "run_done" {
@@ -230,7 +230,7 @@ func TestForbiddenOrigin(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	res.Body.Close()
+	_ = res.Body.Close()
 	if res.StatusCode != http.StatusForbidden {
 		t.Fatalf("cross-origin POST = HTTP %d, want 403", res.StatusCode)
 	}
@@ -251,7 +251,7 @@ func TestHistoryServesLegacyDocs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 	var doc struct {
 		Targets []struct {
 			Name   string `json:"name"`
@@ -273,7 +273,7 @@ func TestHistoryServesLegacyDocs(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		res.Body.Close()
+		_ = res.Body.Close()
 		if res.StatusCode == http.StatusOK {
 			t.Fatalf("GET history/%s succeeded, want rejection", bad)
 		}
