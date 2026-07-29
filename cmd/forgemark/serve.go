@@ -29,7 +29,8 @@ func runServe(args []string) error {
 	// warn, not pass: server.IsLoopbackHost treats it as non-loopback.
 	if host, _, err := net.SplitHostPort(*addr); err == nil && !server.IsLoopbackHost(host) {
 		fmt.Fprintf(os.Stderr, "forgemark: WARNING: -addr %s is not loopback — anyone who can reach it can "+
-			"generate git load with your pasted credentials. Only do this on a network you trust.\n", *addr)
+			"drive benchmark runs. Credentials (pasted or CLI-sourced) and CLI discovery are refused on a "+
+			"non-loopback bind, so only demo:// targets will run there. Only expose this on a network you trust.\n", *addr)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

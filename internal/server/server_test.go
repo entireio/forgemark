@@ -177,21 +177,54 @@ func TestOriginGuard(t *testing.T) {
 	if res.StatusCode != http.StatusForbidden {
 		t.Errorf("rebinding Host = %d, want 403", res.StatusCode)
 	}
+	// The same rebinding guard covers the read API, or a rebound page could read
+	// run status, live events, and history through a spoofed Host.
+	for _, path := range []string{"/api/runs", "/api/history"} {
+		rb, _ := http.NewRequest(http.MethodGet, ts.URL+path, nil)
+		rb.Host = "evil.example:1234"
+		rres, err := http.DefaultClient.Do(rb)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = rres.Body.Close()
+		if rres.StatusCode != http.StatusForbidden {
+			t.Errorf("rebinding GET %s = %d, want 403", path, rres.StatusCode)
+		}
+	}
 }
 
-func TestPastedSecretRejectedOnNonLoopback(t *testing.T) {
+func TestCredentialsRejectedOnNonLoopback(t *testing.T) {
 	dir := t.TempDir()
 	s := New("0.0.0.0:8377", dir) // wildcard bind = exposed
 	ts := httptest.NewServer(s.Handler())
 	t.Cleanup(ts.Close)
-	body := `{"confirm_authorized":true,"targets":[{"name":"x","remote":"demo://x","secret":"paste-me"}]}`
-	res, err := http.Post(ts.URL+"/api/runs", "application/json", strings.NewReader(body))
+
+	// Both a pasted secret and a CLI secret_source are refused on an exposed
+	// bind: the first would cross the wire in cleartext, the second would spend
+	// the operator's CLI credential for any reachable client.
+	for name, body := range map[string]string{
+		"pasted secret": `{"confirm_authorized":true,"targets":[{"name":"x","remote":"demo://x","secret":"paste-me"}]}`,
+		"secret_source": `{"confirm_authorized":true,"targets":[{"name":"x","remote":"https://github.com","repos":["a/b"],"secret_source":"gh"}]}`,
+	} {
+		res, err := http.Post(ts.URL+"/api/runs", "application/json", strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = res.Body.Close()
+		if res.StatusCode != http.StatusBadRequest {
+			t.Fatalf("%s on non-loopback bind = %d, want 400", name, res.StatusCode)
+		}
+	}
+
+	// CLI discovery execs local credentials and is disabled outright on an
+	// exposed bind, regardless of Origin.
+	res, err := http.Get(ts.URL + "/api/local/suggest")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = res.Body.Close() }()
-	if res.StatusCode != http.StatusBadRequest {
-		t.Fatalf("pasted secret on non-loopback bind = %d, want 400", res.StatusCode)
+	_ = res.Body.Close()
+	if res.StatusCode != http.StatusForbidden {
+		t.Fatalf("GET /api/local/suggest on non-loopback bind = %d, want 403", res.StatusCode)
 	}
 }
 
@@ -213,6 +246,11 @@ func TestValidateSecretAudience(t *testing.T) {
 	ok("entire", "https://aws-ap-south-1.entire.io", "https://in.auth.entire.io/oauth/token", "https://in.entire.io")
 	bad("entire", "https://aws-ap-south-1.entire.io", "https://evil.com/oauth/token", "https://in.entire.io")    // bad token_url
 	bad("entire", "https://entire.io.evil.com", "https://in.auth.entire.io/oauth/token", "https://in.entire.io") // suffix-spoof remote
+	// A CLI token must never be sent over cleartext or to a userinfo-spoofed URL,
+	// even when the host itself is in-audience.
+	bad("gh", "http://github.com", "", "")                                                                // http would leak the token on the wire
+	bad("gh", "https://x:y@github.com", "", "")                                                           // embedded userinfo overrides the pinned credential
+	bad("entire", "http://in.entire.io", "https://in.auth.entire.io/oauth/token", "https://in.entire.io") // http remote
 }
 
 func TestRunLifecycleSSEAndRedaction(t *testing.T) {

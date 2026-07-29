@@ -103,7 +103,11 @@ import json, os, shlex, sys
 
 entry = json.loads(os.environ["SUGGEST"]).get("entire") or {}
 if entry.get("error") or not entry.get("target"):
-    print(f'echo "compare-local: entire discovery failed: {shlex.quote(entry.get("error", "no target"))}" >&2; exit 1')
+    # shlex.quote the whole echo argument as one token. Embedding it INSIDE a
+    # double-quoted string would leave any command substitution in the error to
+    # be evaluated when eval runs this generated line.
+    msg = "compare-local: entire discovery failed: " + entry.get("error", "no target")
+    print("echo " + shlex.quote(msg) + " >&2; exit 1")
     sys.exit(0)
 t = entry["target"]
 repo = (t.get("repos") or [""])[0]          # et/forgemark-<handle>/forgemark-target

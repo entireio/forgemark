@@ -222,8 +222,6 @@ export function renderNewRun(app) {
       form.prepend(errorBanner);
       window.scrollTo(0, 0);
     };
-    const num = (el) => parseFloat(el.value || '0');
-
     // Reject malformed concurrency instead of silently dropping tokens: an
     // empty list would make the server substitute its default [1,8,32,128]
     // sweep — a 128-agent surprise the user never asked for.
@@ -233,6 +231,34 @@ export function renderNewRun(app) {
       showError(`Concurrency must be comma-separated positive integers (e.g. 1,8,32) — got "${w.concurrency.value}"`);
       return;
     }
+
+    // Validate every numeric field to a finite number before posting. A blank
+    // or non-numeric entry would parse to NaN, which JSON.stringify emits as
+    // null; the server reads null as "absent" and quietly substitutes the flag
+    // default — so a typo'd "6o" duration would silently run for 60s instead of
+    // erroring. Integer fields must also be whole. Ranges (e.g. min <= max) stay
+    // the server's job via Validate.
+    const numSpecs = [
+      { el: w.duration_sec, label: 'Duration per level', int: false, min: 0, gt0: true },
+      { el: w.warmup_sec, label: 'Warm-up', int: false, min: 0 },
+      { el: w.files_min, label: 'Files per commit (min)', int: true, min: 1 },
+      { el: w.files_max, label: 'Files per commit (max)', int: true, min: 1 },
+      { el: w.file_size, label: 'Bytes per file', int: true, min: 0 },
+      { el: w.session_commits, label: 'Session commits', int: true, min: 1 },
+      { el: w.clone_depth, label: 'Clone depth', int: true, min: 0 },
+    ];
+    const nums = new Map();
+    for (const f of numSpecs) {
+      const raw = (f.el.value || '').trim();
+      const v = Number(raw);
+      if (raw === '' || !Number.isFinite(v) || (f.int && !Number.isInteger(v)) || v < f.min || (f.gt0 && v <= 0)) {
+        const want = f.int ? 'a whole number' : 'a number';
+        showError(`${f.label} must be ${want}${f.gt0 ? ' greater than 0' : ` >= ${f.min}`} — got "${f.el.value}"`);
+        return;
+      }
+      nums.set(f.el, v);
+    }
+    const num = (el) => nums.get(el);
 
     // Only remote-bearing rows are real targets — a blank card is not posted.
     // Compute allDemo over the same set updateGate() uses, so the confirm-gate

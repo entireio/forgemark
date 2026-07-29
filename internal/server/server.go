@@ -21,6 +21,12 @@ import (
 //go:embed static
 var staticFiles embed.FS
 
+// shutdownDrain bounds how long a graceful shutdown waits for the active run to
+// cancel, persist, and clean up. It exceeds a session's 30s ref-deletion budget
+// (bench.deleteRef) plus margin so cleanup finishes before we return, while
+// still capping a wedged run so ctrl-c can't hang forever.
+const shutdownDrain = 40 * time.Second
+
 type Server struct {
 	addr string
 	mgr  *RunManager
@@ -38,14 +44,20 @@ func New(addr, resultsDir string) *Server {
 	}
 	s.mux.Handle("GET /", http.FileServerFS(staticRoot))
 
+	// Every /api route (reads included) carries the rebinding guard: a page that
+	// rebinds a hostname to loopback can otherwise read run status, live events,
+	// and history — which name targets and remotes — through a spoofed Host. The
+	// static file server stays open so the SPA itself loads.
 	s.mux.HandleFunc("POST /api/runs", s.requireLocalOrigin(s.handleStartRun))
-	s.mux.HandleFunc("GET /api/runs", s.handleListRuns)
-	s.mux.HandleFunc("GET /api/runs/{id}", s.handleGetRun)
+	s.mux.HandleFunc("GET /api/runs", s.requireLocalOrigin(s.handleListRuns))
+	s.mux.HandleFunc("GET /api/runs/{id}", s.requireLocalOrigin(s.handleGetRun))
 	s.mux.HandleFunc("POST /api/runs/{id}/cancel", s.requireLocalOrigin(s.handleCancelRun))
-	s.mux.HandleFunc("GET /api/runs/{id}/events", s.handleRunEvents)
-	s.mux.HandleFunc("GET /api/history", s.handleHistory)
-	s.mux.HandleFunc("GET /api/history/{file}", s.handleHistoryDoc)
-	s.mux.HandleFunc("GET /api/local/suggest", s.requireLocalOrigin(s.handleLocalSuggest))
+	s.mux.HandleFunc("GET /api/runs/{id}/events", s.requireLocalOrigin(s.handleRunEvents))
+	s.mux.HandleFunc("GET /api/history", s.requireLocalOrigin(s.handleHistory))
+	s.mux.HandleFunc("GET /api/history/{file}", s.requireLocalOrigin(s.handleHistoryDoc))
+	// Discovery execs the operator's CLIs and returns their identities; it is
+	// loopback-only on top of the origin guard, never reachable on an exposed bind.
+	s.mux.HandleFunc("GET /api/local/suggest", s.requireLocalOrigin(s.requireLoopbackBind(s.handleLocalSuggest)))
 	return s
 }
 
@@ -65,7 +77,13 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 		// persist and clean up. This also ends the load and closes the SSE
 		// streams, so the HTTP shutdown below completes promptly instead of
 		// blocking on long-lived event connections.
-		s.mgr.stopActive(10 * time.Second)
+		//
+		// The wait must outlast a run's own cleanup budget, or we'd return (and,
+		// for the embedded CLI serve, exit the process) while a session's ref
+		// deletion is still in flight — leaking the ephemeral refs deleteRef
+		// exists to remove. deleteRef runs on a detached 30s context, so give the
+		// coordinator margin beyond that to drain before we give up.
+		s.mgr.stopActive(shutdownDrain)
 		shutCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
 		_ = srv.Shutdown(shutCtx)
@@ -106,6 +124,20 @@ func (s *Server) requireLocalOrigin(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// requireLoopbackBind refuses an endpoint outright on a non-loopback -addr,
+// regardless of Origin. It guards capabilities that must never be reachable
+// across a network at all — here, CLI-credential discovery, which execs the
+// operator's gh/glab/entire logins and returns their identities. On the
+// default loopback bind it is a pass-through.
+func (s *Server) requireLoopbackBind(next http.HandlerFunc) http.HandlerFunc {
+	if s.loopbackBound() {
+		return next
+	}
+	return func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "this endpoint reads local CLI credentials and is disabled on a non-loopback -addr", http.StatusForbidden)
+	}
+}
+
 // loopbackBound reports whether the server is bound to an explicit loopback
 // address (the default, safe deployment). A wildcard (":8377") or a real
 // interface is treated as exposed: the DNS-rebinding guard doesn't apply and
@@ -142,15 +174,17 @@ func (s *Server) handleStartRun(w http.ResponseWriter, r *http.Request) {
 		httpError(w, http.StatusBadRequest, fmt.Sprintf("bad request body: %v", err))
 		return
 	}
-	// A pasted secret travels in this request body; on a non-loopback bind that
-	// crosses the network in cleartext HTTP. Refuse it there and require a
-	// secret_source (the server pulls the credential locally, out of the body).
-	// Over loopback a pasted secret stays on the machine, held in memory only.
+	// No credential is materialized on a non-loopback bind. A pasted secret would
+	// cross the network in cleartext; a secret_source is worse — it would spend
+	// the operator's CLI credential (gh/glab/entire) on a target chosen by any
+	// client that can reach this port. So an exposed bind runs demo:// targets
+	// only; real-forge benchmarking requires the default loopback bind, where the
+	// credential stays on the machine, held in memory for the run.
 	if !s.loopbackBound() {
 		for _, t := range req.Targets {
-			if t.Secret != "" {
+			if t.Secret != "" || t.SecretSource != "" {
 				httpError(w, http.StatusBadRequest,
-					"pasted secrets are refused on a non-loopback -addr (they would cross the network in cleartext); use secret_source instead")
+					"credentials are refused on a non-loopback -addr: a pasted secret would cross the network in cleartext, and a secret_source would spend the operator's CLI credential on behalf of any reachable client. Bind to loopback (the default) to benchmark real forges; only demo:// targets run on an exposed bind")
 				return
 			}
 		}

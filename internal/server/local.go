@@ -74,26 +74,50 @@ func resolveSecretSource(source, remote string) (string, string, error) {
 // and jurisdiction must all stay under entire.io. Self-hosted forges should
 // paste a token rather than name a CLI source.
 func validateSecretAudience(source, remote, tokenURL, jurisdiction string) error {
-	host := func(raw string) string {
+	// secureHost parses a URL that a CLI-sourced credential will be sent to and
+	// returns its hostname only if the URL is safe to send a token over: it must
+	// be https (a token as Basic auth over http:// leaks it on the wire) and
+	// carry no userinfo (an embedded user:pass@ would override the credential the
+	// audience check is pinning). Any deviation is an error, not a bare host, so
+	// no downstream check can accidentally accept it.
+	secureHost := func(label, raw string) (string, error) {
 		u, err := url.Parse(raw)
 		if err != nil {
-			return ""
+			return "", fmt.Errorf("secret_source %s: %s %q is not a valid URL: %w", source, label, raw, err)
 		}
-		return u.Hostname()
+		if u.Scheme != "https" {
+			return "", fmt.Errorf("secret_source %s requires an https %s (a CLI token must never travel over cleartext), got %q", source, label, raw)
+		}
+		if u.User != nil {
+			return "", fmt.Errorf("secret_source %s: %s must not embed userinfo, got %q", source, label, raw)
+		}
+		return u.Hostname(), nil
 	}
 	underEntire := func(h string) bool { return h == "entire.io" || strings.HasSuffix(h, ".entire.io") }
 	switch source {
 	case "gh":
-		if host(remote) != "github.com" {
+		h, err := secureHost("remote", remote)
+		if err != nil {
+			return err
+		}
+		if h != "github.com" {
 			return fmt.Errorf("secret_source gh is only valid for a github.com remote, not %q", remote)
 		}
 	case "glab":
-		if host(remote) != "gitlab.com" {
+		h, err := secureHost("remote", remote)
+		if err != nil {
+			return err
+		}
+		if h != "gitlab.com" {
 			return fmt.Errorf("secret_source glab is only valid for a gitlab.com remote, not %q", remote)
 		}
 	case "entire":
 		for label, raw := range map[string]string{"remote": remote, "token_url": tokenURL, "jurisdiction": jurisdiction} {
-			if !underEntire(host(raw)) {
+			h, err := secureHost(label, raw)
+			if err != nil {
+				return err
+			}
+			if !underEntire(h) {
 				return fmt.Errorf("secret_source entire requires %s under entire.io, got %q", label, raw)
 			}
 		}

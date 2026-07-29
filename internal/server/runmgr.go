@@ -468,11 +468,6 @@ func (r *Run) coordinate(m *RunManager) {
 		r.levelIdx = li
 		r.levelConc = c
 		r.mu.Unlock()
-		r.log.emit("level_start", map[string]any{
-			"level_index": li, "concurrency": c,
-			"warmup_sec": r.bw.Warmup.Seconds(), "duration_sec": r.bw.Duration.Seconds(),
-			"at": time.Now().UTC(),
-		})
 
 		// Real start barrier: every target builds its agents, then all are
 		// released together, so target-dependent setup time doesn't shift the
@@ -495,6 +490,15 @@ func (r *Run) coordinate(m *RunManager) {
 		}
 		barrier.Await() // all targets have built their agents (or failed and arrived)
 		barrier.Fire()  // release them to start the timed window together
+		// Emit level_start only now, at the instant the timed window opens. The
+		// agents' measured clocks start at Fire, so an "at" stamped before the
+		// per-target build (which the barrier absorbs) would make the UI's warm-up
+		// shading and countdown lead the real window by the setup time.
+		r.log.emit("level_start", map[string]any{
+			"level_index": li, "concurrency": c,
+			"warmup_sec": r.bw.Warmup.Seconds(), "duration_sec": r.bw.Duration.Seconds(),
+			"at": time.Now().UTC(),
+		})
 		lwg.Wait()
 
 		// Flush the level's final partial second before the next level resets
