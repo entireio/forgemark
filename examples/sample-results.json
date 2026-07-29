@@ -1,0 +1,20 @@
+{
+  "format": 2,
+  "run_id": "fmsample",
+  "strategy": "branch",
+  "duration": "30s",
+  "warmup": "10s",
+  "commit": "1-10 x 2048B",
+  "state": "done",
+  "targets": [
+    {
+      "name": "example-forge",
+      "label": "https://git.example.com",
+      "levels": [
+        {"concurrency": 1, "strategy": "branch", "repos": 1, "window_sec": 30, "pushes": 244, "ok": 243, "cas_failures": 0, "other_errors": 1, "ops_per_sec": 8.1, "p50_ms": 92, "p95_ms": 120, "p99_ms": 180, "max_ms": 240, "commit_files": "1-10 x 2048B"},
+        {"concurrency": 8, "strategy": "branch", "repos": 1, "window_sec": 30, "pushes": 860, "ok": 852, "cas_failures": 8, "other_errors": 0, "ops_per_sec": 28.4, "p50_ms": 140, "p95_ms": 180, "p99_ms": 260, "max_ms": 410, "commit_files": "1-10 x 2048B"},
+        {"concurrency": 32, "strategy": "branch", "repos": 1, "window_sec": 30, "pushes": 1300, "ok": 1281, "cas_failures": 19, "other_errors": 0, "ops_per_sec": 42.7, "p50_ms": 170, "p95_ms": 210, "p99_ms": 320, "max_ms": 680, "commit_files": "1-10 x 2048B"}
+      ]
+    }
+  ]
+}

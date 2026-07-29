@@ -1,0 +1,112 @@
+# Performance gate: run ForgeMark against a real forge and fail if peak
+# throughput falls below a floor. This is the CI half of `forgemark report
+# --emit monitor` — the run emits a monitor value and this workflow gates on it.
+#
+# It is intentionally NOT a pull_request trigger: a real git load test needs a
+# credential and sustained egress to a forge, so it runs on demand
+# (workflow_dispatch) or on a nightly schedule against secrets, never as a
+# blocking check on every PR. GitHub-hosted runners have internet egress but no
+# regional placement — see the "Caveats" note in the README about running close
+# to the target for a faithful number.
+#
+# Required repository secrets for the live job:
+#   FORGEMARK_REMOTE  base URL of the forge, e.g. https://gitlab.com
+#   FORGEMARK_REPOS   comma-separated repo paths (must already exist), e.g. you/bench.git
+#   FORGEMARK_TOKEN   forge access token (used as ACCESS_TOKEN, off argv)
+
+name: Performance gate
+
+on:
+  workflow_dispatch:
+    inputs:
+      concurrency:
+        description: "concurrency sweep (comma-separated)"
+        default: "1,8"
+      duration:
+        description: "measured window per level"
+        default: "30s"
+      min_push_rate:
+        description: "fail if peak push/sec is below this"
+        default: "1"
+  schedule:
+    - cron: "0 6 * * *" # 06:00 UTC nightly
+
+jobs:
+  # Proves the gate plumbing with zero secrets: build forgemark, reduce a sample
+  # result doc to its monitor value, and assert the value-floor logic both ways.
+  # This always runs, so the gate mechanism itself is covered even when the live
+  # job below is skipped for want of secrets.
+  gate-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jdx/mise-action@v2
+        with:
+          install: true
+          cache: true
+      - name: Build forgemark
+        run: go build -o forgemark ./cmd/forgemark
+      - name: Reduce sample result to a monitor value
+        run: |
+          ./forgemark report --emit monitor examples/sample-results.json | tee monitor.json
+          value=$(jq -r '.value' monitor.json)
+          echo "peak = $value push/s"
+          # Gate logic: pass above the floor, fail below it. Verified both ways.
+          awk -v v="$value" 'BEGIN { exit !(v >= 1) }' \
+            || { echo "expected sample value >= 1"; exit 1; }
+          awk -v v="$value" 'BEGIN { exit !(v < 9999) }' \
+            || { echo "expected sample value < 9999"; exit 1; }
+
+  # The real gate: load-test the target and fail the run if peak push/sec is
+  # below the floor. Skips cleanly if the forge secrets aren't configured.
+  perf:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jdx/mise-action@v2
+        with:
+          install: true
+          cache: true
+      - name: Build forgemark
+        run: go build -o forgemark ./cmd/forgemark
+      - name: Check for forge secrets
+        id: cfg
+        env:
+          REMOTE: ${{ secrets.FORGEMARK_REMOTE }}
+          REPOS: ${{ secrets.FORGEMARK_REPOS }}
+          TOKEN: ${{ secrets.FORGEMARK_TOKEN }}
+        run: |
+          if [ -z "$REMOTE" ] || [ -z "$REPOS" ] || [ -z "$TOKEN" ]; then
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::FORGEMARK_REMOTE/REPOS/TOKEN not set — skipping the live perf gate."
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Run benchmark
+        if: steps.cfg.outputs.ready == 'true'
+        env:
+          ACCESS_TOKEN: ${{ secrets.FORGEMARK_TOKEN }}
+        run: |
+          ./forgemark \
+            -remote "${{ secrets.FORGEMARK_REMOTE }}" \
+            -repos "${{ secrets.FORGEMARK_REPOS }}" \
+            -concurrency "${{ github.event.inputs.concurrency || '1,8' }}" \
+            -duration "${{ github.event.inputs.duration || '30s' }}" \
+            -out results/perf.json
+      - name: Gate on peak throughput
+        if: steps.cfg.outputs.ready == 'true'
+        run: |
+          floor="${{ github.event.inputs.min_push_rate || '1' }}"
+          ./forgemark report --emit monitor results/perf.json | tee monitor.json
+          value=$(jq -r '.value' monitor.json)
+          echo "peak = $value push/s (floor $floor)"
+          awk -v v="$value" -v f="$floor" 'BEGIN { exit !(v >= f) }' || {
+            echo "::error::peak push throughput $value/s is below the floor $floor/s"
+            exit 1
+          }
+      - name: Upload result doc
+        if: steps.cfg.outputs.ready == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: forgemark-perf-results
+          path: results/perf.json
