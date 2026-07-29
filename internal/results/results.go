@@ -157,21 +157,37 @@ func List(dir string) ([]Summary, error) {
 	return out, nil
 }
 
-// Load reads one doc and normalizes legacy CLI docs into the Targets shape.
+// Load reads one discoverable forgemark-*.json from dir and normalizes it. The
+// filename shape doubles as the path-traversal guard for names from HTTP.
 func Load(dir, file string) (Doc, error) {
 	if !validFile.MatchString(file) {
 		return Doc{}, fmt.Errorf("invalid result filename %q", file)
 	}
-	b, err := os.ReadFile(filepath.Join(dir, file))
+	return LoadPath(filepath.Join(dir, file))
+}
+
+// LoadPath reads a result doc from an arbitrary filesystem path and normalizes
+// legacy CLI docs into the Targets shape. Unlike Load it applies no filename
+// guard, so callers that pass a user-supplied path (the report subcommand) must
+// already trust it; it is not for filenames arriving over the network.
+func LoadPath(path string) (Doc, error) {
+	b, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return Doc{}, ErrNotFound
 	}
 	if err != nil {
 		return Doc{}, err
 	}
+	return decodeDoc(b, filepath.Base(path))
+}
+
+// decodeDoc parses result JSON and normalizes a legacy CLI doc into the Targets
+// shape. name only labels parse errors. Normalization lives here alone so every
+// reader (history, report) sees one shape.
+func decodeDoc(b []byte, name string) (Doc, error) {
 	var doc Doc
 	if err := json.Unmarshal(b, &doc); err != nil {
-		return Doc{}, fmt.Errorf("parse %s: %w", file, err)
+		return Doc{}, fmt.Errorf("parse %s: %w", name, err)
 	}
 	if doc.Format == 0 && len(doc.Targets) == 0 {
 		// Legacy CLI doc: present it as one pseudo-target named by its label.
