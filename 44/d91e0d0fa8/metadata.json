@@ -1,0 +1,24 @@
+{
+  "cli_version": "0.8.42",
+  "checkpoint_id": "44d91e0d0fa8",
+  "strategy": "manual-commit",
+  "branch": "feat/monitor-adapter",
+  "checkpoints_count": 1,
+  "files_touched": null,
+  "sessions": [
+    {
+      "metadata": "/44/d91e0d0fa8/0/metadata.json",
+      "transcript": "/44/d91e0d0fa8/0/full.jsonl",
+      "compact_transcript": "/44/d91e0d0fa8/0/transcript.jsonl",
+      "content_hash": "/44/d91e0d0fa8/0/content_hash.txt",
+      "prompt": "/44/d91e0d0fa8/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 70382,
+    "cache_creation_tokens": 5506070,
+    "cache_read_tokens": 303288854,
+    "output_tokens": 751079,
+    "api_call_count": 705
+  }
+}
