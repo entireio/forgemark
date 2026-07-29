@@ -56,6 +56,48 @@ func TestMonitorFor(t *testing.T) {
 	}
 }
 
+func TestMonitorForFullPrecision(t *testing.T) {
+	// 1 successful push in a 60s window is ~0.0167 ops/s. The machine value must
+	// keep that, not round it to 0 (which a gate would read as total failure).
+	tr := results.TargetResult{Levels: []bench.LevelResult{
+		{Concurrency: 1, OK: 1, OpsPerSec: 1.0 / 60.0, P95ms: 900},
+	}}
+	m := monitorFor(tr)
+	if m.Value == 0 {
+		t.Fatalf("sub-0.05 ops/s value rounded to 0: %v", m.Value)
+	}
+	if m.Value < 0.016 || m.Value > 0.017 {
+		t.Errorf("value = %v, want ~0.0167", m.Value)
+	}
+}
+
+func TestMonitorForSessionErrors(t *testing.T) {
+	// Session levels do both a clone and a push; failed clones live in
+	// CloneErrors and must still count, even though the throughput label is push.
+	tr := results.TargetResult{Levels: []bench.LevelResult{
+		{Concurrency: 8, Strategy: "session", OK: 40, OpsPerSec: 13.3, P95ms: 300, CASFailures: 2, OtherErrors: 1, CloneErrors: 5},
+	}}
+	m := monitorFor(tr)
+	if !strings.Contains(m.Rationale, "8 errors") { // 2 + 1 + 5
+		t.Errorf("session rationale %q should count clone failures (want 8 errors)", m.Rationale)
+	}
+}
+
+func TestReduceDocStateGate(t *testing.T) {
+	tr := results.TargetResult{Levels: []bench.LevelResult{{Concurrency: 1, OpsPerSec: 42.7}}}
+	// A completed run reports its peak.
+	if m := reduceDoc(results.Doc{State: "done", Targets: []results.TargetResult{tr}}, tr); m.Value != 42.7 {
+		t.Errorf("done run value = %v, want 42.7", m.Value)
+	}
+	// A cancelled/failed run with completed levels must not pass a gate.
+	for _, state := range []string{"cancelled", "failed", ""} {
+		m := reduceDoc(results.Doc{State: state, Targets: []results.TargetResult{tr}}, tr)
+		if m.Value != 0 {
+			t.Errorf("state %q value = %v, want 0", state, m.Value)
+		}
+	}
+}
+
 func TestSelectTarget(t *testing.T) {
 	ts := []results.TargetResult{{Name: "a", Label: "alpha"}, {Name: "b", Label: "beta"}}
 	if got, err := selectTarget(ts, ""); err != nil || got.Name != "a" {

@@ -9,6 +9,11 @@
 # regional placement — see the "Caveats" note in the README about running close
 # to the target for a faithful number.
 #
+# Every dispatch input and secret is passed through `env:` and referenced as a
+# quoted shell variable, never interpolated into `run:` source — a `${{ }}`
+# expression pasted into bash would execute attacker-supplied `$(...)` while the
+# forge token is in scope.
+#
 # Required repository secrets for the live job:
 #   FORGEMARK_REMOTE  base URL of the forge, e.g. https://gitlab.com
 #   FORGEMARK_REPOS   comma-separated repo paths (must already exist), e.g. you/bench.git
@@ -61,6 +66,8 @@ jobs:
   # below the floor. Skips cleanly if the forge secrets aren't configured.
   perf:
     runs-on: ubuntu-latest
+    env:
+      BRANCH_PREFIX: "perf-gate/" # branch strategy pushes run-ID refs under this; the cleanup step prunes them
     steps:
       - uses: actions/checkout@v4
       - uses: jdx/mise-action@v2
@@ -82,31 +89,78 @@ jobs:
           else
             echo "ready=true" >> "$GITHUB_OUTPUT"
           fi
+      - name: Validate the floor
+        if: steps.cfg.outputs.ready == 'true'
+        env:
+          FLOOR: ${{ github.event.inputs.min_push_rate || '1' }}
+        run: |
+          # Fail closed on a malformed floor: awk would coerce "abc" to 0 and let
+          # every nonnegative result pass. Accept only a finite nonnegative number.
+          case "$FLOOR" in
+            "" | *[!0-9.]* | *.*.*)
+              echo "::error::min_push_rate '$FLOOR' is not a nonnegative number"; exit 1 ;;
+          esac
+          echo "floor = $FLOOR push/s"
       - name: Run benchmark
         if: steps.cfg.outputs.ready == 'true'
         env:
           ACCESS_TOKEN: ${{ secrets.FORGEMARK_TOKEN }}
+          REMOTE: ${{ secrets.FORGEMARK_REMOTE }}
+          REPOS: ${{ secrets.FORGEMARK_REPOS }}
+          CONC: ${{ github.event.inputs.concurrency || '1,8' }}
+          DUR: ${{ github.event.inputs.duration || '30s' }}
         run: |
           ./forgemark \
-            -remote "${{ secrets.FORGEMARK_REMOTE }}" \
-            -repos "${{ secrets.FORGEMARK_REPOS }}" \
-            -concurrency "${{ github.event.inputs.concurrency || '1,8' }}" \
-            -duration "${{ github.event.inputs.duration || '30s' }}" \
+            -remote "$REMOTE" \
+            -repos "$REPOS" \
+            -branch-prefix "$BRANCH_PREFIX" \
+            -concurrency "$CONC" \
+            -duration "$DUR" \
             -out results/perf.json
       - name: Gate on peak throughput
         if: steps.cfg.outputs.ready == 'true'
+        env:
+          FLOOR: ${{ github.event.inputs.min_push_rate || '1' }}
         run: |
-          floor="${{ github.event.inputs.min_push_rate || '1' }}"
           ./forgemark report --emit monitor results/perf.json | tee monitor.json
           value=$(jq -r '.value' monitor.json)
-          echo "peak = $value push/s (floor $floor)"
-          awk -v v="$value" -v f="$floor" 'BEGIN { exit !(v >= f) }' || {
-            echo "::error::peak push throughput $value/s is below the floor $floor/s"
+          echo "peak = $value push/s (floor $FLOOR)"
+          awk -v v="$value" -v f="$FLOOR" 'BEGIN { exit !(v >= f) }' || {
+            echo "::error::peak push throughput $value/s is below the floor $FLOOR/s"
             exit 1
           }
+      - name: Clean up benchmark refs
+        # Always run when the benchmark ran: the branch strategy pushes run-ID
+        # refs under $BRANCH_PREFIX and never deletes them, so nightly runs would
+        # otherwise accumulate refs on the target and perturb it. Best-effort —
+        # a failure here must not fail the gate. The token is supplied via a
+        # credential helper from env, never placed in the URL or on argv.
+        if: always() && steps.cfg.outputs.ready == 'true'
+        env:
+          REMOTE: ${{ secrets.FORGEMARK_REMOTE }}
+          REPOS: ${{ secrets.FORGEMARK_REPOS }}
+          FORGEMARK_TOKEN: ${{ secrets.FORGEMARK_TOKEN }}
+        run: |
+          set -u
+          host="${REMOTE#*://}"; host="${host%%/*}"
+          helper='!f() { echo username=x-access-token; echo "password=$FORGEMARK_TOKEN"; }; f'
+          IFS=',' read -ra repos <<< "$REPOS"
+          for repo in "${repos[@]}"; do
+            repo="$(echo "$repo" | xargs)" # trim surrounding whitespace
+            [ -n "$repo" ] || continue
+            url="https://${host}/${repo}"
+            for ref in $(git -c credential.helper="$helper" ls-remote "$url" "refs/heads/${BRANCH_PREFIX}*" 2>/dev/null | awk '{print $2}'); do
+              echo "deleting $repo $ref"
+              git -c credential.helper="$helper" push "$url" ":$ref" 2>/dev/null || true
+            done
+          done
       - name: Upload result doc
-        if: steps.cfg.outputs.ready == 'true'
+        # always() so the doc that explains a regression is preserved even when
+        # the gate step above fails; if-no-files-found: ignore covers a benchmark
+        # that died before writing the doc.
+        if: always() && steps.cfg.outputs.ready == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: forgemark-perf-results
           path: results/perf.json
+          if-no-files-found: ignore

@@ -56,7 +56,7 @@ func runReport(args []string) error {
 	if err != nil {
 		return err
 	}
-	mon := monitorFor(tr)
+	mon := reduceDoc(doc, tr)
 
 	if *emit == "text" {
 		printReportText(doc, tr, mon)
@@ -77,6 +77,17 @@ func runReport(args []string) error {
 type monitorResult struct {
 	Value     float64 `json:"value"`
 	Rationale string  `json:"rationale"`
+}
+
+// reduceDoc turns a whole result doc into its monitor. An incomplete run
+// (cancelled/failed) can still carry completed levels, so gating on its peak
+// would let a broken run pass; report 0 for any state but "done" so the gate
+// fails closed. Legacy CLI docs normalize to "done" on load.
+func reduceDoc(doc results.Doc, tr results.TargetResult) monitorResult {
+	if doc.State != "done" {
+		return monitorResult{Value: 0, Rationale: fmt.Sprintf("run did not complete (state %q) — reporting 0 so a gate fails closed", doc.State)}
+	}
+	return monitorFor(tr)
 }
 
 // selectTarget resolves the -target selector against a doc's targets: an empty
@@ -122,13 +133,16 @@ func monitorFor(tr results.TargetResult) monitorResult {
 			peak, havePeak = l, true
 		}
 		perLevel = append(perLevel, fmt.Sprintf("c=%d %s", l.Concurrency, round1(l.OpsPerSec)))
-		errs += levelErrors(l, label)
+		errs += levelErrors(l)
 	}
 
 	rationale := fmt.Sprintf("peak %s %s ops/s @ c=%d | %s | p95 %dms | %d errors",
 		label, round1(peak.OpsPerSec), peak.Concurrency,
 		strings.Join(perLevel, ", "), int(math.Round(peakP95(peak, label))), errs)
-	return monitorResult{Value: math.Round(peak.OpsPerSec*10) / 10, Rationale: rationale}
+	// Preserve full precision in the machine value — rounding to tenths would
+	// flush a sub-0.05 ops/s result (e.g. 1 op in 60s = 0.0167) to 0 and hide
+	// small regressions. Only the rationale/text rounds, for readability.
+	return monitorResult{Value: peak.OpsPerSec, Rationale: rationale}
 }
 
 // opLabel names the primary operation being measured, so the rationale reads
@@ -142,13 +156,13 @@ func opLabel(tr results.TargetResult) string {
 	return "push"
 }
 
-// levelErrors counts the failed primary operations in a level: CAS losses and
-// other push errors on the write path, clone errors on the read path.
-func levelErrors(l bench.LevelResult, label string) int {
-	if label == "clone" {
-		return l.CloneErrors
-	}
-	return l.CASFailures + l.OtherErrors
+// levelErrors counts every failed operation in a level. Summing all three
+// counters is correct for every strategy: clone counters are zero outside
+// clone/session runs, push counters are zero in a pure clone, and a session
+// level (both a clone and a push per iteration) must count failures on both
+// sides — a run whose clones all fail is not a 0-error run.
+func levelErrors(l bench.LevelResult) int {
+	return l.CASFailures + l.OtherErrors + l.CloneErrors
 }
 
 // peakP95 is the primary-op p95 at the peak level.
@@ -180,7 +194,7 @@ func printReportText(doc results.Doc, tr results.TargetResult, mon monitorResult
 	label := opLabel(tr)
 	for _, l := range tr.Levels {
 		fmt.Printf("  c=%-4d %s/s=%-8s p50=%-7.1f p95=%-8.1f p99=%-8.1f err=%d\n",
-			l.Concurrency, label, round1(l.OpsPerSec), l.P50ms, peakP95(l, label), l.P99ms, levelErrors(l, label))
+			l.Concurrency, label, round1(l.OpsPerSec), l.P50ms, peakP95(l, label), l.P99ms, levelErrors(l))
 	}
 	fmt.Printf("\nmonitor: value=%s  %s\n", round1(mon.Value), mon.Rationale)
 }
