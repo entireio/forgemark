@@ -1,0 +1,27 @@
+{
+  "cli_version": "0.8.42",
+  "checkpoint_id": "1ac2a31e08e3",
+  "strategy": "manual-commit",
+  "branch": "feat/monitor-adapter",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "internal/results/results.go",
+    "internal/results/results_test.go"
+  ],
+  "sessions": [
+    {
+      "metadata": "/1a/c2a31e08e3/0/metadata.json",
+      "transcript": "/1a/c2a31e08e3/0/full.jsonl",
+      "compact_transcript": "/1a/c2a31e08e3/0/transcript.jsonl",
+      "content_hash": "/1a/c2a31e08e3/0/content_hash.txt",
+      "prompt": "/1a/c2a31e08e3/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 70098,
+    "cache_creation_tokens": 5490746,
+    "cache_read_tokens": 300490378,
+    "output_tokens": 736310,
+    "api_call_count": 692
+  }
+}
