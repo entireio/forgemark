@@ -162,6 +162,7 @@ type Run struct {
 	log       *eventLog
 	ctx       context.Context
 	cancel    context.CancelFunc
+	done      chan struct{} // closed when the coordinator goroutine returns
 
 	workload WorkloadSpec // normalized, as accepted
 	bw       bench.Workload
@@ -319,7 +320,7 @@ func (m *RunManager) start(req startRequest) (*Run, []string, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	run := &Run{
 		ID: runID, StartedAt: time.Now(), log: newEventLog(),
-		ctx: ctx, cancel: cancel,
+		ctx: ctx, cancel: cancel, done: make(chan struct{}),
 		workload: ws, bw: bw, state: "starting", targets: targets,
 	}
 
@@ -365,10 +366,29 @@ func (m *RunManager) clearActive(r *Run) {
 	}
 }
 
+// stopActive cancels the active run (if any) and waits for its coordinator to
+// finish generating load, persist its results, and clean up — bounded by
+// timeout so shutdown can't hang. Called on server shutdown so an embedded
+// caller doesn't return while remote load continues and results are unwritten.
+func (m *RunManager) stopActive(timeout time.Duration) {
+	m.mu.Lock()
+	run := m.active
+	m.mu.Unlock()
+	if run == nil {
+		return
+	}
+	run.cancel()
+	select {
+	case <-run.done:
+	case <-time.After(timeout):
+	}
+}
+
 // coordinate is the run's driver goroutine: build runners, then walk the
 // concurrency sweep with a barrier per level so every target starts each
 // level at the same instant (the whole point of a comparison run).
 func (r *Run) coordinate(m *RunManager) {
+	defer close(r.done) // let a shutdown waiter know the run has fully finished
 	defer r.cancel()
 
 	// Resolve every target concurrently — entiredb setup probes the cluster.
@@ -476,6 +496,13 @@ func (r *Run) coordinate(m *RunManager) {
 		barrier.Await() // all targets have built their agents (or failed and arrived)
 		barrier.Fire()  // release them to start the timed window together
 		lwg.Wait()
+
+		// Flush the level's final partial second before the next level resets
+		// the collectors (or the run ends): the ticker only fires on whole
+		// seconds, so without this the tail — and every sample of a sub-second
+		// level — would be dropped from the live and persisted series even
+		// though the authoritative LevelResult counts it.
+		r.emitBucket()
 
 		results := map[string]bench.LevelResult{}
 		r.mu.Lock()

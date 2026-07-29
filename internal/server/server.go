@@ -61,6 +61,11 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 	case err := <-errc:
 		return err
 	case <-ctx.Done():
+		// Stop the active run first: cancel it and wait for its coordinator to
+		// persist and clean up. This also ends the load and closes the SSE
+		// streams, so the HTTP shutdown below completes promptly instead of
+		// blocking on long-lived event connections.
+		s.mgr.stopActive(10 * time.Second)
 		shutCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
 		_ = srv.Shutdown(shutCtx)
@@ -68,16 +73,28 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 	}
 }
 
-// requireLocalOrigin guards mutating endpoints against DNS-rebinding/CSRF: the
-// UI can drive runs and pull CLI-sourced credentials, so a cross-origin page
-// must not reach this API. Browsers always send Origin on cross-origin
-// requests, including "simple" no-preflight POSTs, so we require the Origin to
-// match this server's own host:port exactly — a loopback hostname check alone
-// would accept any other local dev server (a different port is still
-// cross-origin). A request with no Origin is curl or a same-origin old browser,
-// which is fine for a loopback control panel.
+// requireLocalOrigin guards mutating endpoints, which can drive runs and pull
+// CLI-sourced credentials, against DNS rebinding and cross-origin abuse. Two
+// checks:
+//
+//   - Host: on a loopback deployment the request Host must be a loopback
+//     literal. This defeats DNS rebinding — a page at evil.example that rebinds
+//     to 127.0.0.1 still sends Host: evil.example, so it's rejected. The port
+//     isn't checked, so any loopback port (and httptest) works. On an
+//     intentionally non-loopback -addr the operator opted into exposure (and
+//     was warned), so this check is skipped there.
+//   - Origin: a present Origin must match the Host exactly. Browsers send
+//     Origin on cross-origin requests including "simple" no-preflight POSTs; a
+//     loopback-hostname check alone would accept any other local dev server (a
+//     different port is still cross-origin). No Origin is curl or a same-origin
+//     old browser, fine for a loopback control panel.
 func (s *Server) requireLocalOrigin(next http.HandlerFunc) http.HandlerFunc {
+	loopback := s.loopbackBound()
 	return func(w http.ResponseWriter, r *http.Request) {
+		if loopback && !IsLoopbackHost(hostnameOnly(r.Host)) {
+			http.Error(w, "forbidden host", http.StatusForbidden)
+			return
+		}
 		if origin := r.Header.Get("Origin"); origin != "" {
 			u, err := url.Parse(origin)
 			if err != nil || u.Host == "" || u.Host != r.Host {
@@ -87,6 +104,23 @@ func (s *Server) requireLocalOrigin(next http.HandlerFunc) http.HandlerFunc {
 		}
 		next(w, r)
 	}
+}
+
+// loopbackBound reports whether the server is bound to an explicit loopback
+// address (the default, safe deployment). A wildcard (":8377") or a real
+// interface is treated as exposed: the DNS-rebinding guard doesn't apply and
+// pasted secrets are refused.
+func (s *Server) loopbackBound() bool {
+	h, _, err := net.SplitHostPort(s.addr)
+	return err == nil && h != "" && IsLoopbackHost(h)
+}
+
+// hostnameOnly strips an optional :port from a Host header value.
+func hostnameOnly(hostport string) string {
+	if h, _, err := net.SplitHostPort(hostport); err == nil {
+		return h
+	}
+	return hostport
 }
 
 // IsLoopbackHost reports whether host names the loopback interface. An empty
@@ -107,6 +141,19 @@ func (s *Server) handleStartRun(w http.ResponseWriter, r *http.Request) {
 	if err := dec.Decode(&req); err != nil {
 		httpError(w, http.StatusBadRequest, fmt.Sprintf("bad request body: %v", err))
 		return
+	}
+	// A pasted secret travels in this request body; on a non-loopback bind that
+	// crosses the network in cleartext HTTP. Refuse it there and require a
+	// secret_source (the server pulls the credential locally, out of the body).
+	// Over loopback a pasted secret stays on the machine, held in memory only.
+	if !s.loopbackBound() {
+		for _, t := range req.Targets {
+			if t.Secret != "" {
+				httpError(w, http.StatusBadRequest,
+					"pasted secrets are refused on a non-loopback -addr (they would cross the network in cleartext); use secret_source instead")
+				return
+			}
+		}
 	}
 	run, warnings, err := s.mgr.start(req)
 	if err != nil {

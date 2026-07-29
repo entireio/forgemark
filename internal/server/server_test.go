@@ -165,6 +165,34 @@ func TestOriginGuard(t *testing.T) {
 	if code := do(""); code == http.StatusForbidden {
 		t.Errorf("no-Origin POST (curl) wrongly rejected")
 	}
+	// DNS rebinding: the attacker's domain arrives as Host even after it
+	// rebinds to loopback, so a non-loopback Host is refused on a loopback bind.
+	rebind, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/runs", strings.NewReader("{}"))
+	rebind.Host = "evil.example:1234"
+	res, err := http.DefaultClient.Do(rebind)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+	if res.StatusCode != http.StatusForbidden {
+		t.Errorf("rebinding Host = %d, want 403", res.StatusCode)
+	}
+}
+
+func TestPastedSecretRejectedOnNonLoopback(t *testing.T) {
+	dir := t.TempDir()
+	s := New("0.0.0.0:8377", dir) // wildcard bind = exposed
+	ts := httptest.NewServer(s.Handler())
+	t.Cleanup(ts.Close)
+	body := `{"confirm_authorized":true,"targets":[{"name":"x","remote":"demo://x","secret":"paste-me"}]}`
+	res, err := http.Post(ts.URL+"/api/runs", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = res.Body.Close() }()
+	if res.StatusCode != http.StatusBadRequest {
+		t.Fatalf("pasted secret on non-loopback bind = %d, want 400", res.StatusCode)
+	}
 }
 
 func TestValidateSecretAudience(t *testing.T) {
