@@ -236,6 +236,14 @@ func (m *RunManager) start(req startRequest) (*Run, []string, error) {
 		if name == "" {
 			name = defaultTargetName(bt.Remote, i)
 		}
+		// Reject a remote that embeds credentials (https://user:token@host): the
+		// remote is echoed verbatim in the hello event, status APIs, target
+		// labels, and the persisted result doc, so userinfo would leak a secret
+		// there despite Target.Secret being redacted everywhere. Credentials
+		// belong in secret / secret_source, never the URL.
+		if u, err := url.Parse(bt.Remote); err == nil && u.User != nil {
+			return nil, nil, fmt.Errorf("target %s: remote must not embed credentials in the URL (user:...@); use secret or secret_source", name)
+		}
 		if ts.SecretSource != "" && ts.Secret != "" {
 			return nil, nil, fmt.Errorf("target %s: pass secret or secret_source, not both", name)
 		}
@@ -424,7 +432,14 @@ func (r *Run) coordinate(m *RunManager) {
 	wg.Wait()
 
 	if r.aliveTargets() == nil {
-		r.finish(m, "failed")
+		// If the context was cancelled during setup, NewRunner fails on every
+		// target and they all mark dead — but that's a shutdown/user cancel, not
+		// a forge failure, so publish it as cancelled.
+		state := "failed"
+		if r.ctx.Err() != nil {
+			state = "cancelled"
+		}
+		r.finish(m, state)
 		return
 	}
 	r.setState("running")

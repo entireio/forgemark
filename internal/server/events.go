@@ -75,6 +75,9 @@ func (l *eventLog) emit(name string, v any) {
 func (l *eventLog) subscribe(after int64) ([]event, chan event, func()) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	if after < 0 {
+		after = 0 // a malformed/negative Last-Event-ID must not index the slice negatively
+	}
 	var replay []event
 	if after < int64(len(l.events)) {
 		replay = append(replay, l.events[after:]...)

@@ -129,6 +129,11 @@ func TestStartRunValidation(t *testing.T) {
 	if code, msg := post(`{"confirm_authorized":true,"workload":{"strategy":"repo"},"targets":[{"remote":"https://git.example","repos":["a/b"],"secret":"t"}]}`); code != http.StatusBadRequest || !strings.Contains(msg, ">= 2 repos") {
 		t.Fatalf("repo-strategy one-repo target = %d %q, want 400 >= 2 repos", code, msg)
 	}
+	// A remote must not embed credentials in the URL — it's echoed in status and
+	// results, so userinfo would leak the secret there.
+	if code, msg := post(`{"confirm_authorized":true,"targets":[{"remote":"https://user:tok@git.example","repos":["a/b"],"secret":"t"}]}`); code != http.StatusBadRequest || !strings.Contains(msg, "embed credentials") {
+		t.Fatalf("userinfo remote = %d %q, want 400 embed-credentials", code, msg)
+	}
 	// A CLI-sourced credential must not be materialized for a foreign audience.
 	if code, msg := post(`{"confirm_authorized":true,"targets":[{"remote":"https://evil.example","repos":["a/b"],"secret_source":"gh"}]}`); code != http.StatusBadRequest || !strings.Contains(msg, "github.com") {
 		t.Fatalf("gh source with non-github remote = %d %q, want 400 github.com", code, msg)

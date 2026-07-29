@@ -122,6 +122,40 @@ print(f'SUG_NATIVE_REPO={shlex.quote(repo)}')
 PY
 )"
 
+  # /api/local/suggest is unauthenticated and only as trustworthy as whatever is
+  # bound to $ADDR. Before provisioning or pushing with the AUTHENTICATED entire
+  # CLI, cross-check the discovered destination against authenticated local CLI
+  # state, so a rogue process squatting the port can't redirect us to a hostile
+  # cluster or a repo we don't own.
+  AUTH_STATUS="$(entire auth status 2>/dev/null || true)"
+  AUTH_HANDLE="$(awk '/User:/{sub(/^@/,"",$2); print $2; exit}' <<<"$AUTH_STATUS")"
+  AUTH_JUR="$(awk '/Jurisdiction:/{print $2; exit}' <<<"$AUTH_STATUS")"
+  AUTH_CTX="$(awk '/Context:/{print $2; exit}' <<<"$AUTH_STATUS")"
+  # Registrable domain of the authenticated context host (in.auth.entire.io ->
+  # entire.io); every discovered endpoint must live under it.
+  AUTH_DOMAIN="$(awk -F. 'NF>=2{print $(NF-1)"."$NF}' <<<"$AUTH_CTX")"
+  if [ -z "$AUTH_HANDLE" ] || [ -z "$AUTH_JUR" ] || [ -z "$AUTH_DOMAIN" ]; then
+    echo "compare-local: could not read authenticated entire identity to validate discovery — refusing" >&2; exit 1
+  fi
+  for u in "$SUG_REMOTE" "$SUG_JURISDICTION" "$SUG_TOKEN_URL"; do
+    [ -n "$u" ] || continue
+    host="${u#*://}"; host="${host%%/*}"; host="${host%%:*}"
+    case "$host" in
+      "$AUTH_DOMAIN" | *".$AUTH_DOMAIN") ;;
+      *) echo "compare-local: discovered host '$host' is not under '$AUTH_DOMAIN' — the suggest endpoint may be spoofed; refusing" >&2; exit 1 ;;
+    esac
+  done
+  if [ "$SUG_SLUG" != "$AUTH_JUR" ]; then
+    echo "compare-local: discovered jurisdiction '$SUG_SLUG' != authenticated '$AUTH_JUR' — refusing" >&2; exit 1
+  fi
+  # The native repo path is et/forgemark-<handle>/... — the owner segment must be
+  # our authenticated handle, never one an attacker chose.
+  case "$SUG_NATIVE_REPO" in
+    "et/forgemark-$AUTH_HANDLE/"*) ;;
+    "") ;; # only used in native mode; emptiness is caught there
+    *) echo "compare-local: discovered native repo '$SUG_NATIVE_REPO' is not owned by @$AUTH_HANDLE — refusing" >&2; exit 1 ;;
+  esac
+
   export FM_ENTIRE_NAME="${FM_ENTIRE_NAME:-$SUG_NAME}"
   export FM_ENTIRE_TOKEN_URL="${FM_ENTIRE_TOKEN_URL:-$SUG_TOKEN_URL}"
   export FM_ENTIRE_JURISDICTION="${FM_ENTIRE_JURISDICTION:-$SUG_JURISDICTION}"
