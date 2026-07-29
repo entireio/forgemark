@@ -47,6 +47,16 @@ import (
 )
 
 func main() {
+	// `forgemark report` reduces a stored result doc to a monitor value; anything
+	// else is the classic flag-driven benchmark CLI (which takes no positional
+	// args, so this can't collide).
+	if len(os.Args) > 1 && os.Args[1] == "report" {
+		if err := runReport(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "forgemark: "+err.Error())
+			os.Exit(1)
+		}
+		return
+	}
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, "forgemark: "+err.Error())
 		os.Exit(1)

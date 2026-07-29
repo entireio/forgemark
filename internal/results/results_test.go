@@ -108,3 +108,29 @@ func TestListSkipsUnparseableAndSortsNewestFirst(t *testing.T) {
 		t.Fatalf("List(missing dir) = %v, %v — want empty, nil", empty, err)
 	}
 }
+
+func TestLoadPath(t *testing.T) {
+	dir := t.TempDir()
+
+	// LoadPath reads an arbitrary path (not just forgemark-*.json) and normalizes
+	// a legacy format-1 doc into the one-target Targets shape.
+	legacy := `{"run_id":"lp1","strategy":"branch","target":"https://git.example","levels":[{"concurrency":4,"ops_per_sec":9.5}]}`
+	p := filepath.Join(dir, "anything.json")
+	if err := os.WriteFile(p, []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	doc, err := LoadPath(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.Targets) != 1 || doc.Targets[0].Name != "https://git.example" || doc.Target != "" || doc.Levels != nil {
+		t.Fatalf("legacy not normalized: %+v", doc)
+	}
+	if doc.State != "done" {
+		t.Errorf("legacy state = %q, want done", doc.State)
+	}
+
+	if _, err := LoadPath(filepath.Join(dir, "missing.json")); err != ErrNotFound {
+		t.Errorf("missing path err = %v, want ErrNotFound", err)
+	}
+}

@@ -103,6 +103,27 @@ comes from `-token-file` or the `ACCESS_TOKEN` env var — never a CLI flag, so 
 can't leak via `ps` or shell history. Entire needs a couple of extra flags — see
 below.
 
+### 3. Report a single number
+
+`forgemark report` reduces a stored result doc to one headline metric — **peak
+sustained ops/sec across the sweep** — so a CI step or an automated monitor can
+gate on it without re-parsing the JSON:
+
+```bash
+# Machine-readable: prints the monitor contract as the last JSON line of stdout
+forgemark report --emit monitor results/forgemark-<id>.json
+# {"value":42.7,"rationale":"peak push 42.7 ops/s @ c=32 | c=1 8.1, c=8 28.4, c=32 42.7 | p95 210ms | 0 errors"}
+
+# Human summary of the same reduction
+forgemark report --emit text results/forgemark-<id>.json
+```
+
+`value` is peak push/sec (peak clone/sec for `-strategy clone`); a target that
+died or measured nothing reports `0` so a gate reads it as a regression, not a
+pass. For a multi-target comparison doc, `-target <name>` picks which target to
+report (default: the first). The `--emit monitor` shape is the Entire trail
+runner's `last_json_line` monitor contract.
+
 ## Entire
 
 Entire needs two extra flags — `-token-url` and `-jurisdiction`. Auth is a
