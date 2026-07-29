@@ -40,18 +40,18 @@ forgemark serve            # http://127.0.0.1:8377
   `demo://fast?p50=60ms&spread=3&err=0.01&cap=400`) — a synthetic latency
   generator that exercises the whole pipeline offline. Add two with different
   profiles to see the comparison view.
-- **Targets** take the same parameters as the CLI flags (remote, repos, token,
-  object format, and the Entire fields). For the credential, pick a **source**
-  instead of pasting: `gh CLI login` / `glab CLI login` / `entire CLI login`
-  make the server pull the credential from your already-authenticated CLI at
-  run start, so the browser never holds it. (For GitLab the server uses glab's
-  git-credential helper, which returns a repository-scoped token even when
-  glab's stored API token isn't.) **Add from CLI logins** prefills complete
-  GitHub / GitLab / Entire targets (endpoints, repos, credential source) from
-  whichever CLIs you're logged into, and the **⚡ Push race preset** fills the
-  race workload and opens the race view. Pasted tokens remain supported; either
-  way the secret is held in memory for the run, never persisted, and never
-  returned by any API response.
+- **Targets** take the same parameters as the CLI flags (remote, repos, object
+  format, and the Entire fields). The credential is never typed into the
+  browser: each target names a **source** — `gh CLI login` / `glab CLI login` /
+  `entire CLI login` — and the server reads the token from that
+  already-authenticated CLI at run start, so it never enters the page or the
+  request body. (For GitLab the server uses glab's git-credential helper, which
+  returns a repository-scoped token even when glab's stored API token isn't.)
+  **Add from CLI logins** prefills complete GitHub / GitLab / Entire targets
+  (endpoints, repos, credential source) from whichever CLIs you're logged into,
+  and the **⚡ Push race preset** fills the race workload and opens the race
+  view. A forge without a supported CLI login is benchmarked from the command
+  line (`forgemark -token-file …`), not the web form.
 - **History** lists every result doc in `results/` — CLI runs included — and
   overlays any selection as ops/s-vs-concurrency and p95-vs-concurrency curves.
   Server runs also store their 1-second live series, so finished runs replay.

@@ -1,9 +1,10 @@
 // New-run form. Structured around a start-mode chooser (my forges / custom)
-// so a first-time user has one obvious entry point, with workload
-// tuning and per-target advanced fields tucked behind disclosures. Secrets are
-// never held here: a target carries a secret_source and the server pulls the
-// credential from the operator's CLI at run start (or a token is pasted and
-// forwarded once, never stored).
+// so a first-time user has one obvious entry point, with workload tuning and
+// per-target advanced fields tucked behind disclosures. No credential ever
+// enters the browser: a target only carries a secret_source (gh | glab |
+// entire) and the server reads the token from that CLI at run start. A forge
+// without a supported CLI login is benchmarked from the command line
+// (forgemark -token-file …), not this form.
 
 import { h } from '../dom.js';
 import { api } from '../api.js';
@@ -27,7 +28,7 @@ let targetSeq = 0;
 
 function blankTarget(extra = {}) {
   return {
-    key: ++targetSeq, name: '', remote: '', repos: '', user: '', secret: '', secret_source: '',
+    key: ++targetSeq, name: '', remote: '', repos: '', user: '', secret_source: '',
     insecure: false, object_format: 'auto', token_url: '', jurisdiction: '', client_id: '', ...extra,
   };
 }
@@ -108,25 +109,29 @@ export function renderNewRun(app) {
     const insecure = h('input', { type: 'checkbox', style: { width: 'auto' }, onchange: (e) => { t.insecure = e.target.checked; } });
     insecure.checked = t.insecure;
 
-    // Credential: paste a token, or name a CLI the server pulls it from at
-    // start (the browser then never holds the secret).
-    const secretInput = bind('secret', inp({ type: 'password', autocomplete: 'off', placeholder: 'kept in memory only' }));
-    const srcSel = h('select', { onchange: () => {
-      t.secret_source = srcSel.value;
-      secretInput.style.display = srcSel.value ? 'none' : '';
-      if (srcSel.value) { t.secret = ''; secretInput.value = ''; }
-    } },
-      h('option', { value: '' }, 'paste token'),
-      h('option', { value: 'gh' }, 'gh CLI login'),
-      h('option', { value: 'glab' }, 'glab CLI login'),
-      h('option', { value: 'entire' }, 'entire CLI login'));
-    srcSel.value = t.secret_source;
-    secretInput.style.display = t.secret_source ? 'none' : '';
-
     const remoteInput = bind('remote', inp({ placeholder: 'https://gitlab.example — or demo://fast?p50=80ms' }));
     remoteInput.addEventListener('input', updateGate);
 
     const demoish = isDemo(t.remote);
+
+    // The credential comes from an authenticated CLI the server reads at run
+    // start, so the token never enters the browser or the request body. Demo
+    // targets need none. A forge without a supported CLI login is served from
+    // the command line (forgemark -token-file …), not this form.
+    let credControl;
+    if (demoish) {
+      t.secret_source = '';
+      credControl = h('div', { class: 'cred-note' }, 'none needed (demo target)');
+    } else {
+      if (!t.secret_source) t.secret_source = 'gh';
+      const srcSel = h('select', { onchange: () => { t.secret_source = srcSel.value; } },
+        h('option', { value: 'gh' }, 'gh CLI login'),
+        h('option', { value: 'glab' }, 'glab CLI login'),
+        h('option', { value: 'entire' }, 'entire CLI login'));
+      srcSel.value = t.secret_source;
+      credControl = srcSel;
+    }
+
     return h('div', { class: 'target-card', style: { '--tcolor': targetColor(i) } },
       h('div', { class: 'thead' },
         h('span', { class: 'tname' }, h('span', { class: 'dot', style: { '--tcolor': targetColor(i), marginRight: '8px' } }), `Target ${i + 1}`),
@@ -136,7 +141,7 @@ export function renderNewRun(app) {
         field('Remote base URL', remoteInput, 'wide')),
       h('div', { class: 'grid c2', style: { marginTop: '12px' } },
         field('Repos (comma-separated)', bind('repos', inp({ placeholder: 'group/bench.git' }))),
-        field('Credential', h('div', { class: 'cred-row' }, srcSel, secretInput))),
+        field('Credential source', credControl)),
       // Advanced per-target knobs stay collapsed — demo/most-forge runs never
       // touch them.
       demoish ? null : h('details', { class: 'disclose', style: { marginTop: '12px', marginBottom: '0' } },
@@ -252,7 +257,7 @@ export function renderNewRun(app) {
       targets: active.map((t) => ({
         name: t.name, remote: t.remote,
         repos: t.repos.split(',').map((s) => s.trim()).filter(Boolean),
-        user: t.user, secret: t.secret, secret_source: t.secret_source,
+        user: t.user, secret_source: t.secret_source,
         insecure: t.insecure, object_format: t.object_format,
         token_url: t.token_url, jurisdiction: t.jurisdiction, client_id: t.client_id,
       })),

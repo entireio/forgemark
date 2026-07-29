@@ -313,9 +313,7 @@ code { background: var(--surface-2); padding: 1px 6px; border-radius: 4px; font-
 .race-winner b { font-weight: 700; }
 
 /* credential source: select + optional paste input side by side */
-.cred-row { display: flex; gap: 8px; }
-.cred-row select { flex: 0 0 auto; width: auto; }
-.cred-row input { flex: 1; min-width: 0; }
+.cred-note { color: var(--muted); font-size: 13px; padding: 7px 0; }
 
 .race-science {
   margin: 26px auto 0;
