@@ -95,11 +95,7 @@ func (d *demoRunner) opFor(n int) bench.OpKind {
 	return bench.OpPush
 }
 
-func (d *demoRunner) RunLevel(ctx context.Context, c int) (bench.LevelResult, error) {
-	total := d.w.Warmup + d.w.Duration
-	lctx, cancel := context.WithTimeout(ctx, total)
-	defer cancel()
-
+func (d *demoRunner) RunLevel(ctx context.Context, c int, barrier *bench.StartBarrier) (bench.LevelResult, error) {
 	// Saturation: offered load approaches cap → queueing inflates latency.
 	inflate := 1.0
 	if d.cap > 0 {
@@ -107,6 +103,17 @@ func (d *demoRunner) RunLevel(ctx context.Context, c int) (bench.LevelResult, er
 		util := math.Min(offered/d.cap, 0.95)
 		inflate = 1 / (1 - util)
 	}
+
+	// Wait for the shared start so the demo target's window aligns with the
+	// real targets it's compared against.
+	if barrier != nil {
+		barrier.Arrive()
+		barrier.Hold()
+	}
+
+	total := d.w.Warmup + d.w.Duration
+	lctx, cancel := context.WithTimeout(ctx, total)
+	defer cancel()
 
 	start := time.Now()
 	var mu sync.Mutex

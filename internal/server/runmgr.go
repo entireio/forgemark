@@ -29,7 +29,7 @@ type levelRunner interface {
 	Label() string
 	Nodes() int
 	ObjectFormat() string
-	RunLevel(ctx context.Context, concurrency int) (bench.LevelResult, error)
+	RunLevel(ctx context.Context, concurrency int, barrier *bench.StartBarrier) (bench.LevelResult, error)
 }
 
 // WorkloadSpec is the wire shape of a workload. The numeric fields are
@@ -238,6 +238,16 @@ func (m *RunManager) start(req startRequest) (*Run, []string, error) {
 		if ts.SecretSource != "" && ts.Secret != "" {
 			return nil, nil, fmt.Errorf("target %s: pass secret or secret_source, not both", name)
 		}
+		// Pin each CLI-sourced credential to its issuer's audience before it is
+		// ever materialized: otherwise a spec could pair "gh" with an attacker's
+		// remote (leaking the GitHub token as Basic Auth) or "entire" with an
+		// arbitrary token_url (leaking the subject token to the exchange). A
+		// self-hosted forge should paste a token instead of naming a CLI source.
+		if ts.SecretSource != "" {
+			if err := validateSecretAudience(ts.SecretSource, bt.Remote, bt.TokenURL, bt.Jurisdiction); err != nil {
+				return nil, nil, fmt.Errorf("target %s: %w", name, err)
+			}
+		}
 		// Fast-fail real targets at the request instead of letting them die
 		// mid-run inside NewRunner (which the browser only learns from a
 		// target_error event). demo:// targets need no repos or credential.
@@ -418,10 +428,23 @@ func (r *Run) coordinate(m *RunManager) {
 	}()
 
 	for li, c := range r.bw.Concurrency {
-		if r.ctx.Err() != nil || r.aliveTargets() == nil {
+		if r.ctx.Err() != nil {
 			break
 		}
+		alive := r.aliveTargets()
+		if alive == nil {
+			break
+		}
+
+		// Transition atomically under r.mu: reset every collector (fresh
+		// rolling window + warm-up boundary) and advance the level index
+		// together, so a bucket tick can never attribute the previous level's
+		// leftover samples to the new index. The prior level's agents have all
+		// returned (lwg.Wait below), so nothing races this reset.
 		r.mu.Lock()
+		for _, t := range alive {
+			t.col.reset(r.bw.Warmup)
+		}
 		r.levelIdx = li
 		r.levelConc = c
 		r.mu.Unlock()
@@ -431,13 +454,16 @@ func (r *Run) coordinate(m *RunManager) {
 			"at": time.Now().UTC(),
 		})
 
+		// Real start barrier: every target builds its agents, then all are
+		// released together, so target-dependent setup time doesn't shift the
+		// measured windows.
+		barrier := bench.NewStartBarrier(len(alive))
 		var lwg sync.WaitGroup
-		for _, t := range r.aliveTargets() {
+		for _, t := range alive {
 			lwg.Add(1)
 			go func(t *targetState) {
 				defer lwg.Done()
-				t.col.reset()
-				res, err := t.runner.RunLevel(r.ctx, c)
+				res, err := t.runner.RunLevel(r.ctx, c, barrier)
 				if err != nil {
 					r.markDead(t, li, err)
 					return
@@ -447,6 +473,8 @@ func (r *Run) coordinate(m *RunManager) {
 				r.mu.Unlock()
 			}(t)
 		}
+		barrier.Await() // all targets have built their agents (or failed and arrived)
+		barrier.Fire()  // release them to start the timed window together
 		lwg.Wait()
 
 		results := map[string]bench.LevelResult{}
@@ -521,24 +549,22 @@ func (r *Run) persistResults(dir string) string {
 }
 
 func (r *Run) emitBucket() {
-	r.mu.Lock()
-	li, c := r.levelIdx, r.levelConc
-	alive := make([]*targetState, 0, len(r.targets))
-	for _, t := range r.targets {
-		if !t.dead {
-			alive = append(alive, t)
-		}
-	}
-	r.mu.Unlock()
-	if len(alive) == 0 {
-		return
-	}
 	now := time.Now().Unix()
-	stats := make(map[string]BucketStats, len(alive))
-	for _, t := range alive {
+	// Hold r.mu across the whole tick so a level transition (which resets the
+	// collectors and advances levelIdx under the same lock) can't interleave:
+	// otherwise a snapshot could carry the previous level's samples under the
+	// new level index. The snapshot and series append are cheap and run once
+	// per second. Lock order is always r.mu → collector.mu, never reversed.
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	li, c := r.levelIdx, r.levelConc
+	stats := make(map[string]BucketStats, len(r.targets))
+	for _, t := range r.targets {
+		if t.dead {
+			continue
+		}
 		st := t.col.snapshot()
 		stats[strconv.Itoa(t.id)] = st
-		r.mu.Lock()
 		if len(t.series) < maxBufferedEvents {
 			t.series = append(t.series, results.SeriesPoint{
 				T: now, Level: li, OK: st.OK, CAS: st.CAS, Err: st.Err,
@@ -547,7 +573,9 @@ func (r *Run) emitBucket() {
 				CloneP50: st.CloneP50, CloneP95: st.CloneP95, CloneP99: st.CloneP99,
 			})
 		}
-		r.mu.Unlock()
+	}
+	if len(stats) == 0 {
+		return
 	}
 	r.log.emit("bucket", map[string]any{
 		"level_index": li, "concurrency": c, "t": now, "targets": stats,

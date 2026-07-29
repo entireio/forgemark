@@ -112,7 +112,7 @@ func run() error {
 		if ctx.Err() != nil {
 			break
 		}
-		res, err := r.RunLevel(ctx, c)
+		res, err := r.RunLevel(ctx, c, nil) // single target: no start barrier
 		if err != nil {
 			return fmt.Errorf("concurrency=%d: %w", c, err)
 		}

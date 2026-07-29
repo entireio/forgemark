@@ -67,6 +67,42 @@ func resolveSecretSource(source, remote string) (string, string, error) {
 	return "", tok, nil
 }
 
+// validateSecretAudience pins a CLI-sourced credential to its issuer so the
+// server won't materialize it for an unrelated target. A gh/glab token belongs
+// to its forge; the entire subject token is POSTed to token_url and the
+// resulting jurisdiction token is used across the cluster, so remote, token_url
+// and jurisdiction must all stay under entire.io. Self-hosted forges should
+// paste a token rather than name a CLI source.
+func validateSecretAudience(source, remote, tokenURL, jurisdiction string) error {
+	host := func(raw string) string {
+		u, err := url.Parse(raw)
+		if err != nil {
+			return ""
+		}
+		return u.Hostname()
+	}
+	underEntire := func(h string) bool { return h == "entire.io" || strings.HasSuffix(h, ".entire.io") }
+	switch source {
+	case "gh":
+		if host(remote) != "github.com" {
+			return fmt.Errorf("secret_source gh is only valid for a github.com remote, not %q", remote)
+		}
+	case "glab":
+		if host(remote) != "gitlab.com" {
+			return fmt.Errorf("secret_source glab is only valid for a gitlab.com remote, not %q", remote)
+		}
+	case "entire":
+		for label, raw := range map[string]string{"remote": remote, "token_url": tokenURL, "jurisdiction": jurisdiction} {
+			if !underEntire(host(raw)) {
+				return fmt.Errorf("secret_source entire requires %s under entire.io, got %q", label, raw)
+			}
+		}
+	default:
+		return fmt.Errorf("unknown secret_source %q (gh | glab | entire)", source)
+	}
+	return nil
+}
+
 // credHost is the host a git-credential helper should be asked about, from the
 // target remote; it falls back to gitlab.com so a bare "glab" source works.
 func credHost(remote string) string {

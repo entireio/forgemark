@@ -71,10 +71,45 @@ func (r *Runner) Nodes() int { return len(r.ep.nodes) }
 // ObjectFormat is the resolved wire object format ("sha1" or "sha256").
 func (r *Runner) ObjectFormat() string { return string(r.ep.objFmt) }
 
-// RunLevel runs a single concurrency level: spin up c agents for
-// warmup+duration, then fold their samples into one result. It blocks for the
-// full level window (or until ctx is cancelled).
-func (r *Runner) RunLevel(ctx context.Context, c int) (LevelResult, error) {
+// StartBarrier synchronizes the start of one concurrency level across several
+// runners: each Arrives once its agents are built, and the coordinator
+// releases them together, so target-dependent setup time can't skew the
+// measured windows of a comparison run. It tolerates a runner that fails
+// before it is ready — that runner still Arrives, so Await can't hang. A nil
+// barrier means "run alone, no synchronization" (the CLI's single-target path).
+type StartBarrier struct {
+	arrived chan struct{}
+	release chan struct{}
+	n       int
+}
+
+// NewStartBarrier makes a barrier expecting n participants.
+func NewStartBarrier(n int) *StartBarrier {
+	return &StartBarrier{arrived: make(chan struct{}, n), release: make(chan struct{}), n: n}
+}
+
+// Arrive reports that this participant has finished preparing (or has given up
+// and won't Hold). The buffered channel makes it non-blocking.
+func (b *StartBarrier) Arrive() { b.arrived <- struct{}{} }
+
+// Hold blocks until the coordinator fires the shared start signal.
+func (b *StartBarrier) Hold() { <-b.release }
+
+// Await blocks until every participant has Arrived.
+func (b *StartBarrier) Await() {
+	for i := 0; i < b.n; i++ {
+		<-b.arrived
+	}
+}
+
+// Fire releases every held participant to begin its timed window together.
+func (b *StartBarrier) Fire() { close(b.release) }
+
+// RunLevel runs a single concurrency level: build c agents, wait at the
+// barrier so all targets start together, run for warmup+duration, then fold
+// the samples into one result. It blocks for the full level window (or until
+// ctx is cancelled). barrier may be nil to run without synchronization.
+func (r *Runner) RunLevel(ctx context.Context, c int, barrier *StartBarrier) (LevelResult, error) {
 	var clone *cloneConfig
 	var sess *sessionConfig
 	switch r.w.Strategy {
@@ -96,9 +131,20 @@ func (r *Runner) RunLevel(ctx context.Context, c int) (LevelResult, error) {
 		ref := DestRef(r.w.BranchPrefix, r.w.RunID, c, i)
 		a, err := newAgent(i, repoPath, node, ref, r.ep.objFmt, &r.w.Commit, r.creds, r.httpc, clone, sess, r.sink)
 		if err != nil {
+			if barrier != nil {
+				barrier.Arrive() // don't leave the coordinator's Await hanging
+			}
 			return LevelResult{}, fmt.Errorf("new agent %d: %w", i, err)
 		}
 		agents[i] = a
+	}
+
+	// Agents are built; wait for every target before starting the clock, so the
+	// measured window begins at the same instant on each and the comparison is
+	// fair regardless of per-target setup time.
+	if barrier != nil {
+		barrier.Arrive()
+		barrier.Hold()
 	}
 
 	total := r.w.Warmup + r.w.Duration

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -128,6 +129,62 @@ func TestStartRunValidation(t *testing.T) {
 	if code, msg := post(`{"confirm_authorized":true,"workload":{"strategy":"repo"},"targets":[{"remote":"https://git.example","repos":["a/b"],"secret":"t"}]}`); code != http.StatusBadRequest || !strings.Contains(msg, ">= 2 repos") {
 		t.Fatalf("repo-strategy one-repo target = %d %q, want 400 >= 2 repos", code, msg)
 	}
+	// A CLI-sourced credential must not be materialized for a foreign audience.
+	if code, msg := post(`{"confirm_authorized":true,"targets":[{"remote":"https://evil.example","repos":["a/b"],"secret_source":"gh"}]}`); code != http.StatusBadRequest || !strings.Contains(msg, "github.com") {
+		t.Fatalf("gh source with non-github remote = %d %q, want 400 github.com", code, msg)
+	}
+	if code, msg := post(`{"confirm_authorized":true,"targets":[{"remote":"https://evil.example","repos":["r"],"secret_source":"entire","token_url":"https://evil.example/oauth/token","jurisdiction":"https://evil.example"}]}`); code != http.StatusBadRequest || !strings.Contains(msg, "entire.io") {
+		t.Fatalf("entire source with non-entire token_url = %d %q, want 400 entire.io", code, msg)
+	}
+}
+
+func TestOriginGuard(t *testing.T) {
+	_, ts, _ := newTestServer(t)
+	u, _ := url.Parse(ts.URL)
+	do := func(origin string) int {
+		req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/runs", strings.NewReader("{}"))
+		if origin != "" {
+			req.Header.Set("Origin", origin)
+		}
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = res.Body.Close()
+		return res.StatusCode
+	}
+	if code := do("http://evil.example"); code != http.StatusForbidden {
+		t.Errorf("cross-origin POST = %d, want 403", code)
+	}
+	if code := do("http://" + u.Hostname() + ":1"); code != http.StatusForbidden {
+		t.Errorf("cross-port POST = %d, want 403 (a different port is still cross-origin)", code)
+	}
+	if code := do("http://" + u.Host); code == http.StatusForbidden {
+		t.Errorf("same-origin POST wrongly rejected as forbidden origin")
+	}
+	if code := do(""); code == http.StatusForbidden {
+		t.Errorf("no-Origin POST (curl) wrongly rejected")
+	}
+}
+
+func TestValidateSecretAudience(t *testing.T) {
+	ok := func(src, remote, tok, jur string) {
+		if err := validateSecretAudience(src, remote, tok, jur); err != nil {
+			t.Errorf("validateSecretAudience(%s,%s,...) = %v, want nil", src, remote, err)
+		}
+	}
+	bad := func(src, remote, tok, jur string) {
+		if err := validateSecretAudience(src, remote, tok, jur); err == nil {
+			t.Errorf("validateSecretAudience(%s,%s,...) = nil, want error", src, remote)
+		}
+	}
+	ok("gh", "https://github.com", "", "")
+	bad("gh", "https://github.example.com", "", "") // lookalike host must not pass
+	ok("glab", "https://gitlab.com", "", "")
+	bad("glab", "https://evil.com", "", "")
+	ok("entire", "https://aws-ap-south-1.entire.io", "https://in.auth.entire.io/oauth/token", "https://in.entire.io")
+	bad("entire", "https://aws-ap-south-1.entire.io", "https://evil.com/oauth/token", "https://in.entire.io")    // bad token_url
+	bad("entire", "https://entire.io.evil.com", "https://in.auth.entire.io/oauth/token", "https://in.entire.io") // suffix-spoof remote
 }
 
 func TestRunLifecycleSSEAndRedaction(t *testing.T) {

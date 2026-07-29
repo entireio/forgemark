@@ -53,7 +53,7 @@ func TestCollectorResetClearsWindow(t *testing.T) {
 	c := &collector{}
 	c.OnSample(bench.Sample{Dur: ms(50), Res: bench.OutcomeOK})
 	c.snapshot()
-	c.reset()
+	c.reset(0)
 	st := c.snapshot()
 	if st.OK != 0 || st.P50 != 0 {
 		t.Fatalf("after reset snapshot = %+v, want empty", st)

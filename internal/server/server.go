@@ -69,15 +69,18 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 }
 
 // requireLocalOrigin guards mutating endpoints against DNS-rebinding/CSRF: the
-// UI pastes credentials, so a hostile web page must not be able to drive this
-// API. Browsers always send Origin on cross-origin POSTs; a request with no
-// Origin header is curl or same-origin-old-browser, which is fine for a
-// loopback tool.
+// UI can drive runs and pull CLI-sourced credentials, so a cross-origin page
+// must not reach this API. Browsers always send Origin on cross-origin
+// requests, including "simple" no-preflight POSTs, so we require the Origin to
+// match this server's own host:port exactly — a loopback hostname check alone
+// would accept any other local dev server (a different port is still
+// cross-origin). A request with no Origin is curl or a same-origin old browser,
+// which is fine for a loopback control panel.
 func (s *Server) requireLocalOrigin(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if origin := r.Header.Get("Origin"); origin != "" {
 			u, err := url.Parse(origin)
-			if err != nil || !IsLoopbackHost(u.Hostname()) {
+			if err != nil || u.Host == "" || u.Host != r.Host {
 				http.Error(w, "forbidden origin", http.StatusForbidden)
 				return
 			}
@@ -88,8 +91,7 @@ func (s *Server) requireLocalOrigin(next http.HandlerFunc) http.HandlerFunc {
 
 // IsLoopbackHost reports whether host names the loopback interface. An empty
 // host is NOT loopback: in a listen address it means wildcard bind (all
-// interfaces), and in an Origin it means an unparseable header — both are
-// exactly the cases the callers must treat as exposed.
+// interfaces), exactly the case the serve warning must treat as exposed.
 func IsLoopbackHost(host string) bool {
 	if host == "localhost" {
 		return true

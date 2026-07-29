@@ -21,6 +21,7 @@ const windowSecs = 10
 // ~100µs, nothing at benchmark sample rates).
 type collector struct {
 	mu        sync.Mutex
+	warmup    time.Duration // samples before this offset are excluded (matches the level result)
 	cur       bucket
 	ring      [windowSecs][]float64 // push OK latencies, one slot per elapsed second
 	cloneRing [windowSecs][]float64
@@ -59,6 +60,12 @@ func (c *collector) OnSample(s bench.Sample) {
 	ms := float64(s.Dur) / float64(time.Millisecond)
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	// The Sink receives warm-up samples too; drop them so the live counts,
+	// rolling percentiles, and persisted series match the authoritative level
+	// result, which excludes the warm-up window.
+	if s.Offset < c.warmup {
+		return
+	}
 	if s.Op == bench.OpClone {
 		switch s.Res {
 		case bench.OutcomeOK:
@@ -89,12 +96,18 @@ func (c *collector) snapshot() BucketStats {
 	c.ring[c.pos] = b.lat
 	c.cloneRing[c.pos] = b.cloneLat
 	c.pos = (c.pos + 1) % windowSecs
-	var lat, cloneLat []float64
-	for i := range c.ring {
-		lat = append(lat, c.ring[i]...)
-		cloneLat = append(cloneLat, c.cloneRing[i]...)
-	}
+	// Copy the ring's slice headers (cheap) and concatenate after unlocking:
+	// each window slot is a completed second's slice, never appended to in
+	// place, so holding the mutex across the O(window) concat would needlessly
+	// block concurrent OnSample calls and depress measured throughput.
+	ring, cloneRing := c.ring, c.cloneRing
 	c.mu.Unlock()
+
+	var lat, cloneLat []float64
+	for i := range ring {
+		lat = append(lat, ring[i]...)
+		cloneLat = append(cloneLat, cloneRing[i]...)
+	}
 
 	st := BucketStats{
 		OK: b.ok, CAS: b.cas, Err: b.errs,
@@ -115,11 +128,13 @@ func (c *collector) snapshot() BucketStats {
 	return st
 }
 
-// reset clears the bucket and the rolling window. Called at each level start
-// so percentiles never bleed across concurrency levels.
-func (c *collector) reset() {
+// reset clears the bucket and the rolling window and sets the warm-up boundary
+// for the level about to start, so percentiles never bleed across concurrency
+// levels and warm-up samples are excluded.
+func (c *collector) reset(warmup time.Duration) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.warmup = warmup
 	c.cur = bucket{}
 	c.ring = [windowSecs][]float64{}
 	c.cloneRing = [windowSecs][]float64{}
