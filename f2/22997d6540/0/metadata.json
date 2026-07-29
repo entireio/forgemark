@@ -1,0 +1,73 @@
+{
+  "cli_version": "0.8.42",
+  "checkpoint_id": "f222997d6540",
+  "session_id": "019f935f-ea24-74a2-8e70-3f115f2c32d1",
+  "strategy": "manual-commit",
+  "created_at": "2026-07-29T08:15:29.401483Z",
+  "branch": "feat/web-demo",
+  "checkpoints_count": 2,
+  "save_step_count": 2,
+  "files_touched": [
+    "cmd/forgemark/serve.go",
+    "internal/server/local.go",
+    "internal/server/runmgr.go",
+    "internal/server/server.go",
+    "internal/server/server_test.go",
+    "internal/server/static/js/views/newrun.js",
+    "scripts/compare-local.sh"
+  ],
+  "agent": "Codex",
+  "model": "gpt-5.6-sol",
+  "turn_id": "acaaad7a22b9",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 728773,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 19404032,
+    "output_tokens": 51863,
+    "api_call_count": 152
+  },
+  "session_metrics": {
+    "turn_count": 2
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-07-29T08:15:29.278124Z",
+    "agent_lines": 133,
+    "agent_removed": 27,
+    "human_added": 14,
+    "human_modified": 11,
+    "human_removed": 0,
+    "total_committed": 158,
+    "total_lines_changed": 185,
+    "agent_percentage": 86.48648648648648,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 18,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".claude/scheduled_tasks.lock": 1,
+        ".claude/settings.local.json": 17
+      }
+    },
+    {
+      "checkpoint_number": 2,
+      "user_lines_added": 39,
+      "user_lines_removed": 7,
+      "agent_lines_added": 26,
+      "agent_lines_removed": 6,
+      "user_added_per_file": {
+        ".claude/scheduled_tasks.lock": 1,
+        ".claude/settings.local.json": 17,
+        "internal/server/server.go": 21
+      },
+      "user_removed_per_file": {
+        "internal/server/server.go": 7
+      }
+    }
+  ]
+}

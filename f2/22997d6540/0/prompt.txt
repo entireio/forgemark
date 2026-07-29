@@ -1,0 +1,19 @@
+I am logged in
+
+---
+
+Remember the trails we created for entire-graph? they aren't running. why? figure it out
+
+---
+
+Can checkpoints can be pushed to a separate private remote while the code repo stays public?
+
+---
+
+Can you review the changes?
+https://github.com/ohcnetwork/care_fe/pull/16607/changes
+[1:40 AM]It showed pushing checkpoint to ohcnetwork/care_fe-checkpoints but the branch didn't land on the repo!
+
+---
+
+[Image #1]
