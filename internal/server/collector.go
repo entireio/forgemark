@@ -92,7 +92,11 @@ func (c *collector) OnSample(s bench.Sample) {
 func (c *collector) snapshot() BucketStats {
 	c.mu.Lock()
 	b := c.cur
-	c.cur = bucket{}
+	// Preallocate the next second's latency buffers to the size the just-closed
+	// second reached, so OnSample's append doesn't grow (allocate) a slice while
+	// holding the lock in steady state. The closed slice is handed to the ring
+	// (not reused), so a fresh backing array is required regardless.
+	c.cur = bucket{lat: make([]float64, 0, len(b.lat)), cloneLat: make([]float64, 0, len(b.cloneLat))}
 	c.ring[c.pos] = b.lat
 	c.cloneRing[c.pos] = b.cloneLat
 	c.pos = (c.pos + 1) % windowSecs

@@ -61,7 +61,10 @@ func newDemoRunner(remote string, w bench.Workload, sink bench.Sink) (*demoRunne
 	for name, dst := range map[string]*float64{"spread": &spread, "err": &d.errRate, "cas": &d.casRate, "cap": &d.cap} {
 		if v := q.Get(name); v != "" {
 			f, err := strconv.ParseFloat(v, 64)
-			if err != nil || f < 0 {
+			// Reject NaN/±Inf explicitly: ParseFloat accepts them, and they pass a
+			// bare `f < 0` check, then poison sigma/durations and can spin a tight
+			// synthetic loop.
+			if err != nil || math.IsNaN(f) || math.IsInf(f, 0) || f < 0 {
 				return nil, fmt.Errorf("demo: invalid %s %q", name, v)
 			}
 			*dst = f
@@ -69,6 +72,10 @@ func newDemoRunner(remote string, w bench.Workload, sink bench.Sink) (*demoRunne
 	}
 	if spread < 1 {
 		return nil, fmt.Errorf("demo: spread must be >= 1")
+	}
+	// err and cas are probabilities per operation.
+	if d.errRate > 1 || d.casRate > 1 {
+		return nil, fmt.Errorf("demo: err and cas must be probabilities in [0,1]")
 	}
 	// For a log-normal around the median, p99 = median * exp(sigma * z99).
 	d.sigma = math.Log(spread) / 2.326

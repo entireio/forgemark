@@ -110,27 +110,50 @@ export function renderNewRun(app) {
     insecure.checked = t.insecure;
 
     const remoteInput = bind('remote', inp({ placeholder: 'https://gitlab.example — or demo://fast?p50=80ms' }));
-    remoteInput.addEventListener('input', updateGate);
-
-    const demoish = isDemo(t.remote);
 
     // The credential comes from an authenticated CLI the server reads at run
     // start, so the token never enters the browser or the request body. Demo
-    // targets need none. A forge without a supported CLI login is served from
-    // the command line (forgemark -token-file …), not this form.
-    let credControl;
-    if (demoish) {
-      t.secret_source = '';
-      credControl = h('div', { class: 'cred-note' }, 'none needed (demo target)');
-    } else {
-      if (!t.secret_source) t.secret_source = 'gh';
-      const srcSel = h('select', { onchange: () => { t.secret_source = srcSel.value; } },
-        h('option', { value: 'gh' }, 'gh CLI login'),
-        h('option', { value: 'glab' }, 'glab CLI login'),
-        h('option', { value: 'entire' }, 'entire CLI login'));
-      srcSel.value = t.secret_source;
-      credControl = srcSel;
+    // targets need none. The credential control and the forge-only advanced
+    // knobs are (re)synced whenever the remote changes: typing a demo:// URL
+    // into a custom target must drop the credential source and hide the advanced
+    // fields, or the run would post secret_source and the server would reject it.
+    const credBox = h('div');
+    const advanced = h('details', { class: 'disclose', style: { marginTop: '12px', marginBottom: '0' } },
+      h('summary', {}, 'Advanced'),
+      h('div', { class: 'dbody' },
+        h('div', { class: 'grid c3' },
+          field('Username (token forges ignore it)', bind('user', inp({ placeholder: 'x-access-token' }))),
+          field('Object format', bind('object_format', h('select', {},
+            h('option', { value: 'auto' }, 'auto'), h('option', { value: 'sha1' }, 'sha1'), h('option', { value: 'sha256' }, 'sha256')))),
+          h('div', { class: 'field' }, h('label', {}, 'TLS'),
+            h('label', { style: { color: 'var(--ink-2)', fontSize: '13px' } }, insecure, ' skip verification (dev hosts)'))),
+        h('p', { class: 'eyebrow', style: { marginTop: '14px' } }, 'entiredb'),
+        h('div', { class: 'grid c3' },
+          field('Token URL', bind('token_url', inp({ placeholder: 'https://…/oauth/token' }))),
+          field('Jurisdiction', bind('jurisdiction', inp({ placeholder: 'https://us.example.com' }))),
+          field('Client ID', bind('client_id', inp({ placeholder: 'entire-cli' }))))));
+
+    function syncCred() {
+      const demoish = isDemo(t.remote);
+      credBox.innerHTML = '';
+      if (demoish) {
+        t.secret_source = '';
+        credBox.append(h('div', { class: 'cred-note' }, 'none needed (demo target)'));
+      } else {
+        if (!t.secret_source) t.secret_source = 'gh';
+        const srcSel = h('select', { onchange: () => { t.secret_source = srcSel.value; } },
+          h('option', { value: 'gh' }, 'gh CLI login'),
+          h('option', { value: 'glab' }, 'glab CLI login'),
+          h('option', { value: 'entire' }, 'entire CLI login'));
+        srcSel.value = t.secret_source;
+        credBox.append(srcSel);
+      }
+      advanced.style.display = demoish ? 'none' : '';
     }
+    // Swap only credBox/advanced on input, never the remote field itself, so
+    // focus and caret stay put while typing the demo:// URL.
+    remoteInput.addEventListener('input', () => { updateGate(); syncCred(); });
+    syncCred();
 
     return h('div', { class: 'target-card', style: { '--tcolor': targetColor(i) } },
       h('div', { class: 'thead' },
@@ -141,23 +164,8 @@ export function renderNewRun(app) {
         field('Remote base URL', remoteInput, 'wide')),
       h('div', { class: 'grid c2', style: { marginTop: '12px' } },
         field('Repos (comma-separated)', bind('repos', inp({ placeholder: 'group/bench.git' }))),
-        field('Credential source', credControl)),
-      // Advanced per-target knobs stay collapsed — demo/most-forge runs never
-      // touch them.
-      demoish ? null : h('details', { class: 'disclose', style: { marginTop: '12px', marginBottom: '0' } },
-        h('summary', {}, 'Advanced'),
-        h('div', { class: 'dbody' },
-          h('div', { class: 'grid c3' },
-            field('Username (token forges ignore it)', bind('user', inp({ placeholder: 'x-access-token' }))),
-            field('Object format', bind('object_format', h('select', {},
-              h('option', { value: 'auto' }, 'auto'), h('option', { value: 'sha1' }, 'sha1'), h('option', { value: 'sha256' }, 'sha256')))),
-            h('div', { class: 'field' }, h('label', {}, 'TLS'),
-              h('label', { style: { color: 'var(--ink-2)', fontSize: '13px' } }, insecure, ' skip verification (dev hosts)'))),
-          h('p', { class: 'eyebrow', style: { marginTop: '14px' } }, 'entiredb'),
-          h('div', { class: 'grid c3' },
-            field('Token URL', bind('token_url', inp({ placeholder: 'https://…/oauth/token' }))),
-            field('Jurisdiction', bind('jurisdiction', inp({ placeholder: 'https://us.example.com' }))),
-            field('Client ID', bind('client_id', inp({ placeholder: 'entire-cli' })))))));
+        field('Credential source', credBox)),
+      advanced);
   }
 
   const cliNotes = h('div');
