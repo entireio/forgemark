@@ -34,8 +34,13 @@ type credSource struct {
 	gitCred bool // speak the git credential-helper protocol over stdin/stdout
 }
 
+// The gh commands pin --hostname github.com: gh honors $GH_HOST, so on a box
+// configured for a GHES host `gh auth token` would otherwise hand back that
+// host's token, which audience validation still allows (host is github.com) and
+// which would then be sent to github.com as Basic Auth. Pinning the hostname
+// keeps the token and the identity tied to the audience we validated.
 var secretSources = map[string]credSource{
-	"gh":     {argv: []string{"gh", "auth", "token"}},
+	"gh":     {argv: []string{"gh", "auth", "token", "--hostname", "github.com"}},
 	"entire": {argv: []string{"entire", "auth", "token"}},
 	"glab":   {argv: []string{"glab", "auth", "git-credential", "get"}, gitCred: true},
 }
@@ -201,7 +206,7 @@ func (s *Server) handleLocalSuggest(w http.ResponseWriter, _ *http.Request) {
 }
 
 func suggestGitHub() suggestEntry {
-	login, err := runCLI("", "gh", "api", "user", "--jq", ".login")
+	login, err := runCLI("", "gh", "api", "user", "--hostname", "github.com", "--jq", ".login")
 	if err != nil {
 		return suggestEntry{Error: err.Error()}
 	}

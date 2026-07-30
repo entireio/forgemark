@@ -172,6 +172,7 @@ type Run struct {
 	targets     []*targetState
 	levelIdx    int
 	levelConc   int
+	measuring   bool // a level's timed window is open; gates periodic bucket emission
 	resultsFile string
 }
 
@@ -455,7 +456,7 @@ func (r *Run) coordinate(m *RunManager) {
 		for {
 			select {
 			case <-tick.C:
-				r.emitBucket()
+				r.emitBucket(false)
 			case <-tickerDone:
 				return
 			}
@@ -499,12 +500,25 @@ func (r *Run) coordinate(m *RunManager) {
 					return
 				}
 				r.mu.Lock()
-				t.results = append(t.results, res)
+				// A cancelled RunLevel returns a partial summary (nil error) whose
+				// throughput denominator is still the full configured duration, so
+				// it reads as a completed low-throughput level. Don't publish it —
+				// the run is ending as cancelled anyway.
+				if r.ctx.Err() == nil {
+					t.results = append(t.results, res)
+				}
 				r.mu.Unlock()
 			}(t)
 		}
 		barrier.Await() // all targets have built their agents (or failed and arrived)
 		barrier.Fire()  // release them to start the timed window together
+		// The timed window is now open: let the ticker emit buckets. Before this
+		// (per-target setup) and after lwg.Wait (session-ref cleanup, between
+		// levels) the collectors produce only zero/stale buckets that would
+		// pollute the live and persisted timelines, so emission is gated to here.
+		r.mu.Lock()
+		r.measuring = true
+		r.mu.Unlock()
 		// Emit level_start only now, at the instant the timed window opens. The
 		// agents' measured clocks start at Fire, so an "at" stamped before the
 		// per-target build (which the barrier absorbs) would make the UI's warm-up
@@ -515,13 +529,24 @@ func (r *Run) coordinate(m *RunManager) {
 			"at": time.Now().UTC(),
 		})
 		lwg.Wait()
+		r.mu.Lock()
+		r.measuring = false
+		r.mu.Unlock()
+
+		// A cancelled level ran only a partial window; don't flush its tail bucket
+		// or publish a level_result for it. The loop exits at the top-of-loop
+		// ctx check anyway; break now so nothing partial is emitted.
+		if r.ctx.Err() != nil {
+			break
+		}
 
 		// Flush the level's final partial second before the next level resets
 		// the collectors (or the run ends): the ticker only fires on whole
 		// seconds, so without this the tail — and every sample of a sub-second
 		// level — would be dropped from the live and persisted series even
-		// though the authoritative LevelResult counts it.
-		r.emitBucket()
+		// though the authoritative LevelResult counts it. force=true because the
+		// window just closed (measuring is false) but this remainder is real.
+		r.emitBucket(true)
 
 		results := map[string]bench.LevelResult{}
 		r.mu.Lock()
@@ -594,7 +619,13 @@ func (r *Run) persistResults(dir string) string {
 	return file
 }
 
-func (r *Run) emitBucket() {
+// emitBucket snapshots every collector and emits/persists one bucket. The
+// periodic ticker calls it with force=false, which is a no-op unless a level's
+// timed window is open (r.measuring) — so setup, cleanup, and between-level idle
+// don't append zero/stale buckets to the timeline. The end-of-level flush calls
+// it with force=true to emit the window's final partial second even though the
+// window has just closed.
+func (r *Run) emitBucket(force bool) {
 	now := time.Now().Unix()
 	// Hold r.mu across the whole tick so a level transition (which resets the
 	// collectors and advances levelIdx under the same lock) can't interleave:
@@ -603,6 +634,9 @@ func (r *Run) emitBucket() {
 	// per second. Lock order is always r.mu → collector.mu, never reversed.
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if !force && !r.measuring {
+		return // outside a timed window: don't rotate collectors or emit idle buckets
+	}
 	li, c := r.levelIdx, r.levelConc
 	stats := make(map[string]BucketStats, len(r.targets))
 	for _, t := range r.targets {
