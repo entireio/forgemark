@@ -78,6 +78,9 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 		// streams, so the HTTP shutdown below completes promptly instead of
 		// blocking on long-lived event connections.
 		//
+		// Cancel the base context first so no new run can start (or keep
+		// resolving credentials) during shutdown, then wait for the active run.
+		s.mgr.beginShutdown()
 		// The wait must outlast a run's own cleanup budget, or we'd return (and,
 		// for the embedded CLI serve, exit the process) while a session's ref
 		// deletion is still in flight — leaking the ephemeral refs deleteRef
@@ -192,8 +195,11 @@ func (s *Server) handleStartRun(w http.ResponseWriter, r *http.Request) {
 	run, warnings, err := s.mgr.start(req)
 	if err != nil {
 		code := http.StatusBadRequest
-		if errors.Is(err, errRunActive) {
+		switch {
+		case errors.Is(err, errRunActive):
 			code = http.StatusConflict
+		case errors.Is(err, errShuttingDown):
+			code = http.StatusServiceUnavailable
 		}
 		httpError(w, code, err.Error())
 		return

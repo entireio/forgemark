@@ -49,7 +49,7 @@ var secretSources = map[string]credSource{
 // source doesn't dictate one (the caller's default applies); it is set for
 // git-credential helpers that name it (GitLab → oauth2). remote supplies the
 // host a git-credential helper is queried for, so self-managed hosts work too.
-func resolveSecretSource(source, remote string) (string, string, error) {
+func resolveSecretSource(ctx context.Context, source, remote string) (string, string, error) {
 	c, ok := secretSources[source]
 	if !ok {
 		return "", "", fmt.Errorf("unknown secret_source %q (gh | glab | entire)", source)
@@ -58,7 +58,7 @@ func resolveSecretSource(source, remote string) (string, string, error) {
 	if c.gitCred {
 		stdin = fmt.Sprintf("protocol=https\nhost=%s\n\n", credHost(remote))
 	}
-	out, err := runCLI(stdin, c.argv...)
+	out, err := runCLI(ctx, stdin, c.argv...)
 	if err != nil {
 		return "", "", err
 	}
@@ -168,8 +168,8 @@ func parseGitCredential(out, label string) (string, string, error) {
 	return user, pass, nil
 }
 
-func runCLI(stdin string, argv ...string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), cliTimeout)
+func runCLI(parent context.Context, stdin string, argv ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(parent, cliTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	if stdin != "" {
@@ -203,19 +203,20 @@ type suggestEntry struct {
 // entire CLI logins, probed concurrently. Each entry is a ready-to-post target
 // or the reason its CLI couldn't be reached; a CLI that isn't installed or
 // logged in just yields an Error the UI shows as a dim note.
-func (s *Server) handleLocalSuggest(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) handleLocalSuggest(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
 	var gh, gitlab, entire suggestEntry
 	var wg sync.WaitGroup
 	wg.Add(3)
-	go func() { defer wg.Done(); gh = suggestGitHub() }()
-	go func() { defer wg.Done(); gitlab = suggestGitLab() }()
-	go func() { defer wg.Done(); entire = suggestEntire() }()
+	go func() { defer wg.Done(); gh = suggestGitHub(ctx) }()
+	go func() { defer wg.Done(); gitlab = suggestGitLab(ctx) }()
+	go func() { defer wg.Done(); entire = suggestEntire(ctx) }()
 	wg.Wait()
 	writeJSON(w, http.StatusOK, map[string]suggestEntry{"github": gh, "gitlab": gitlab, "entire": entire})
 }
 
-func suggestGitHub() suggestEntry {
-	login, err := runCLI("", "gh", "api", "user", "--hostname", "github.com", "--jq", ".login")
+func suggestGitHub(ctx context.Context) suggestEntry {
+	login, err := runCLI(ctx, "", "gh", "api", "user", "--hostname", "github.com", "--jq", ".login")
 	if err != nil {
 		return suggestEntry{Error: err.Error()}
 	}
@@ -231,9 +232,9 @@ func suggestGitHub() suggestEntry {
 	}
 }
 
-func suggestGitLab() suggestEntry {
+func suggestGitLab(ctx context.Context) suggestEntry {
 	// glab has no --jq flag, so decode its JSON here.
-	out, err := runCLI("", "glab", "api", "user")
+	out, err := runCLI(ctx, "", "glab", "api", "user")
 	if err != nil {
 		return suggestEntry{Error: err.Error()}
 	}
@@ -261,7 +262,7 @@ func suggestGitLab() suggestEntry {
 	}
 }
 
-func suggestEntire() suggestEntry {
+func suggestEntire(ctx context.Context) suggestEntry {
 	// The two CLI calls are independent (the status output is only consulted
 	// after both return), so run them concurrently — each can take up to
 	// cliTimeout, and serial worst case would double the suggest latency.
@@ -271,8 +272,11 @@ func suggestEntire() suggestEntry {
 		wg                     sync.WaitGroup
 	)
 	wg.Add(2)
-	go func() { defer wg.Done(); status, statusErr = runCLI("", "entire", "auth", "status") }()
-	go func() { defer wg.Done(); clustersJSON, clustersErr = runCLI("", "entire", "api", "/api/v1/clusters") }()
+	go func() { defer wg.Done(); status, statusErr = runCLI(ctx, "", "entire", "auth", "status") }()
+	go func() {
+		defer wg.Done()
+		clustersJSON, clustersErr = runCLI(ctx, "", "entire", "api", "/api/v1/clusters")
+	}()
 	wg.Wait()
 	if statusErr != nil {
 		return suggestEntry{Error: statusErr.Error()}

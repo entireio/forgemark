@@ -189,11 +189,25 @@ type RunManager struct {
 	order      []string // creation order, for pruning
 	active     *Run
 	resultsDir string
+
+	// baseCtx is the parent of every run's context and of credential
+	// resolution. beginShutdown cancels it, so a start already resolving
+	// credentials when shutdown begins is rejected rather than launching a
+	// benchmark on a background context that outlives the server.
+	baseCtx    context.Context
+	baseCancel context.CancelFunc
 }
 
 func newRunManager(resultsDir string) *RunManager {
-	return &RunManager{runs: make(map[string]*Run), resultsDir: resultsDir}
+	ctx, cancel := context.WithCancel(context.Background())
+	return &RunManager{runs: make(map[string]*Run), resultsDir: resultsDir, baseCtx: ctx, baseCancel: cancel}
 }
+
+// beginShutdown cancels the base context so no new run can start (or keep
+// resolving credentials) once the server is stopping. Idempotent.
+func (m *RunManager) beginShutdown() { m.baseCancel() }
+
+var errShuttingDown = errors.New("server is shutting down")
 
 func (m *RunManager) get(id string) *Run {
 	m.mu.Lock()
@@ -300,6 +314,9 @@ func (m *RunManager) start(req startRequest) (*Run, []string, error) {
 	if active {
 		return nil, nil, errRunActive
 	}
+	if m.baseCtx.Err() != nil {
+		return nil, nil, errShuttingDown
+	}
 
 	// Resolve CLI-sourced secrets concurrently: each exec can block on a slow
 	// CLI (15s timeout apiece), and serial resolution would stack that latency
@@ -317,7 +334,7 @@ func (m *RunManager) start(req startRequest) (*Run, []string, error) {
 		secWG.Add(1)
 		go func(t *targetState, source string) {
 			defer secWG.Done()
-			user, secret, err := resolveSecretSource(source, t.spec.Remote)
+			user, secret, err := resolveSecretSource(m.baseCtx, source, t.spec.Remote)
 			if err != nil {
 				secMu.Lock()
 				secErrs = append(secErrs, fmt.Errorf("target %s: %w", t.name, err))
@@ -334,8 +351,15 @@ func (m *RunManager) start(req startRequest) (*Run, []string, error) {
 	if len(secErrs) > 0 {
 		return nil, nil, errors.Join(secErrs...)
 	}
+	// Shutdown may have begun while credentials resolved: refuse to launch, so a
+	// benchmark can't start (and write to remotes) after the server is stopping.
+	if m.baseCtx.Err() != nil {
+		return nil, nil, errShuttingDown
+	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	// Derive from the manager's base context so shutdown cancels this run even in
+	// the window before it's registered active.
+	ctx, cancel := context.WithCancel(m.baseCtx)
 	run := &Run{
 		ID: runID, StartedAt: time.Now(), log: newEventLog(),
 		ctx: ctx, cancel: cancel, done: make(chan struct{}),

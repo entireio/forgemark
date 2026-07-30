@@ -143,6 +143,20 @@ func TestStartRunValidation(t *testing.T) {
 	}
 }
 
+func TestStartRejectedDuringShutdown(t *testing.T) {
+	s, ts, _ := newTestServer(t)
+	s.mgr.beginShutdown() // simulate a shutdown already in progress
+
+	res, err := http.Post(ts.URL+"/api/runs", "application/json", strings.NewReader(demoBody(1, "1")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = res.Body.Close() }()
+	if res.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("start during shutdown = HTTP %d, want 503", res.StatusCode)
+	}
+}
+
 func TestOriginGuard(t *testing.T) {
 	_, ts, _ := newTestServer(t)
 	u, _ := url.Parse(ts.URL)

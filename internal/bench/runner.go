@@ -78,12 +78,22 @@ func (r *Runner) ObjectFormat() string { return string(r.ep.objFmt) }
 // finished run kept resident in memory. Go strings can't be wiped in place, so
 // dropping the reference is the strongest release available.
 func (r *Runner) Close() {
+	// Stop any background token refresh before dropping the reference, or a
+	// detached exchange could keep running (and holding the token) after the run.
+	if c, ok := r.creds.(credentialCloser); ok {
+		c.close()
+	}
 	if r.httpc != nil {
 		r.httpc.CloseIdleConnections()
 	}
 	r.creds = nil
 	r.target.Secret = "" // drop the runner's own copy of the token
 }
+
+// credentialCloser is an optional credentialProvider capability: release any
+// background refresh machinery and the credentials it holds. staticCreds needs
+// nothing; jurisdictionCreds cancels and waits for its refresh goroutine.
+type credentialCloser interface{ close() }
 
 // StartBarrier synchronizes the start of one concurrency level across several
 // runners: each Arrives once its agents are built, and the coordinator

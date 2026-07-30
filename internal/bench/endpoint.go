@@ -85,7 +85,7 @@ func newEntireEndpoint(ctx context.Context, remote, objectFmt, repo string, cred
 		return nil, fmt.Errorf("read info/refs response: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("info/refs probe: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return nil, fmt.Errorf("info/refs probe: HTTP %d: %s", resp.StatusCode, redactSecrets(strings.TrimSpace(string(body)), auth.Password))
 	}
 
 	if objectFmt == "auto" || objectFmt == "" {
