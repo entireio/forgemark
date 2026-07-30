@@ -213,8 +213,12 @@ export function renderDashboard(app, runId) {
       state.latRows.push({ ts: ev.t, vals: latVals });
       charts.lat.push(ev.t, latVals.map((v) => (v ? v[pct] : null)));
 
+      // Total failed operations = push errors + clone errors. Summing both is
+      // correct for every strategy (the other is 0), and it's essential for
+      // session, where a run whose clones all fail would otherwise show zero
+      // errors and zero throughput.
       charts.err.push(ev.t, [
-        ...vals.map((v) => (v ? (isClone ? v.clone_err || 0 : v.err) : null)),
+        ...vals.map((v) => (v ? (v.err || 0) + (v.clone_err || 0) : null)),
         ...vals.map((v) => (v ? v.cas : null)),
       ]);
 
@@ -223,7 +227,7 @@ export function renderDashboard(app, runId) {
         const v = vals[i];
         if (!v || !t._tile) return;
         const tot = state.totals[t.id];
-        tot.err += (isClone ? v.clone_err || 0 : v.err);
+        tot.err += (v.err || 0) + (v.clone_err || 0);
         tot.cas += v.cas || 0;
         t._tile.ops.textContent = fmtNum(isClone ? v.clone_ok || 0 : v.ok);
         t._tile.p95.textContent = fmtMs(latVals[i] ? latVals[i].p95 : null) || '–';

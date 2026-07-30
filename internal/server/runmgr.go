@@ -411,10 +411,17 @@ func (r *Run) coordinate(m *RunManager) {
 				lr  levelRunner
 				err error
 			)
+			// Give each target its own ref namespace: agents derive destination
+			// refs from the workload RunID, so two targets pointing at the same
+			// repository would otherwise push (and session-delete) identical refs
+			// and collide, manufacturing CAS failures and voiding the comparison.
+			// The run's own ID (r.ID) still identifies the run for reporting.
+			bwT := r.bw
+			bwT.RunID = fmt.Sprintf("%s-t%d", r.bw.RunID, t.id)
 			if isDemoRemote(t.spec.Remote) {
-				lr, err = newDemoRunner(t.spec.Remote, r.bw, t.col)
+				lr, err = newDemoRunner(t.spec.Remote, bwT, t.col)
 			} else {
-				lr, err = bench.NewRunner(r.ctx, t.spec, r.bw, t.col)
+				lr, err = bench.NewRunner(r.ctx, t.spec, bwT, t.col)
 			}
 			t.spec.Secret = "" // consumed; nothing on the run retains it
 			if err != nil {

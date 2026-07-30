@@ -256,6 +256,10 @@ func TestValidateSecretAudience(t *testing.T) {
 	bad("gh", "http://github.com", "", "")                                                                // http would leak the token on the wire
 	bad("gh", "https://x:y@github.com", "", "")                                                           // embedded userinfo overrides the pinned credential
 	bad("entire", "http://in.entire.io", "https://in.auth.entire.io/oauth/token", "https://in.entire.io") // http remote
+	// token_url/jurisdiction select the Entire exchange path; a gh/glab source
+	// carrying them would POST the resolved CLI token to that token_url.
+	bad("gh", "https://github.com", "https://in.auth.entire.io/oauth/token", "")
+	bad("glab", "https://gitlab.com", "", "https://in.entire.io")
 }
 
 func TestRunLifecycleSSEAndRedaction(t *testing.T) {

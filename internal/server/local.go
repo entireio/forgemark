@@ -99,6 +99,15 @@ func validateSecretAudience(source, remote, tokenURL, jurisdiction string) error
 		return u.Hostname(), nil
 	}
 	underEntire := func(h string) bool { return h == "entire.io" || strings.HasSuffix(h, ".entire.io") }
+	// token_url/jurisdiction are Entire-only: their mere presence makes NewRunner
+	// select the Entire token-exchange path, which POSTs the resolved credential
+	// to token_url as the subject token. Paired with a gh/glab source that only
+	// validates the remote, a crafted request could resolve the GitHub/GitLab CLI
+	// token and exfiltrate it to an attacker's token_url. Bind the source to its
+	// runner mode: gh/glab must not carry these fields.
+	if (source == "gh" || source == "glab") && (tokenURL != "" || jurisdiction != "") {
+		return fmt.Errorf("secret_source %s does not use token_url/jurisdiction (those select the Entire exchange path and would send the resolved token there); omit them", source)
+	}
 	switch source {
 	case "gh":
 		h, err := secureHost("remote", remote)
