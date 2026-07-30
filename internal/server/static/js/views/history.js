@@ -79,28 +79,45 @@ export function renderHistory(app, preselect) {
         const tputEl = mkCard('Timeline replay — throughput', 'stored 1s buckets from the live run');
         const latEl = mkCard('Timeline replay — p95 latency', 'rolling 10s window as recorded');
         const colors = new Map(seriesList().map((s) => [s.target, s.color]));
+        const isClone = doc.strategy === 'clone';
+        // A periodic bucket and the forced tail flush can share the same
+        // whole-second t. Aggregate points per t (sum counts and durations, keep
+        // the latest rolling percentile) so replay doesn't silently drop the
+        // tail's operations, and normalize count/duration to a true ops/s rate.
+        // Legacy series without dt_ms fall back to a 1s bucket.
+        const aggOf = (series) => {
+          const m = new Map();
+          for (const p of series) {
+            const a = m.get(p.t) || { ok: 0, clone_ok: 0, dt: 0, last: p };
+            a.ok += p.ok || 0;
+            a.clone_ok += p.clone_ok || 0;
+            a.dt += p.dt_ms || 1000;
+            a.last = p;
+            m.set(p.t, a);
+          }
+          return m;
+        };
+        const aggs = new Map(withSeries.map((t) => [t, aggOf(t.series)]));
         const ts = [...new Set(withSeries.flatMap((t) => t.series.map((p) => p.t)))].sort((a, b) => a - b);
         const mkRows = (val) => ts.map((x) => [x, ...withSeries.map((t) => {
-          const p = t.series.find((q) => q.t === x);
-          return p ? val(p) : null;
+          const a = aggs.get(t).get(x);
+          return a ? val(a) : null;
         })]);
-        // Clone-strategy series carry their numbers in the clone_* fields.
-        // Normalize each bucket's count by its recorded duration (dt_ms) so the
-        // fractional first/tail buckets plot as a true ops/s rate; legacy series
-        // without dt_ms fall back to a 1s bucket.
-        const isClone = doc.strategy === 'clone';
-        const okOf = (p) => {
-          const dt = (p.dt_ms || 1000) / 1000;
-          const n = isClone ? p.clone_ok || 0 : p.ok;
+        const rateOf = (a) => {
+          const dt = a.dt / 1000;
+          const n = isClone ? a.clone_ok : a.ok;
           return dt > 0 ? n / dt : null;
         };
-        const p95Of = (p) => (isClone ? p.clone_p95_ms : p.p95_ms);
-        const tput = timeChart(tputEl, { series: withSeries.map((t) => ({ label: t.name, color: colors.get(t) || targetColor(0) })), unit: fmtNum });
-        tput.setAll(mkRows(okOf));
-        const lat = timeChart(latEl, { series: withSeries.map((t) => ({ label: t.name, color: colors.get(t) || targetColor(0) })), unit: fmtMs });
         // Gate on the recorded rolling p95, not this second's completions, so a
         // quiet bucket doesn't drop a point the stored window still covered.
-        lat.setAll(mkRows((p) => (p95Of(p) > 0 ? p95Of(p) : null)));
+        const p95Of = (a) => {
+          const p = isClone ? a.last.clone_p95_ms : a.last.p95_ms;
+          return p > 0 ? p : null;
+        };
+        const tput = timeChart(tputEl, { series: withSeries.map((t) => ({ label: t.name, color: colors.get(t) || targetColor(0) })), unit: fmtNum });
+        tput.setAll(mkRows(rateOf));
+        const lat = timeChart(latEl, { series: withSeries.map((t) => ({ label: t.name, color: colors.get(t) || targetColor(0) })), unit: fmtMs });
+        lat.setAll(mkRows(p95Of));
         liveCharts.push(tput, lat);
       }
     }

@@ -30,7 +30,8 @@ export function renderRace(app, arg) {
     isClone: false,
     isSession: false,
     lanes: {},       // target id → {ok: primary ops, good/errs: ALL ops incl. session clones, rates, lat, els, lane}
-    finals: {},      // target id → last level_result row (measured window stats)
+    finals: {},      // target id → last level_result row (measured window stats), stamped with _level
+    finalLevel: -1,  // highest level_index seen; a final counts only if it's from this level
   };
   let es = null;
   let ticker = null;
@@ -174,6 +175,11 @@ export function renderRace(app, arg) {
   function finish(ev) {
     clock.textContent = '0:00';
     phase.textContent = 'finished';
+    // finalOf returns a target's result only when it's from the final level: a
+    // target that died at a lower concurrency keeps that lower-level result in
+    // state.finals, and comparing it against other targets' final-level numbers
+    // would award an invalid winner.
+    const finalOf = (r) => (r.final && r.final._level === state.finalLevel ? r.final : null);
     const rows = (state.hello ? state.hello.targets : [])
       .map((t) => ({ t, lane: state.lanes[t.id], final: state.finals[t.id] }))
       .filter((r) => r.lane);
@@ -185,13 +191,22 @@ export function renderRace(app, arg) {
     let verdict = '';
     let tie = false;
     if (metric === 'latency') {
-      rows.sort((a, b) => (a.final?.p50_ms ?? Infinity) - (b.final?.p50_ms ?? Infinity));
+      // A target with no final-level result, no successes, or a non-positive
+      // p50 (an all-failed level publishes p50_ms: 0) has no comparable latency;
+      // rank it as Infinity so it sorts last and can never win.
+      const latOf = (r) => { const f = finalOf(r); return f && f.ok > 0 && f.p50_ms > 0 ? f.p50_ms : Infinity; };
+      rows.sort((a, b) => latOf(a) - latOf(b));
       const [win, next] = rows;
-      if (win.final && next?.final) {
-        tie = win.final.p50_ms === next.final.p50_ms;
+      if (latOf(win) === Infinity) {
+        tie = true; // nobody has a comparable latency — suppress a lone winner
+        verdict = ' — no comparable latency at the final level';
+      } else {
+        tie = next && latOf(next) === latOf(win);
         verdict = tie
-          ? ` — ${fmtMs(win.final.p50_ms)} median on both`
-          : ` — ${(next.final.p50_ms / win.final.p50_ms).toFixed(1)}× lower median latency`;
+          ? ` — ${fmtMs(finalOf(win).p50_ms)} median on both`
+          : next && latOf(next) !== Infinity
+            ? ` — ${(finalOf(next).p50_ms / finalOf(win).p50_ms).toFixed(1)}× lower median latency`
+            : ' — only target with a comparable median latency';
       }
     } else if (metric === 'reliability') {
       const pct = (r) => (r.lane.good + r.lane.errs ? r.lane.good / (r.lane.good + r.lane.errs) : -1);
@@ -223,14 +238,17 @@ export function renderRace(app, arg) {
       h('table', { class: 'results' },
         h('thead', {}, h('tr', {}, h('th', {}, ''), h('th', {}, 'target'), h('th', {}, opsNoun()),
           h('th', {}, `${opsNoun()}/s`), h('th', {}, 'p50'), h('th', {}, 'p95'), h('th', {}, 'failures'))),
-        h('tbody', {}, rows.map((r, i) => h('tr', {},
-          h('td', {}, tie && i < 2 ? '🥇' : ['🥇', '🥈', '🥉'][i] || ''),
-          h('td', { class: 'tname' }, h('span', { class: 'dot', style: { '--tcolor': targetColor(r.t.id), marginRight: '6px' } }), r.t.name),
-          h('td', {}, fmtInt(r.lane.ok)),
-          h('td', {}, r.final ? r.final.ops_per_sec.toFixed(1) : '–'),
-          h('td', {}, r.final ? fmtMs(r.final.p50_ms) : '–'),
-          h('td', {}, r.final ? fmtMs(r.final.p95_ms) : '–'),
-          h('td', { class: r.lane.errs > 0 ? 'num-bad' : '' }, fmtInt(r.lane.errs))))))));
+        h('tbody', {}, rows.map((r, i) => {
+          const f = finalOf(r); // final-level result only; a stale earlier level shows '–'
+          return h('tr', {},
+            h('td', {}, tie && i < 2 ? '🥇' : ['🥇', '🥈', '🥉'][i] || ''),
+            h('td', { class: 'tname' }, h('span', { class: 'dot', style: { '--tcolor': targetColor(r.t.id), marginRight: '6px' } }), r.t.name),
+            h('td', {}, fmtInt(r.lane.ok)),
+            h('td', {}, f ? f.ops_per_sec.toFixed(1) : '–'),
+            h('td', {}, f ? fmtMs(f.p50_ms) : '–'),
+            h('td', {}, f ? fmtMs(f.p95_ms) : '–'),
+            h('td', { class: r.lane.errs > 0 ? 'num-bad' : '' }, fmtInt(r.lane.errs)));
+        })))));
     const saved = resultsSavedBanner(ev);
     if (saved) finishBox.append(saved);
   }
@@ -248,6 +266,10 @@ export function renderRace(app, arg) {
     level_start(ev) { state.curLevel = ev; },
     bucket(ev) {
       if (!state.hello) return;
+      // Normalize this bucket's counts to a per-second rate: the first
+      // post-warmup bucket and the tail flush cover only a fraction of a second
+      // (ev.dt_ms), so a raw count would over/understate the rolling rate.
+      const dt = (ev.dt_ms || 1000) / 1000;
       for (const t of state.hello.targets) {
         const v = ev.targets[String(t.id)];
         const l = state.lanes[t.id];
@@ -264,13 +286,19 @@ export function renderRace(app, arg) {
         l.ok += ok;
         l.good += good;
         l.errs += err;
-        l.rates.push(ok);
-        if (l.rates.length > 5) l.rates.shift();
-        l.lat = ok > 0
-          ? (state.isClone
-            ? { p50: v.clone_p50_ms, p95: v.clone_p95_ms }
-            : { p50: v.p50_ms, p95: v.p95_ms })
-          : l.lat;
+        if (dt > 0) {
+          l.rates.push(ok / dt);
+          if (l.rates.length > 5) l.rates.shift();
+        }
+        // Latency is the collector's rolling 10s-window percentile, reported
+        // every bucket regardless of this second's completions. Track it whenever
+        // the window has data (p95 > 0) and clear it to null when the window
+        // empties, so a stalled target stops displaying — and winning with — a
+        // stale latency.
+        const lp = state.isClone
+          ? { p50: v.clone_p50_ms, p95: v.clone_p95_ms }
+          : { p50: v.p50_ms, p95: v.p95_ms };
+        l.lat = lp.p95 > 0 ? lp : null;
         l.pop = l.pop || ok > 0;
       }
       // Coalesce DOM work: a finished-run replay delivers thousands of buckets
@@ -292,7 +320,10 @@ export function renderRace(app, arg) {
       }
     },
     level_result(ev) {
-      for (const [id, r] of Object.entries(ev.targets)) state.finals[id] = r;
+      // Stamp each result with its level so the podium can tell a target's
+      // final-level result from a stale earlier one it kept after dying.
+      for (const [id, r] of Object.entries(ev.targets)) state.finals[id] = { ...r, _level: ev.level_index };
+      state.finalLevel = Math.max(state.finalLevel, ev.level_index);
     },
     target_error(ev) {
       const t = state.hello?.targets.find((x) => x.id === ev.target);
