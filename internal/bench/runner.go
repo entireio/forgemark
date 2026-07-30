@@ -71,6 +71,20 @@ func (r *Runner) Nodes() int { return len(r.ep.nodes) }
 // ObjectFormat is the resolved wire object format ("sha1" or "sha256").
 func (r *Runner) ObjectFormat() string { return string(r.ep.objFmt) }
 
+// Close releases the runner's resources once its run is over: it drops idle
+// keep-alive connections and severs the runner's reference to the credential
+// provider, so the credential (a PAT, or an Entire subject/access token) held
+// for the run becomes eligible for garbage collection instead of living on in a
+// finished run kept resident in memory. Go strings can't be wiped in place, so
+// dropping the reference is the strongest release available.
+func (r *Runner) Close() {
+	if r.httpc != nil {
+		r.httpc.CloseIdleConnections()
+	}
+	r.creds = nil
+	r.target.Secret = "" // drop the runner's own copy of the token
+}
+
 // StartBarrier synchronizes the start of one concurrency level across several
 // runners: each Arrives once its agents are built, and the coordinator
 // releases them together, so target-dependent setup time can't skew the

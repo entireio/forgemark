@@ -167,13 +167,15 @@ type Run struct {
 	workload WorkloadSpec // normalized, as accepted
 	bw       bench.Workload
 
-	mu          sync.Mutex
-	state       string // starting | running | done | cancelled | failed
-	targets     []*targetState
-	levelIdx    int
-	levelConc   int
-	measuring   bool // a level's timed window is open; gates periodic bucket emission
-	resultsFile string
+	mu           sync.Mutex
+	state        string // starting | running | done | cancelled | failed
+	targets      []*targetState
+	levelIdx     int
+	levelConc    int
+	measuring    bool      // a level's timed window is open; gates periodic bucket emission
+	windowStart  time.Time // when the current level's timed window opened (barrier fire)
+	lastBucketAt time.Time // wall clock of the last bucket emission, for the per-bucket duration
+	resultsFile  string
 }
 
 var errRunActive = errors.New("a benchmark run is already active; cancel it or wait for it to finish")
@@ -241,8 +243,15 @@ func (m *RunManager) start(req startRequest) (*Run, []string, error) {
 		// remote is echoed verbatim in the hello event, status APIs, target
 		// labels, and the persisted result doc, so userinfo would leak a secret
 		// there despite Target.Secret being redacted everywhere. Credentials
-		// belong in secret / secret_source, never the URL.
-		if u, err := url.Parse(bt.Remote); err == nil && u.User != nil {
+		// belong in secret / secret_source, never the URL. A parse failure is
+		// rejected too, not waved through as credential-free — a malformed remote
+		// like https://user:token@host/%zz would otherwise skip this check and
+		// still be emitted verbatim.
+		u, err := url.Parse(bt.Remote)
+		if err != nil {
+			return nil, nil, fmt.Errorf("target %s: invalid remote URL %q: %w", name, bt.Remote, err)
+		}
+		if u.User != nil {
 			return nil, nil, fmt.Errorf("target %s: remote must not embed credentials in the URL (user:...@); use secret or secret_source", name)
 		}
 		if ts.SecretSource != "" && ts.Secret != "" {
@@ -525,6 +534,8 @@ func (r *Run) coordinate(m *RunManager) {
 		// pollute the live and persisted timelines, so emission is gated to here.
 		r.mu.Lock()
 		r.measuring = true
+		r.windowStart = time.Now()
+		r.lastBucketAt = r.windowStart
 		r.mu.Unlock()
 		// Emit level_start only now, at the instant the timed window opens. The
 		// agents' measured clocks start at Fire, so an "at" stamped before the
@@ -585,6 +596,17 @@ func (r *Run) finish(m *RunManager, state string) {
 	resultsFile := r.persistResults(m.resultsDir)
 	r.mu.Lock()
 	r.resultsFile = resultsFile
+	// Release each runner now the run is over: a finished run stays resident for
+	// the history UI (keepFinishedRuns), and its runner still holds the forge
+	// credential (a PAT, or an Entire subject/access token). Close drops the
+	// connections and the credential reference; dropping t.runner lets the whole
+	// runner be collected. Nothing after finish reads t.runner.
+	for _, t := range r.targets {
+		if c, ok := t.runner.(interface{ Close() }); ok {
+			c.Close()
+		}
+		t.runner = nil
+	}
 	r.mu.Unlock()
 	r.log.emit("run_done", map[string]any{
 		"state": state, "results_file": resultsFile, "at": time.Now().UTC(),
@@ -644,6 +666,29 @@ func (r *Run) emitBucket(force bool) {
 	if !force && !r.measuring {
 		return // outside a timed window: don't rotate collectors or emit idle buckets
 	}
+	// A bucket's OK count spans the interval since the previous bucket, which is
+	// only ~1s for a steady tick but is fractional for the first tick after the
+	// warm-up boundary and for the forced tail flush. Carry the bucket's actual
+	// measured duration so consumers plot count/duration (a true rate) instead of
+	// treating the raw count as ops/s. dt is the overlap of (lastBucketAt, now]
+	// with the measured window [windowStart+warmup, +duration], so warm-up-only
+	// buckets get 0 and the tail gets only its real remainder.
+	wallNow := time.Now()
+	measStart := r.windowStart.Add(r.bw.Warmup)
+	measEnd := measStart.Add(r.bw.Duration)
+	lo, hi := r.lastBucketAt, wallNow
+	if lo.Before(measStart) {
+		lo = measStart
+	}
+	if hi.After(measEnd) {
+		hi = measEnd
+	}
+	dtMs := int64(0)
+	if hi.After(lo) {
+		dtMs = hi.Sub(lo).Milliseconds()
+	}
+	r.lastBucketAt = wallNow
+
 	li, c := r.levelIdx, r.levelConc
 	stats := make(map[string]BucketStats, len(r.targets))
 	for _, t := range r.targets {
@@ -654,7 +699,7 @@ func (r *Run) emitBucket(force bool) {
 		stats[strconv.Itoa(t.id)] = st
 		if len(t.series) < maxBufferedEvents {
 			t.series = append(t.series, results.SeriesPoint{
-				T: now, Level: li, OK: st.OK, CAS: st.CAS, Err: st.Err,
+				T: now, DtMs: dtMs, Level: li, OK: st.OK, CAS: st.CAS, Err: st.Err,
 				P50: st.P50, P95: st.P95, P99: st.P99,
 				CloneOK: st.CloneOK, CloneErr: st.CloneErr,
 				CloneP50: st.CloneP50, CloneP95: st.CloneP95, CloneP99: st.CloneP99,
@@ -665,7 +710,7 @@ func (r *Run) emitBucket(force bool) {
 		return
 	}
 	r.log.emit("bucket", map[string]any{
-		"level_index": li, "concurrency": c, "t": now, "targets": stats,
+		"level_index": li, "concurrency": c, "t": now, "dt_ms": dtMs, "targets": stats,
 	})
 }
 

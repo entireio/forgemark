@@ -194,9 +194,16 @@ export function renderDashboard(app, runId) {
       const isClone = state.strategy === 'clone';
       const vals = targets.map((t) => ev.targets[String(t.id)] || null);
 
+      // A bucket's ok is a count over the bucket's measured duration, which is
+      // ~1s for a steady tick but fractional for the first post-warm-up bucket
+      // and the tail flush. Normalize count → ops/s by that duration so those
+      // points aren't misleading; dt_ms absent (legacy series) falls back to 1s.
+      const dt = (ev.dt_ms || 1000) / 1000;
+      const rate = (n) => (dt > 0 ? n / dt : null);
+
       // throughput (+ dashed clone series for session)
-      const tputVals = vals.map((v) => (v ? (isClone ? v.clone_ok || 0 : v.ok) : null));
-      if (state.strategy === 'session') tputVals.push(...vals.map((v) => (v ? v.clone_ok || 0 : null)));
+      const tputVals = vals.map((v) => (v ? rate(isClone ? v.clone_ok || 0 : v.ok) : null));
+      if (state.strategy === 'session') tputVals.push(...vals.map((v) => (v ? rate(v.clone_ok || 0) : null)));
       charts.tput.push(ev.t, tputVals);
 
       // latency rows retained for percentile switching. Gate on the rolling
@@ -229,7 +236,7 @@ export function renderDashboard(app, runId) {
         const tot = state.totals[t.id];
         tot.err += (v.err || 0) + (v.clone_err || 0);
         tot.cas += v.cas || 0;
-        t._tile.ops.textContent = fmtNum(isClone ? v.clone_ok || 0 : v.ok);
+        t._tile.ops.textContent = fmtNum(rate(isClone ? v.clone_ok || 0 : v.ok) || 0);
         t._tile.p95.textContent = fmtMs(latVals[i] ? latVals[i].p95 : null) || '–';
         t._tile.errs.textContent = fmtNum(tot.err + tot.cas);
         t._tile.errs.style.color = tot.err + tot.cas > 0 ? 'var(--critical)' : '';

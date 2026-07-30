@@ -85,8 +85,15 @@ export function renderHistory(app, preselect) {
           return p ? val(p) : null;
         })]);
         // Clone-strategy series carry their numbers in the clone_* fields.
+        // Normalize each bucket's count by its recorded duration (dt_ms) so the
+        // fractional first/tail buckets plot as a true ops/s rate; legacy series
+        // without dt_ms fall back to a 1s bucket.
         const isClone = doc.strategy === 'clone';
-        const okOf = (p) => (isClone ? p.clone_ok || 0 : p.ok);
+        const okOf = (p) => {
+          const dt = (p.dt_ms || 1000) / 1000;
+          const n = isClone ? p.clone_ok || 0 : p.ok;
+          return dt > 0 ? n / dt : null;
+        };
         const p95Of = (p) => (isClone ? p.clone_p95_ms : p.p95_ms);
         const tput = timeChart(tputEl, { series: withSeries.map((t) => ({ label: t.name, color: colors.get(t) || targetColor(0) })), unit: fmtNum });
         tput.setAll(mkRows(okOf));
