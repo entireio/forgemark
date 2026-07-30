@@ -1,0 +1,24 @@
+{
+  "cli_version": "0.8.42",
+  "checkpoint_id": "fed915330056",
+  "strategy": "manual-commit",
+  "branch": "feat/web-demo",
+  "checkpoints_count": 1,
+  "files_touched": null,
+  "sessions": [
+    {
+      "metadata": "/fe/d915330056/0/metadata.json",
+      "transcript": "/fe/d915330056/0/full.jsonl",
+      "compact_transcript": "/fe/d915330056/0/transcript.jsonl",
+      "content_hash": "/fe/d915330056/0/content_hash.txt",
+      "prompt": "/fe/d915330056/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 91518,
+    "cache_creation_tokens": 6076431,
+    "cache_read_tokens": 374761462,
+    "output_tokens": 963001,
+    "api_call_count": 894
+  }
+}

@@ -1,0 +1,1892 @@
+/code-review
+
+---
+
+<task-notification>
+<task-id>aa920ebab15a5b182</task-id>
+<tool-use-id>toolu_01DzcGY1LgmKh9VodGPAzV5H</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-krk-Desktop-GitStore-forgemark/c11b8d4c-8f8a-4fbd-967b-148d908d89e3/tasks/aa920ebab15a5b182.output</output-file>
+<status>completed</status>
+<summary>Agent "Finder: conventions" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>Based on my investigation: there is no repo-root, ancestor, or directory-level `CLAUDE.md`/`CLAUDE.local.md` anywhere in the repo or in the ancestor dirs of changed files. The only governing file is the user-level `/Users/krk/.claude/CLAUDE.md`, which is about conversational/writing style. The sole written artifact in the diff it could cover is `README.md`.
+
+The one clear, quotable rule that plainly covers a written artifact and is violated by added lines is the em-dash prohibition. (Note: em dashes already exist in the pre-diff README, so this is the doc continuing an established style, but the rule is explicit.) No inflated-phrase or other voice violations appear.
+
+[{"file":"/Users/krk/.claude/CLAUDE.md","line":"README.md:76 (git diff main...HEAD) — \"`pushrace.sh` presets a race-shaped workload — one flight of 16 agents pushing…\"","summary":"Rule (user-level CLAUDE.md, 'How to respond'): \"Do not use em dashes.\" The diff adds many new em dashes throughout the README's added sections (representative added lines: 32, 40, 55, 67, 76, 78, 83, 84, 86, 90, 97, 116, 118, 247, 261).","failure_scenario":"Every newly added README section uses the em-dash character '—' the user has explicitly told Claude never to use, so the authored docs contradict a standing global writing rule. (Borderline: the pre-existing README on main already uses em dashes at lines 9/12, so the diff continues an established doc style rather than introducing the character; and the rule sits under conversational 'How to respond' guidance.)"}]</result>
+<usage><subagent_tokens>23466</subagent_tokens><tool_uses>5</tool_uses><duration_ms>70662</duration_ms></usage>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>a0befc3070bac3fdb</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-krk-Desktop-GitStore-forgemark/c11b8d4c-8f8a-4fbd-967b-148d908d89e3/tasks/a0befc3070bac3fdb.output</output-file>
+<status>completed</status>
+<summary>Agent "Finder B: removed-behavior" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>Based on my audit of the serve dispatch and the CLI→server invariant handoff, here are the findings:
+
+[{"file":"cmd/forgemark/serve.go","line":21,"summary":"`forgemark serve -h`/`-help` is treated as a hard error, not a help request. The serve flagset uses flag.ContinueOnError, so Parse returns flag.ErrHelp after printing usage; runServe propagates it and main() prints `forgemark: flag: help requested` and exits 1. The classic CLI uses the default ExitOnError CommandLine, which prints usage and exits 0.","failure_scenario":"A user runs `forgemark serve -h`, sees the correct usage, then a spurious error line, and the process exits non-zero — scripts checking exit status treat a help request as failure, and the UX is inconsistent with the main CLI."},{"file":"internal/server/runmgr.go","line":212,"summary":"Invariants the CLI enforces at parse time (target has repos; strategy=repo needs &gt;=2 repos; a credential secret is present) are NOT checked in start() for real (non-demo) targets. They are only enforced later inside bench.NewRunner, called in the coordinate() goroutine, where a failure just calls markDead. So POST /api/runs returns 200 and creates a run for an obviously invalid target instead of a fast 400. The invariant is upheld, but at a later, softer point than the CLI.","failure_scenario":"Operator POSTs a target with empty repos or strategy=repo + one repo. Instead of an immediate validation error, the server accepts the run, the target dies during setup, and if it was the only target the whole run silently transitions to state=failed — the user must inspect target_error events to learn it was a config mistake."},{"file":"internal/server/runmgr.go","line":238,"summary":"start() rejects secret+secret_source both set, but does not reject BOTH being absent for a real remote. A non-demo target with no secret and no secret_source passes POST validation and only fails inside NewRunner (`no credential secret provided`) as a deferred per-target death.","failure_scenario":"A curl/JS caller omits both secret and secret_source for a real forge target; the run is created and appears active, then the target dies mid-setup rather than the request failing fast with a clear 400 the way the CLI's readSecret does."},{"file":"cmd/forgemark/main.go","line":53,"summary":"The `if os.Args[1]==\"serve\"` dispatch is correct (os.Args[2:] slicing is right, len&gt;1 guard prevents panic, and `serve` cannot collide with a flag since all CLI flags start with `-` and the classic path takes no positional args). The one behavior change: `forgemark serve` previously fell through to run() where the positional arg was ignored and it errored `no repos`; it now launches a server. Very low severity since the old behavior was already an error.","failure_scenario":"Negligible in practice, but any script or muscle-memory that relied on `forgemark serve` erroring out (e.g. as a typo guard) now silently starts a listening load-generation control panel on 127.0.0.1:8377."}]</result>
+<usage><subagent_tokens>42455</subagent_tokens><tool_uses>9</tool_uses><duration_ms>109613</duration_ms></usage>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>aac02190dd088271f</task-id>
+<tool-use-id>toolu_01LvAEnHq44oZBn8k2YvdZ5y</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-krk-Desktop-GitStore-forgemark/c11b8d4c-8f8a-4fbd-967b-148d908d89e3/tasks/aac02190dd088271f.output</output-file>
+<status>completed</status>
+<summary>Agent "Finder: efficiency" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>[{"file":"internal/server/collector.go","line":92,"summary":"snapshot() reallocates and re-sorts the entire rolling window from scratch every tick, per target","failure_scenario":"Called once per second per alive target from emitBucket (the per-second fan-out). It concatenates all 10 ring slots into a freshly allocated slice and sort.Float64s it for BOTH push and clone latencies, even when a second had zero new samples. At 8 targets that is 16 full-window allocations+sorts per second, all garbage the next tick. Cheaper: keep a running count of samples in the window and skip recompute when unchanged, or maintain a reusable scratch buffer / incremental sorted structure instead of rebuilding from zero."},
+{"file":"internal/server/static/js/views/dashboard.js","line":217,"summary":"bucket handler writes tile textContent (ops/p95/errs) on every bucket without coalescing, unlike race.js","failure_scenario":"On SSE replay of a finished long run the server dispatches thousands of bucket events back-to-back; this loop sets textContent on 3 elements per target for every one of them, so all but the final write are immediately overwritten dead DOM mutations. race.js already coalesces the identical work behind requestAnimationFrame; dashboard does not. Cheaper: accumulate tile state during bucket handling and flush it once per rAF (reuse the same frame the charts already coalesce into)."},
+{"file":"internal/server/static/js/views/dashboard.js","line":208,"summary":"state.latRows grows one entry per bucket for the life of the page and is fully re-mapped on every percentile toggle","failure_scenario":"latRows.push runs on every bucket and is never trimmed, so it retains up to the server cap of ~100k bucket rows for a day-long run, each an object with a per-target vals array. Every p50/p95/p99 button press calls refeedLatency(), which maps the whole array to rebuild the chart. On a long run this is a large unbounded retained array plus an O(n) remap per click. Cheaper: cap/rotate latRows to the visible window, or store columnar arrays and slice the tail."},
+{"file":"internal/server/static/js/charts.js","line":93,"summary":"timeChart data arrays append every bucket forever; each coalesced flush calls u.setData over the full arrays","failure_scenario":"push() appends to unbounded data columns and the rAF flush does u.setData(data) across the entire history, so per-frame redraw cost grows linearly with run length for all three live charts. On a multi-hour run each animation frame re-feeds and redraws tens of thousands of points that scroll off-screen anyway. Cheaper: cap the retained window (shift old points) or downsample, since only the recent span is visible."},
+{"file":"scripts/compare-local.sh","line":140,"summary":"`entire auth status` is executed up to 3x per run (preflight, server /api/local/suggest, and native-mode handle awk)","failure_scenario":"Line 94 runs it as a preflight, the curl to /api/local/suggest on line 98 makes the server run it again (local.go:200), and native mode on line 140 runs+re-parses it a third time to recover the handle that suggest already extracted and could return. Each exec is a CLI startup plus token/auth check, so run startup pays that latency two extra times for data already in hand. Cheaper: drop the line-94 preflight (a suggest error already reports auth failure) and reuse the handle from the SUGGEST JSON instead of re-parsing status."},
+{"file":"scripts/compare-local.sh","line":85,"summary":"`gh api user` runs both here and server-side in /api/local/suggest, whose GitHub result the script discards","failure_scenario":"The script fetches GH_USER via `gh api user --jq .login` (line 85), and the /api/local/suggest call (line 98) makes the server run the same `gh api user --jq .login` (local.go:144) as part of building the github suggestion, but the python consumer only reads the 'entire' entry and throws the github one away. So an extra GitHub API round-trip is made every run for nothing. Cheaper: have the script read the github login out of the SUGGEST payload it already fetches, or skip the discarded github suggestion server-side."}]</result>
+<usage><subagent_tokens>62512</subagent_tokens><tool_uses>12</tool_uses><duration_ms>105797</duration_ms></usage>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>ac8ebf745bb9606f0</task-id>
+<tool-use-id>toolu_01MtitVwjMtQMY9ZiEAr4Kxx</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-krk-Desktop-GitStore-forgemark/c11b8d4c-8f8a-4fbd-967b-148d908d89e3/tasks/ac8ebf745bb9606f0.output</output-file>
+<status>completed</status>
+<summary>Agent "Finder: simplification" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>Based on my review of the `main...HEAD` diff (web GUI + scripts), here are the simplification candidates:
+
+```json
+[
+  {
+    "file": "internal/server/static/js/views/dashboard.js",
+    "line": 100,
+    "summary": "state.totals seeds five fields {ok, cas, err, lastOps, p95} but only err and cas are ever read (line 226-227); tot.ok is incremented (line 221) yet never read, and lastOps/p95 are never written or read at all.",
+    "failure_scenario": "Three dead fields masquerade as live state. A maintainer wiring a new tile (e.g. cumulative ops) will assume tot.ok/tot.p95 are maintained and correct, when ok is stale-by-design and p95 is always 0. Reduce to { cas: 0, err: 0 }."
+  },
+  {
+    "file": "internal/server/static/css/style.css",
+    "line": 24,
+    "summary": "--s1..--s8 (the 'categorical chart palette') are the exact same 8 hex values as the PALETTE array in charts.js, but grep shows no var(--s..) reference anywhere — charts color via the JS constant, targets via --tcolor.",
+    "failure_scenario": "Two copies of the data palette with only one wired up. Someone recoloring the charts edits the CSS vars (the documented 'chart palette'), sees no change, and burns time before finding charts.js. Delete the CSS block; keep PALETTE as the single source."
+  },
+  {
+    "file": "internal/server/static/css/style.css",
+    "line": 390,
+    "summary": ".cred-row / .cred-row select / .cred-row input are defined verbatim twice — lines 324-327 and again 390-392.",
+    "failure_scenario": "A future tweak to the credential-row layout edits one copy, the other silently overrides or diverges depending on order. Delete the second block."
+  },
+  {
+    "file": "internal/server/static/js/api.js",
+    "line": 22,
+    "summary": "api.getRun is exported but never called from any view (dashboard/race use SSE, runs/history use their own calls). Dead export backing GET /api/runs/{id}.",
+    "failure_scenario": "Dead API surface implies a consumer that doesn't exist. It keeps handleGetRun looking load-bearing, so nobody prunes either side, and the next reader assumes polling exists somewhere. Remove the client export (or wire it)."
+  },
+  {
+    "file": "internal/server/static/js/dom.js",
+    "line": 10,
+    "summary": "The h() builder has a dedicated `dataset` branch, but no h() call in the entire JS bundle passes a dataset attr (data-nav lives only in static index.html).",
+    "failure_scenario": "An over-general branch with zero callers: it widens the mental surface of the core DOM helper and invites a subtle attr-vs-property bug the first time someone actually uses it, on code that was never exercised. Drop the branch until needed."
+  },
+  {
+    "file": "internal/server/static/js/views/race.js",
+    "line": 184,
+    "summary": "finish() has three near-identical verdict branches (latency / reliability / pushes), each doing sort -&gt; [win,next] -&gt; tie check -&gt; phrase string. Copy-paste with per-metric variation.",
+    "failure_scenario": "Any change to tie handling or winner phrasing (or adding a 4th metric) must be made three times in lockstep; miss one and one metric silently reports ties or verdicts differently. Collapse to a per-metric table of {sortKey, tieValue, phrase}."
+  }
+]
+```</result>
+<usage><subagent_tokens>93141</subagent_tokens><tool_uses>25</tool_uses><duration_ms>150527</duration_ms></usage>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>a499436a92a6c500b</task-id>
+<tool-use-id>toolu_01GviRqUHvLdRphBTNTryiUB</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-krk-Desktop-GitStore-forgemark/c11b8d4c-8f8a-4fbd-967b-148d908d89e3/tasks/a499436a92a6c500b.output</output-file>
+<status>completed</status>
+<summary>Agent "Finder: altitude" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>Based on my review of the `main...HEAD` diff (web GUI + scripts), here are the candidates.
+
+```json
+[
+  {
+    "file": "internal/server/static/js/views/dashboard.js",
+    "line": 194,
+    "summary": "The strategy→primary-series mapping (`isClone ? clone_ok : ok`, plus the `isSession` clone-overlay logic) is re-derived by hand in dashboard.js (194-227), race.js (252-271), and history.js (87-94). The collector already emits push and clone stats side-by-side in BucketStats and explicitly punts to the UI ('the UI picks the primary series from the workload strategy', collector.go:40). Depth fix: normalize at the event layer — emit primary_ok/primary_p50/… (and an optional secondary series) chosen server-side from the strategy, so every view reads one field set and knows nothing about strategy names.",
+    "failure_scenario": "A new strategy is added to bench (e.g. 'fetch', or a mixed read/write mode). Its buckets carry numbers in fields none of the three views' hard-coded `strategy === 'clone'` / `'session'` checks recognize, so throughput/latency/reliability lanes silently render blank or wrong on every screen, and each view must be patched in lockstep."
+  },
+  {
+    "file": "internal/server/static/js/views/history.js",
+    "line": 88,
+    "summary": "Concrete instance of the layering gap above already drifting: the timeline replay branches only on `isClone = doc.strategy === 'clone'` and has no `session` case, unlike the live dashboard (dashboard.js:199) which overlays a dashed clone series for session runs. So replaying a stored session run from history drops its clone series entirely — the same run looks different live vs. replayed.",
+    "failure_scenario": "Operator finishes a session-strategy run, reopens it from History to compare. The clone throughput/latency that was visible live is missing in the replay, making the stored record disagree with what was shown during the run — a silent data-fidelity discrepancy no test catches."
+  },
+  {
+    "file": "cmd/forgemark/main.go",
+    "line": 53,
+    "summary": "The `serve` subcommand is dispatched by a raw `os.Args[1] == \"serve\"` string compare in main(), with the rest of the CLI still going through the flat `flag` package. There is no subcommand table or shared dispatch. Depth fix: a minimal subcommand registry (name → handler taking args) so serve, the classic run, and any future verb share one parse/dispatch/help path.",
+    "failure_scenario": "A second subcommand is added (version, replay, doctor). Each needs another hand-written os.Args compare, `-h`/help doesn't enumerate them, and the 'classic CLI takes no positional args so this can't collide' invariant quietly breaks the day the classic CLI gains a positional arg or someone names a repo 'serve'."
+  },
+  {
+    "file": "internal/server/runmgr.go",
+    "line": 259,
+    "summary": "secret_source resolution runs inside the POST run-start path, and specifically BEFORE the one-active-run guard (m.active check at line 291). start() execs gh/glab/entire credential helpers (up to 15s each) and pulls live tokens into memory, then discovers errRunActive and throws it all away. Credential acquisition is entangled with run orchestration rather than sitting behind a credential layer resolved only once the request is admitted.",
+    "failure_scenario": "A run is already active and the operator (or compare-local.sh retry) fires a second POST. The server needlessly execs every credential CLI and materializes secrets for a request it was always going to reject with 409-style errRunActive — wasted secret handling, stacked 15s CLI latency on the synchronous handler, and a widened window where tokens live in memory for a doomed request."
+  },
+  {
+    "file": "internal/server/static/js/views/race.js",
+    "line": 23,
+    "summary": "The hash router (app.js:18) captures everything after the first '/' as a single opaque `arg`, then race.js re-splits it ad hoc with `String(arg).split('/')` to recover [runId, metric]; dashboard.js treats arg as a bare runId and history.js as a filename. Route sub-structure is parsed inside each view instead of by the router. Depth fix: parse path segments once in the router and pass structured params (or a real route-pattern table).",
+    "failure_scenario": "Any arg that itself contains a '/' mis-parses — e.g. history deep-links to `#history/${results_file}` and if a results filename or run id ever gains a slash, the first segment is taken as the whole value; and adding a second race sub-param (or a metric to the dashboard) means more per-view split logic that silently disagrees between views."
+  },
+  {
+    "file": "scripts/compare-local.sh",
+    "line": 140,
+    "summary": "The script string-munges CLI text output where a structured source already exists. It awk-parses `entire auth status` for the handle (line 140; login.sh:31 does the same), even though the run has already fetched /api/local/suggest, whose server side parses that exact `entire auth status` block via statusField (local.go:256). Two independent parsers of one free-text format, and the structured suggest payload doesn't surface the handle it internally derived. Depth fix: have /api/local/suggest return the handle (and project/repo parts) so the script consumes JSON, leaving a single owner of the auth-status text format.",
+    "failure_scenario": "The `entire` CLI relabels or reformats `auth status` (e.g. 'User:' → 'Account:'). The Go statusField parser and the bash awk extraction break independently and silently — suggest starts returning an error while the script's handle comes back empty and `entire project create --owner github:` is called with no handle, all from one upstream change."
+  }
+]
+```</result>
+<usage><subagent_tokens>76014</subagent_tokens><tool_uses>18</tool_uses><duration_ms>146865</duration_ms></usage>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>abb6a8e35ccff335c</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-krk-Desktop-GitStore-forgemark/c11b8d4c-8f8a-4fbd-967b-148d908d89e3/tasks/abb6a8e35ccff335c.output</output-file>
+<status>completed</status>
+<summary>Agent "Finder: reuse" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>I have enough to conclude. The specific spots the task flagged (serve.go's loopback check, the JS countdown/banner helpers, and the scripts' discovery) all correctly reuse existing helpers — `server.IsLoopbackHost`, `shared.js`'s `levelCountdown`/`resultsSavedBanner`, and `/api/local/suggest`. Likewise `collector.go` uses `bench.Percentile`, `runmgr.go` uses `bench.Workload.Validate`/`NewRunID`/`IsGitHubDotCom`. The real duplications are elsewhere.
+
+[{"file":"internal/server/static/js/views/race.js","line":252,"summary":"race.js's bucket handler re-derives the primary op count, error/CAS totals, and latency from a bucket using the same isClone/isSession field-picking that dashboard.js (bucket handler, ~line 198) and history.js (okOf/p95Of, ~line 89) each re-implement. shared.js exists for exactly this ('both derive state from the same SSE stream, so the math must agree') but holds only levelCountdown/resultsSavedBanner; a primaryOps(v,strategy)/primaryLat(v,strategy) belongs there.","failure_scenario":"The three copies have already drifted (race folds CAS into failures and counts session clone_ok toward reliability; dashboard tracks CAS as a separate series). When a clone_* field is renamed or a new op/strategy is added, all three must be edited in lockstep; a missed copy silently mis-plots one view (e.g. throughput reads 0 in the race but is correct on the dashboard) with no error."},
+{"file":"internal/server/runmgr.go","line":616,"summary":"defaultTargetName() does url.Parse(remote) then returns u.Host, exactly duplicating credHost() in local.go:72 (same parse, same u.Host extraction, only the fallback differs: target-N vs gitlab.com). One 'host from a target remote' helper should serve both.","failure_scenario":"The two extractors diverge — e.g. someone teaches one to strip a port or handle an IDN/userinfo remote — so the host used to label the chart no longer matches the host the git-credential helper is queried for at run start, producing a credential fetched for the wrong host while the UI shows the right one."},
+{"file":"internal/server/static/js/views/newrun.js","line":75,"summary":"The 'strategy · sweep &lt;levels&gt; · &lt;n&gt;s/level [· &lt;w&gt;s warm-up]' workload caption is assembled inline in updateWorkloadSummary here and again in dashboard.js hello (~line 173), runs.js (~line 20), and history.js (~line 116). No shared formatter over the workload object.","failure_scenario":"Adding a field (clone depth, files shape) or changing the separator means editing four sites; they already differ in what they include, so the same run's workload reads inconsistently across the new-run form, the live dashboard, and the runs list, undermining the 'every view agrees' contract."},
+{"file":"internal/server/static/js/views/dashboard.js","line":108,"summary":"The colored-dot + target-name identity chip — h('span',{class:'dot',style:{'--tcolor':targetColor(id)}}) followed by the name — is hand-built ~6 times across dashboard.js (tile header line 108, results-table cell line 162) and race.js (lane head line 81, podium-table cell line 225) rather than a shared targetChip(t) helper in shared.js.","failure_scenario":"A change to how a target is visually identified (dead-state styling, an icon, a title tooltip) must be replicated in every copy; a missed one makes the same target look different in the dashboard versus the race view."}]</result>
+<usage><subagent_tokens>89952</subagent_tokens><tool_uses>26</tool_uses><duration_ms>187833</duration_ms></usage>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>a2e71ac2763d66e65</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-krk-Desktop-GitStore-forgemark/c11b8d4c-8f8a-4fbd-967b-148d908d89e3/tasks/a2e71ac2763d66e65.output</output-file>
+<status>completed</status>
+<summary>Agent "Finder A: line-by-line scan" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>Based on my line-by-line review, here are the candidates.
+
+[
+  {
+    "file": "internal/server/static/js/views/dashboard.js",
+    "line": 203,
+    "summary": "Latency line gated on this-second OK count (v.ok &gt; 0) instead of the rolling window, so any zero-completion second pushes null and blanks the line — defeating the collector's 10s rolling percentiles.",
+    "failure_scenario": "The server (collector.go) deliberately computes p50/p95/p99 over a 10s window 'so a single quiet second doesn't blank the lines.' But BucketStats.OK carries the PER-SECOND success count. Under load with sub-1Hz completions per bucket (high concurrency, slow forge, or a second where all completions were CAS/errors), v.ok is 0 that second even though the rolling window still holds samples and P95_ms is non-zero. The client sets latVals=null and charts.lat gets a gap, so the latency chart flickers/breaks exactly during the interesting slow moments the rolling window was built to keep visible."
+  },
+  {
+    "file": "internal/server/static/js/views/newrun.js",
+    "line": 232,
+    "summary": "submit() computes allDemo over ALL targets (blanks included) while updateGate() computes it over withRemote (blanks filtered); the two disagree when a demo target coexists with a leftover blank target.",
+    "failure_scenario": "User adds a demo target but an empty blank target card remains (e.g. after 'Add demo pair' when the first blank wasn't shifted, or after removing a real target). updateGate (line 206) filters blanks: withRemote=[demo], allDemo=true, so it hides the confirm checkbox and ENABLES Start. On submit (line 232) allDemo = targets.every(isDemo) = false (blank remote fails isDemo), so confirm_authorized = confirm.checked(false) || false = false. The server rejects with 400 'confirm_authorized must be true', and the blank-remote target is also POSTed. User sees a confusing rejection for a run the UI said was ready."
+  },
+  {
+    "file": "internal/server/static/js/views/race.js",
+    "line": 116,
+    "summary": "Latency bar width divides by l.lat.p50 with no zero guard; a rolling p50 of exactly 0 ms yields NaN width, and the crown check l.lat.p50 === best marks a false winner.",
+    "failure_scenario": "Against a very fast/local forge (or demo with tiny p50) a rolling-window p50 can round to 0 ms. Then best = Math.min(...) = 0, and bar width = (best / l.lat.p50) * 100 = 0/0 = NaN, so Math.max(2, NaN) = NaN and the bar CSS width becomes invalid. Simultaneously every lane with p50===0 gets a crown (0===0), so the reliability/latency 'winner' is meaningless when multiple lanes are sub-millisecond."
+  },
+  {
+    "file": "internal/server/static/js/views/history.js",
+    "line": 94,
+    "summary": "Stored-run timeline replay applies the same per-second okOf(p) &gt; 0 gate to p95, blanking replayed latency for any recorded quiet second despite the stored rolling percentiles.",
+    "failure_scenario": "SeriesPoint.P95 was recorded from the collector's 10s rolling window, but the replay maps p95 to null whenever that bucket's per-second OK count is 0. Replaying a finished run whose series contains zero-completion seconds (bursty high-concurrency runs) produces a gappy latency timeline that misrepresents the recorded data — the stored rolling values are thrown away."
+  },
+  {
+    "file": "internal/server/runmgr.go",
+    "line": 279,
+    "summary": "Credential CLIs (gh/glab/entire, up to 15s each) are exec'd BEFORE the active-run check, so a POST that will be rejected with 409 errRunActive still runs the operator's auth CLIs first.",
+    "failure_scenario": "A run is active. A second start request arrives (user double-clicks Start, compare-local.sh re-invoked, or two browser tabs). start() resolves secret_sources concurrently and blocks on secWG.Wait() at line 279 — up to cliTimeout=15s of exec'ing gh/entire/glab — before it takes m.mu at line 292 and discovers m.active != nil, returning 409. The caller waits up to 15s for an error that was knowable immediately, and the operator's credential CLIs are invoked pointlessly."
+  },
+  {
+    "file": "internal/server/static/js/views/race.js",
+    "line": 283,
+    "summary": "The 'pop' bump flag is cleared (l.pop=false) inside the coalesced rAF for every metric, but the animation is only applied when metric==='pushes' — buckets that land while another metric is selected lose their pop permanently.",
+    "failure_scenario": "User is on the latency or reliability metric while buckets stream in. Each bucket sets l.pop=true; the rAF callback sets l.pop=false for all lanes but skips the animation because metric!=='pushes' (line 283). When the user switches back to the throughput metric, the counter bumps that occurred during the other view never animate — the 'live' pop effect silently stops reflecting progress that happened off-view. Cosmetic, but the pop no longer tracks actual op arrivals."
+  }
+]</result>
+<usage><subagent_tokens>104128</subagent_tokens><tool_uses>14</tool_uses><duration_ms>362097</duration_ms></usage>
+</task-notification>
+
+---
+
+<task-notification>
+<task-id>a23fc07dfa5241f64</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-krk-Desktop-GitStore-forgemark/c11b8d4c-8f8a-4fbd-967b-148d908d89e3/tasks/a23fc07dfa5241f64.output</output-file>
+<status>completed</status>
+<summary>Agent "Finder C: cross-file tracer" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>I traced all five seams. The compile-checked seams (bench.NewRunner/resolveSecretSource/Target/LevelResult) are consistent — `go build ./...` passes. JSON field names (bucket/level_result/hello/target_ready/level_start/run_done vs dashboard/race/history/runs), the WorkloadSpec/TargetSpec round-trip (newrun send / suggest return / addFromCLI consume), the secret_source values (gh|glab|entire) vs the map, and the `#race/&lt;id&gt;/&lt;metric&gt;` / `#run/&lt;id&gt;` route parsing all line up. The two genuine issues are logic/env-var seams, not field mismatches.
+
+[{"file":"/Users/krk/Desktop/GitStore/forgemark/internal/server/static/js/views/newrun.js","line":232,"summary":"`allDemo` is computed two different ways: updateGate() (line 206) filters to targets with a non-blank remote before checking `every(isDemo)`, but submit() (line 232) runs `targets.every(isDemo)` over ALL rows including blank ones (isDemo('') is false).","failure_scenario":"Custom mode: fill target 1 with a demo:// remote, add a second target and leave it blank. updateGate sees allDemo=true, hides the confirm checkbox and enables Start. On submit, allDemo=false (blank row fails isDemo), so confirm_authorized = confirm.checked(false) || false = false, and the server rejects the POST with 'confirm_authorized must be true' — a confusing 400 for what the UI presented as a no-confirmation demo run."},{"file":"/Users/krk/Desktop/GitStore/forgemark/scripts/compare-local.sh","line":125,"summary":"FM_ENTIRE_CLUSTER (the documented 'EntireDB cluster host' override) only feeds the `entire repo mirror/create` provisioning commands; the target REMOTE actually posted to /api/runs comes from FM_ENTIRE_REMOTE (=SUG_REMOTE, the suggest default), which is undocumented. The two knobs that should move together are decoupled.","failure_scenario":"A user reads the header docs and sets FM_ENTIRE_CLUSTER=other.entire.io to benchmark a different cluster. The repo is provisioned on other.entire.io, but the posted target remote stays the suggest-default cluster URL, so the benchmark clones/pushes against the wrong cluster where the repo doesn't exist and the target dies with a not-found error."}]</result>
+<usage><subagent_tokens>97924</subagent_tokens><tool_uses>23</tool_uses><duration_ms>374112</duration_ms></usage>
+</task-notification>
+
+---
+
+Fix all
+
+---
+
+stage this in a separate branch. I want to work on something first, merge to main and then this PR.
+
+---
+
+Up next, we will build entire runners for forgrmark :) Get inspired by the runners in entire.io and the cli and figure out a plan for what runners will make most sense for forgemark
+
+---
+
+check .entire/runners in those repos comeone
+
+---
+
+ignore the runners thing. I got it accomplishes already. Let's Create a branch for the web items.
+
+---
+
+push
+
+---
+
+PR
+
+---
+
+CI failed. check it
+
+---
+
+why isn't the trail showing any reviews? No runners are also created
+
+---
+
+figure out where the wiring comes from? You have access to entire.io
+
+---
+
+yes. push a no op commit
+
+---
+
+Fix all of the tail review findings
+
+---
+
+/Users/krk/Downloads/Screen\ Recording\ 2026-07-29\ at\ 12.20.32 AM.mov
+
+---
+
+indings
+
+High
+AI
+Trail Review
+internal/server/server.go:80
+11h ago
+
+This accepts every loopback Origin regardless of port, so a hostile page served by another local development server can send a simple text/plain JSON POST without preflight and drive runs or CLI-sourced credentials. Require the request's actual same origin or a per-session CSRF token rather than only checking for a loopback hostname.
+
+AI
+Trail Review
+internal/server/runmgr.go:291
+11h ago
+
+secret_source is resolved and attached to any caller-supplied remote or token URL without validating its audience. For example, pairing "gh" with an attacker-controlled remote sends the GitHub token as Basic Auth, while an Entire token can be POSTed to an arbitrary token_url; reject source/target mismatches and pin exchange endpoints before materializing credentials.
+
+Medium
+AI
+Trail Review
+internal/server/collector.go:93
+11h ago
+
+The snapshot holds the collector mutex while concatenating every latency in the ten-second window. At benchmark-scale throughput this blocks all concurrent OnSample calls once per second, delaying agents before their next operation and depressing measured throughput; copy or swap slice headers under lock and concatenate after unlocking.
+
+AI
+Trail Review
+internal/server/runmgr.go:440
+11h ago
+
+Launching one goroutine per target is not a start barrier because RunLevel constructs all agents and starts its timeout internally. Target-dependent setup time therefore shifts measured windows and breaks the promised level-aligned comparison; prepare every runner first, wait for readiness, then release them with one shared start signal.
+
+AI
+Trail Review
+internal/server/runmgr.go:425
+11h ago
+
+The level index is advanced before each collector is reset while the ticker runs independently. A tick during this transition snapshots the previous level's remaining samples and emits/persists them under the new level index; synchronize the transition and flush or discard the old bucket before changing levelIdx.
+
+AI
+Trail Review
+internal/server/collector.go:58
+11h ago
+
+bench.Sink explicitly receives warm-up samples, but this collector records them unconditionally. Live charts, race totals/reliability, and persisted series therefore include warm-up even though the authoritative level result excludes it; filter by Sample.Offset or reset precisely at the warm-up boundary.
+
+Sessions
+
+---
+
+Findings
+
+High
+AI
+Trail Review
+internal/server/server.go:83
+14m ago
+
+Comparing Origin only to Host still accepts DNS rebinding: after evil.example:8377 rebinds to loopback, both headers remain evil.example:8377, allowing the hostile page to invoke CLI-sourced credentials and remote writes. Validate the request host against the configured loopback listener or an explicit allowlist, then require Origin to match that trusted host.
+
+AI
+Trail Review
+internal/server/static/js/views/newrun.js:255
+14m ago
+
+The custom-target path places the pasted credential in spec.targets[*].secret, so every such run serializes the token into an HTTP request; with the supported non-loopback -addr, it is also transmitted over cleartext HTTP. Keep credentials server-side via a source/file/opaque handle and never include the secret in JSON.
+
+AI
+Trail Review
+internal/server/runmgr.go:291
+11h ago
+
+secret_source is resolved and attached to any caller-supplied remote or token URL without validating its audience. For example, pairing "gh" with an attacker-controlled remote sends the GitHub token as Basic Auth, while an Entire token can be POSTed to an arbitrary token_url; reject source/target mismatches and pin exchange endpoints before materializing credentials.
+
+Medium
+AI
+Trail Review
+internal/server/runmgr.go:493
+14m ago
+
+Stopping the ticker without a final snapshot discards every sample collected since its last tick; the next level's reset similarly drops each level's partial final bucket. Live/persisted series and race totals therefore omit up to one second per level—and all samples for sub-second levels—despite the authoritative LevelResult containing them; flush collectors after each RunLevel before reset or shutdown.
+
+AI
+Trail Review
+internal/server/server.go:66
+14m ago
+
+Server cancellation shuts down HTTP but never cancels or waits for the active run, whose context was created from context.Background(). Embedded callers can return while remote load continues, while the CLI can exit before result persistence and session-ref cleanup; cancel the manager's active run and wait for its coordinator before returning.
+
+AI
+Trail Review
+internal/server/collector.go:58
+11h ago
+
+bench.Sink explicitly receives warm-up samples, but this collector records them unconditionally. Live charts, race totals/reliability, and persisted series therefore include warm-up even though the authoritative level result excludes it; filter by Sample.Offset or reset precisely at the warm-up boundary.
+
+---
+
+Findings
+
+High
+AI
+Trail Review
+internal/server/static/js/views/newrun.js:255
+26m ago
+
+The custom-target path places the pasted credential in spec.targets[*].secret, so every such run serializes the token into an HTTP request; with the supported non-loopback -addr, it is also transmitted over cleartext HTTP. Keep credentials server-side via a source/file/opaque handle and never include the secret in JSON.
+
+Medium
+AI
+Trail Review
+internal/server/runmgr.go:493
+26m ago
+
+Stopping the ticker without a final snapshot discards every sample collected since its last tick; the next level's reset similarly drops each level's partial final bucket. Live/persisted series and race totals therefore omit up to one second per level—and all samples for sub-second levels—despite the authoritative LevelResult containing them; flush collectors after each RunLevel before reset or shutdown.
+
+---
+
+Findings
+
+High
+AI
+Trail Review
+internal/server/server.go:92
+2h ago
+
+For a non-loopback bind this disables the Host restriction, while requests without an Origin are accepted, so any reachable client can start/cancel runs and invoke secret_source resolution using the operator's gh/glab/Entire credentials against attacker-selected repositories. Require authentication for exposed binds, or refuse CLI credential sources and mutating APIs unless the server is loopback-only.
+
+AI
+Trail Review
+scripts/compare-local.sh:106
+2h ago
+
+The quoted error is embedded inside double quotes and then evaluated, so command substitutions in a crafted /api/local/suggest error still execute (for example $(command)). Avoid eval entirely or pass parsed values through a non-evaluated channel rather than generating shell source.
+
+AI
+Trail Review
+internal/server/local.go:82
+2h ago
+
+Audience validation discards the URL scheme, so secret_source accepts targets such as http://github.com and http://*.entire.io; the locally obtained token is then sent over cleartext HTTP. Require HTTPS (and reject URL userinfo) for every CLI-sourced remote, token URL, and jurisdiction endpoint.
+
+Medium
+AI
+Trail Review
+internal/server/runmgr.go:505
+2h ago
+
+This flush emits the level's final fractional bucket as a raw count, but consumers label every bucket as ops/s or failures/s; ticker phase also makes the first post-warmup bucket fractional. Persist and expose each bucket's actual elapsed duration and normalize rates, or align bucket boundaries to the measured window.
+
+AI
+Trail Review
+internal/server/static/js/views/newrun.js:225
+2h ago
+
+Malformed numeric input produces NaN, which JSON.stringify converts to null; the server then treats that field as absent and silently applies defaults (for example an invalid duration becomes 60 seconds). Validate every numeric field as finite and, where applicable, integral before starting the run instead of silently launching a different workload.
+
+AI
+Trail Review
+internal/server/collector.go:61
+2h ago
+
+Every measured agent synchronously acquires the same collector mutex and may grow a latency slice while holding it. Since OnSample runs between operations, contention delays the next Git operation and depresses web throughput relative to the sink-free CLI; use sharded/atomic collection or a non-blocking observation path.
+
+AI
+Trail Review
+internal/server/server.go:42
+2h ago
+
+Only mutating routes receive the DNS-rebinding Host check; after rebinding an attacker-controlled origin to loopback, same-origin JavaScript can read /api/runs, run events, and history through Host: evil.example. Apply the loopback Host/origin guard to the read API routes as well, particularly run status and SSE.
+
+AI
+Trail Review
+internal/server/server.go:68
+2h ago
+
+Server shutdown waits only 10 seconds for the run, but session agents may synchronously perform ref cleanup using independent 30-second contexts. ListenAndServe can therefore return while cleanup/load is still active, or the CLI can exit before ephemeral refs are deleted; shutdown must wait for coordinator completion or make cleanup obey a sufficiently bounded shared shutdown context.
+
+AI
+Trail Review
+internal/server/runmgr.go:474
+2h ago
+
+level_start.at is emitted before every target builds its agents and reaches the barrier, while the measured timer starts only after the barrier releases. Setup delays therefore make the UI countdown and warm-up shading start early; emit the event immediately before firing the barrier or publish the actual measured start time.
+
+Sessions
+
+---
+
+The two build layers
+
+  1. Definitions + a forgemark output adapter (small, mostly in this repo). The runners are JSON, but forgemark needs a machine-readable monitor mode: reduce a results.Doc to the runner's {"value": <n>,
+  "rationale": "..."} last-JSON-line contract. A forgemark report --emit monitor (or a --format entire) over the existing engine + internal/results. Cheap, and it's the seam everything else hangs off.
+
+  2. The runtime (the real work, needs Entire). Every stock runner uses the read-only claude sandbox. forgemark is different: it needs the forgemark binary, network egress to the target forge, and ideally
+  regional placement (forgemark's whole methodology caveat is "run close to the target"). That's a new runner profile, and it's exactly where Entire's regional clusters + mirrors are the differentiator.
+  Two ways to get the runtime.kind:
+  - Reuse prompt_runner as an MVP: a runner whose prompt is "run forgemark ..., emit the result JSON as the last line" (works with today's adapter, if the sandbox allows egress).
+  - A proper non-prompt kind. I saw hints of agent_runner, trail_runner, and one script_runner reference but no command_runner/exec_runner, so a measured/exec runner kind looks like a genuine gap
+  forgemark would be the first real user of.
+
+  Sequencing
+
+  1. forgemark monitor-output mode — the adapter (this repo, no Entire dependency).
+  2. CI/Gate proof — wire it into GitHub Actions on top of open PR #6's threshold flags: forgemark runs, emits the monitor value, gates the PR. Proves the signal with zero new Entire infra.
+  3. Native Entire runner — the regional, egress-capable runtime that runs forgemark in-region and posts monitors to the Trail. The strategic headline.
+
+  What I need from you
+
+  1. Does a Gate already threshold a trail_monitor (so throughput < X fails a Trail), or is Gate still to build? That decides whether forgemark just emits and rides existing gating, or we build the gate
+  too.
+  2. Is there an exec/command/script_runner runtime, or would forgemark be the case that justifies one? This is the biggest scope fork.
+  3. Sandbox reality: can a runner sandbox make outbound git connections and be pinned to a region? That's the gating constraint on the native runner.
+
+  Want me to draft the four runner JSON files and the forgemark report --emit monitor adapter as a concrete first PR (layer 1), so there's something real to run in CI while the runtime questions get
+  answered?
+
+✻ Baked for 3m 51s
+
+※ recap: We're open-sourcing forgemark: core engine PR merged, web-demo PR staged on its branch (unpushed), now planning Entire "runners" for it. Next: your call on the three runtime questions, then I
+  draft the four runner JSONs plus a forgemark monitor-output adapter as the first PR.
+                                                                                                                                                            Update available! Run: brew upgrade claude-code
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+──⏵⏵ auto mode on (shift+tab to cycle) · ← for agents───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ├────────────────────┼───────────────┼─────────────────────────────────────┼──────────────────┤
+  │ trail-perf         │ trail_summary │ the race table rendered as markdown │ —                │
+  └────────────────────┴───────────────┴─────────────────────────────────────┴──────────────────┘
+
+  That's the demo race, but headless, per-branch, and gateable.
+
+  The two build layers
+
+  1. Definitions + a forgemark output adapter (small, mostly in this repo). The runners are JSON, but forgemark needs a machine-readable monitor mode: reduce a results.Doc to the runner's {"value": <n>,
+  "rationale": "..."} last-JSON-line contract. A forgemark report --emit monitor (or a --format entire) over the existing engine + internal/results. Cheap, and it's the seam everything else hangs off.
+
+  2. The runtime (the real work, needs Entire). Every stock runner uses the read-only claude sandbox. forgemark is different: it needs the forgemark binary, network egress to the target forge, and ideally
+  regional placement (forgemark's whole methodology caveat is "run close to the target"). That's a new runner profile, and it's exactly where Entire's regional clusters + mirrors are the differentiator. Two
+  ways to get the runtime.kind:
+  - Reuse prompt_runner as an MVP: a runner whose prompt is "run forgemark ..., emit the result JSON as the last line" (works with today's adapter, if the sandbox allows egress).
+  - A proper non-prompt kind. I saw hints of agent_runner, trail_runner, and one script_runner reference but no command_runner/exec_runner, so a measured/exec runner kind looks like a genuine gap forgemark
+  would be the first real user of.
+
+  Sequencing
+
+  1. forgemark monitor-output mode — the adapter (this repo, no Entire dependency).
+  2. CI/Gate proof — wire it into GitHub Actions on top of open PR #6's threshold flags: forgemark runs, emits the monitor value, gates the PR. Proves the signal with zero new Entire infra.
+  3. Native Entire runner — the regional, egress-capable runtime that runs forgemark in-region and posts monitors to the Trail. The strategic headline.
+
+  What I need from you
+
+  1. Does a Gate already threshold a trail_monitor (so throughput < X fails a Trail), or is Gate still to build? That decides whether forgemark just emits and rides existing gating, or we build the gate too.
+  2. Is there an exec/command/script_runner runtime, or would forgemark be the case that justifies one? This is the biggest scope fork.
+  3. Sandbox reality: can a runner sandbox make outbound git connections and be pinned to a region? That's the gating constraint on the native runner.
+
+  Want me to draft the four runner JSON files and the forgemark report --emit monitor adapter as a concrete first PR (layer 1), so there's something real to run in CI while the runtime questions get answered?
+
+✻ Baked for 3m 51s
+
+※ recap: We're open-sourcing forgemark: core engine PR merged, web-demo PR staged on its branch (unpushed), now planning Entire "runners" for it. Next: your call on the three runtime questions, then I draft
+  the four runner JSONs plus a forgemark monitor-output adapter as the first PR.
+                                                                                                                                                                Update available! Run: brew upgrade claude-code
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  └────────────────────┴───────────────┴─────────────────────────────────────┴──────────────────┘
+
+  That's the demo race, but headless, per-branch, and gateable.
+
+  The two build layers
+
+  1. Definitions + a forgemark output adapter (small, mostly in this repo). The runners are JSON, but forgemark needs a machine-readable monitor mode: reduce a results.Doc to the runner's {"value": <n>,
+  "rationale": "..."} last-JSON-line contract. A forgemark report --emit monitor (or a --format entire) over the existing engine + internal/results. Cheap, and it's the seam everything else hangs off.
+
+  2. The runtime (the real work, needs Entire). Every stock runner uses the read-only claude sandbox. forgemark is different: it needs the forgemark binary, network egress to the target forge, and ideally
+  regional placement (forgemark's whole methodology caveat is "run close to the target"). That's a new runner profile, and it's exactly where Entire's regional clusters + mirrors are the differentiator.
+  Two ways to get the runtime.kind:
+  - Reuse prompt_runner as an MVP: a runner whose prompt is "run forgemark ..., emit the result JSON as the last line" (works with today's adapter, if the sandbox allows egress).
+  - A proper non-prompt kind. I saw hints of agent_runner, trail_runner, and one script_runner reference but no command_runner/exec_runner, so a measured/exec runner kind looks like a genuine gap
+  forgemark would be the first real user of.
+
+  Sequencing
+
+  1. forgemark monitor-output mode — the adapter (this repo, no Entire dependency).
+  2. CI/Gate proof — wire it into GitHub Actions on top of open PR #6's threshold flags: forgemark runs, emits the monitor value, gates the PR. Proves the signal with zero new Entire infra.
+  3. Native Entire runner — the regional, egress-capable runtime that runs forgemark in-region and posts monitors to the Trail. The strategic headline.
+
+  What I need from you
+
+  1. Does a Gate already threshold a trail_monitor (so throughput < X fails a Trail), or is Gate still to build? That decides whether forgemark just emits and rides existing gating, or we build the gate
+  too.
+  2. Is there an exec/command/script_runner runtime, or would forgemark be the case that justifies one? This is the biggest scope fork.
+  3. Sandbox reality: can a runner sandbox make outbound git connections and be pinned to a region? That's the gating constraint on the native runner.
+
+  Want me to draft the four runner JSON files and the forgemark report --emit monitor adapter as a concrete first PR (layer 1), so there's something real to run in CI while the runtime questions get
+  answered?
+
+✻ Baked for 3m 51s
+
+※ recap: We're open-sourcing forgemark: core engine PR merged, web-demo PR staged on its branch (unpushed), now planning Entire "runners" for it. Next: your call on the three runtime questions, then I
+  draft the four runner JSONs plus a forgemark monitor-output adapter as the first PR.
+                                                                                                                                                                     new task? /clear to save 719.7k tokens
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle) · PR #12 · ← for agents
+  │ trail-perf         │ trail_summary │ the race table rendered as markdown │ —                │
+  └────────────────────┴───────────────┴─────────────────────────────────────┴──────────────────┘
+
+  That's the demo race, but headless, per-branch, and gateable.
+
+  The two build layers
+
+  1. Definitions + a forgemark output adapter (small, mostly in this repo). The runners are JSON, but forgemark needs a machine-readable monitor mode: reduce a results.Doc to the runner's {"value": <n>,
+  "rationale": "..."} last-JSON-line contract. A forgemark report --emit monitor (or a --format entire) over the existing engine + internal/results. Cheap, and it's the seam everything else hangs off.
+
+  2. The runtime (the real work, needs Entire). Every stock runner uses the read-only claude sandbox. forgemark is different: it needs the forgemark binary, network egress to the target forge, and ideally
+  regional placement (forgemark's whole methodology caveat is "run close to the target"). That's a new runner profile, and it's exactly where Entire's regional clusters + mirrors are the differentiator.
+  Two ways to get the runtime.kind:
+  - Reuse prompt_runner as an MVP: a runner whose prompt is "run forgemark ..., emit the result JSON as the last line" (works with today's adapter, if the sandbox allows egress).
+  - A proper non-prompt kind. I saw hints of agent_runner, trail_runner, and one script_runner reference but no command_runner/exec_runner, so a measured/exec runner kind looks like a genuine gap
+  forgemark would be the first real user of.
+
+  Sequencing
+
+  1. forgemark monitor-output mode — the adapter (this repo, no Entire dependency).
+  2. CI/Gate proof — wire it into GitHub Actions on top of open PR #6's threshold flags: forgemark runs, emits the monitor value, gates the PR. Proves the signal with zero new Entire infra.
+  3. Native Entire runner — the regional, egress-capable runtime that runs forgemark in-region and posts monitors to the Trail. The strategic headline.
+
+  What I need from you
+
+  1. Does a Gate already threshold a trail_monitor (so throughput < X fails a Trail), or is Gate still to build? That decides whether forgemark just emits and rides existing gating, or we build the gate
+  too.
+  2. Is there an exec/command/script_runner runtime, or would forgemark be the case that justifies one? This is the biggest scope fork.
+  3. Sandbox reality: can a runner sandbox make outbound git connections and be pinned to a region? That's the gating constraint on the native runner.
+
+  Want me to draft the four runner JSON files and the forgemark report --emit monitor adapter as a concrete first PR (layer 1), so there's something real to run in CI while the runtime questions get
+  answered?
+
+✻ Baked for 3m 51s
+
+※ recap: We're open-sourcing forgemark: core engine PR merged, web-demo PR staged on its branch (unpushed), now planning Entire "runners" for it. Next: your call on the three runtime questions, then I
+  draft the four runner JSONs plus a forgemark monitor-output adapter as the first PR.
+                                                                                                                                                                     new task? /clear to save 719.7k tokens
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+──⏵⏵ auto mode on (shift+tab to cycle) · PR─#12 · ← for agents──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents
+  ├────────────────────┼───────────────┼─────────────────────────────────────┼──────────────────┤
+  │ trail-perf         │ trail_summary │ the race table rendered as markdown │ —                │
+  └────────────────────┴───────────────┴─────────────────────────────────────┴──────────────────┘
+
+  That's the demo race, but headless, per-branch, and gateable.
+
+  The two build layers
+
+  1. Definitions + a forgemark output adapter (small, mostly in this repo). The runners are JSON, but forgemark needs a machine-readable monitor mode: reduce a results.Doc to the runner's {"value": <n>,
+  "rationale": "..."} last-JSON-line contract. A forgemark report --emit monitor (or a --format entire) over the existing engine + internal/results. Cheap, and it's the seam everything else hangs off.
+
+  2. The runtime (the real work, needs Entire). Every stock runner uses the read-only claude sandbox. forgemark is different: it needs the forgemark binary, network egress to the target forge, and ideally
+  regional placement (forgemark's whole methodology caveat is "run close to the target"). That's a new runner profile, and it's exactly where Entire's regional clusters + mirrors are the differentiator. Two
+  ways to get the runtime.kind:
+  - Reuse prompt_runner as an MVP: a runner whose prompt is "run forgemark ..., emit the result JSON as the last line" (works with today's adapter, if the sandbox allows egress).
+  - A proper non-prompt kind. I saw hints of agent_runner, trail_runner, and one script_runner reference but no command_runner/exec_runner, so a measured/exec runner kind looks like a genuine gap forgemark
+  would be the first real user of.
+
+  Sequencing
+
+  1. forgemark monitor-output mode — the adapter (this repo, no Entire dependency).
+  2. CI/Gate proof — wire it into GitHub Actions on top of open PR #6's threshold flags: forgemark runs, emits the monitor value, gates the PR. Proves the signal with zero new Entire infra.
+  3. Native Entire runner — the regional, egress-capable runtime that runs forgemark in-region and posts monitors to the Trail. The strategic headline.
+
+  What I need from you
+
+  1. Does a Gate already threshold a trail_monitor (so throughput < X fails a Trail), or is Gate still to build? That decides whether forgemark just emits and rides existing gating, or we build the gate too.
+  2. Is there an exec/command/script_runner runtime, or would forgemark be the case that justifies one? This is the biggest scope fork.
+  3. Sandbox reality: can a runner sandbox make outbound git connections and be pinned to a region? That's the gating constraint on the native runner.
+
+  Want me to draft the four runner JSON files and the forgemark report --emit monitor adapter as a concrete first PR (layer 1), so there's something real to run in CI while the runtime questions get answered?
+
+✻ Baked for 3m 51s
+
+※ recap: We're open-sourcing forgemark: core engine PR merged, web-demo PR staged on its branch (unpushed), now planning Entire "runners" for it. Next: your call on the three runtime questions, then I draft
+  the four runner JSONs plus a forgemark monitor-output adapter as the first PR.
+                                                                                                                                                                          new task? /clear to save 719.7k tokens
+─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  └────────────────────┴───────────────┴─────────────────────────────────────┴──────────────────┘
+
+  That's the demo race, but headless, per-branch, and gateable.
+
+  The two build layers
+
+  1. Definitions + a forgemark output adapter (small, mostly in this repo). The runners are JSON, but forgemark needs a machine-readable monitor mode: reduce a results.Doc to the runner's {"value": <n>,
+  "rationale": "..."} last-JSON-line contract. A forgemark report --emit monitor (or a --format entire) over the existing engine + internal/results. Cheap, and it's the seam everything else hangs off.
+
+  2. The runtime (the real work, needs Entire). Every stock runner uses the read-only claude sandbox. forgemark is different: it needs the forgemark binary, network egress to the target forge, and ideally
+  regional placement (forgemark's whole methodology caveat is "run close to the target"). That's a new runner profile, and it's exactly where Entire's regional clusters + mirrors are the differentiator.
+  Two ways to get the runtime.kind:
+  - Reuse prompt_runner as an MVP: a runner whose prompt is "run forgemark ..., emit the result JSON as the last line" (works with today's adapter, if the sandbox allows egress).
+  - A proper non-prompt kind. I saw hints of agent_runner, trail_runner, and one script_runner reference but no command_runner/exec_runner, so a measured/exec runner kind looks like a genuine gap
+  forgemark would be the first real user of.
+
+  Sequencing
+
+  1. forgemark monitor-output mode — the adapter (this repo, no Entire dependency).
+  2. CI/Gate proof — wire it into GitHub Actions on top of open PR #6's threshold flags: forgemark runs, emits the monitor value, gates the PR. Proves the signal with zero new Entire infra.
+  3. Native Entire runner — the regional, egress-capable runtime that runs forgemark in-region and posts monitors to the Trail. The strategic headline.
+
+  What I need from you
+
+  1. Does a Gate already threshold a trail_monitor (so throughput < X fails a Trail), or is Gate still to build? That decides whether forgemark just emits and rides existing gating, or we build the gate
+  too.
+  2. Is there an exec/command/script_runner runtime, or would forgemark be the case that justifies one? This is the biggest scope fork.
+  3. Sandbox reality: can a runner sandbox make outbound git connections and be pinned to a region? That's the gating constraint on the native runner.
+
+  Want me to draft the four runner JSON files and the forgemark report --emit monitor adapter as a concrete first PR (layer 1), so there's something real to run in CI while the runtime questions get
+  answered?
+
+✻ Baked for 3m 51s
+
+※ recap: We're open-sourcing forgemark: core engine PR merged, web-demo PR staged on its branch (unpushed), now planning Entire "runners" for it. Next: your call on the three runtime questions, then I
+  draft the four runner JSONs plus a forgemark monitor-output adapter as the first PR.
+                                                                                                                                                                          new task? /clear to save 719.7k t…
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle) · PR #12 · ← for agents
+  │ trail-perf         │ trail_summary │ the race table rendered as markdown │ —                │
+  └────────────────────┴───────────────┴─────────────────────────────────────┴──────────────────┘
+
+  That's the demo race, but headless, per-branch, and gateable.
+
+  The two build layers
+
+  1. Definitions + a forgemark output adapter (small, mostly in this repo). The runners are JSON, but forgemark needs a machine-readable monitor mode: reduce a results.Doc to the runner's {"value": <n>,
+  "rationale": "..."} last-JSON-line contract. A forgemark report --emit monitor (or a --format entire) over the existing engine + internal/results. Cheap, and it's the seam everything else hangs off.
+
+  2. The runtime (the real work, needs Entire). Every stock runner uses the read-only claude sandbox. forgemark is different: it needs the forgemark binary, network egress to the target forge, and ideally
+  regional placement (forgemark's whole methodology caveat is "run close to the target"). That's a new runner profile, and it's exactly where Entire's regional clusters + mirrors are the differentiator.
+  Two ways to get the runtime.kind:
+  - Reuse prompt_runner as an MVP: a runner whose prompt is "run forgemark ..., emit the result JSON as the last line" (works with today's adapter, if the sandbox allows egress).
+  - A proper non-prompt kind. I saw hints of agent_runner, trail_runner, and one script_runner reference but no command_runner/exec_runner, so a measured/exec runner kind looks like a genuine gap
+  forgemark would be the first real user of.
+
+  Sequencing
+
+  1. forgemark monitor-output mode — the adapter (this repo, no Entire dependency).
+  2. CI/Gate proof — wire it into GitHub Actions on top of open PR #6's threshold flags: forgemark runs, emits the monitor value, gates the PR. Proves the signal with zero new Entire infra.
+  3. Native Entire runner — the regional, egress-capable runtime that runs forgemark in-region and posts monitors to the Trail. The strategic headline.
+
+  What I need from you
+
+  1. Does a Gate already threshold a trail_monitor (so throughput < X fails a Trail), or is Gate still to build? That decides whether forgemark just emits and rides existing gating, or we build the gate
+  too.
+  2. Is there an exec/command/script_runner runtime, or would forgemark be the case that justifies one? This is the biggest scope fork.
+  3. Sandbox reality: can a runner sandbox make outbound git connections and be pinned to a region? That's the gating constraint on the native runner.
+
+  Want me to draft the four runner JSON files and the forgemark report --emit monitor adapter as a concrete first PR (layer 1), so there's something real to run in CI while the runtime questions get
+  answered?
+
+✻ Baked for 3m 51s
+
+※ recap: We're open-sourcing forgemark: core engine PR merged, web-demo PR staged on its branch (unpushed), now planning Entire "runners" for it. Next: your call on the three runtime questions, then I
+  draft the four runner JSONs plus a forgemark monitor-output adapter as the first PR.
+                                                                                                                                                                          new task? /clear to save 719.7k t…
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+──⏵⏵ auto mode on (shift+tab to cycle) · PR─#12 · ← for agents──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle) · PR #12 · ← for agents
+  ├────────────────────┼───────────────┼─────────────────────────────────────┼──────────────────┤
+  │ trail-perf         │ trail_summary │ the race table rendered as markdown │ —                │
+  └────────────────────┴───────────────┴─────────────────────────────────────┴──────────────────┘
+
+  That's the demo race, but headless, per-branch, and gateable.
+
+  The two build layers
+
+  1. Definitions + a forgemark output adapter (small, mostly in this repo). The runners are JSON, but forgemark needs a machine-readable monitor mode: reduce a results.Doc to the runner's {"value": <n>,
+  "rationale": "..."} last-JSON-line contract. A forgemark report --emit monitor (or a --format entire) over the existing engine + internal/results. Cheap, and it's the seam everything else hangs off.
+
+  2. The runtime (the real work, needs Entire). Every stock runner uses the read-only claude sandbox. forgemark is different: it needs the forgemark binary, network egress to the target forge, and ideally
+  regional placement (forgemark's whole methodology caveat is "run close to the target"). That's a new runner profile, and it's exactly where Entire's regional clusters + mirrors are the differentiator. Two
+  ways to get the runtime.kind:
+  - Reuse prompt_runner as an MVP: a runner whose prompt is "run forgemark ..., emit the result JSON as the last line" (works with today's adapter, if the sandbox allows egress).
+  - A proper non-prompt kind. I saw hints of agent_runner, trail_runner, and one script_runner reference but no command_runner/exec_runner, so a measured/exec runner kind looks like a genuine gap forgemark
+  would be the first real user of.
+
+  Sequencing
+
+  1. forgemark monitor-output mode — the adapter (this repo, no Entire dependency).
+  2. CI/Gate proof — wire it into GitHub Actions on top of open PR #6's threshold flags: forgemark runs, emits the monitor value, gates the PR. Proves the signal with zero new Entire infra.
+  3. Native Entire runner — the regional, egress-capable runtime that runs forgemark in-region and posts monitors to the Trail. The strategic headline.
+
+  What I need from you
+
+  1. Does a Gate already threshold a trail_monitor (so throughput < X fails a Trail), or is Gate still to build? That decides whether forgemark just emits and rides existing gating, or we build the gate too.
+  2. Is there an exec/command/script_runner runtime, or would forgemark be the case that justifies one? This is the biggest scope fork.
+  3. Sandbox reality: can a runner sandbox make outbound git connections and be pinned to a region? That's the gating constraint on the native runner.
+
+  Want me to draft the four runner JSON files and the forgemark report --emit monitor adapter as a concrete first PR (layer 1), so there's something real to run in CI while the runtime questions get answered?
+
+✻ Baked for 3m 51s
+
+※ recap: We're open-sourcing forgemark: core engine PR merged, web-demo PR staged on its branch (unpushed), now planning Entire "runners" for it. Next: your call on the three runtime questions, then I draft
+  the four runner JSONs plus a forgemark monitor-output adapter as the first PR.
+                                                                                                                                                                          new task? /clear to save 719.7k tokens
+─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  └────────────────────┴───────────────┴─────────────────────────────────────┴──────────────────┘
+
+  That's the demo race, but headless, per-branch, and gateable.
+
+  The two build layers
+
+  1. Definitions + a forgemark output adapter (small, mostly in this repo). The runners are JSON, but forgemark needs a machine-readable monitor mode: reduce a results.Doc to the runner's {"value": <n>,
+  "rationale": "..."} last-JSON-line contract. A forgemark report --emit monitor (or a --format entire) over the existing engine + internal/results. Cheap, and it's the seam everything else hangs off.
+
+  2. The runtime (the real work, needs Entire). Every stock runner uses the read-only claude sandbox. forgemark is different: it needs the forgemark binary, network egress to the target forge, and ideally
+  regional placement (forgemark's whole methodology caveat is "run close to the target"). That's a new runner profile, and it's exactly where Entire's regional clusters + mirrors are the differentiator.
+  Two ways to get the runtime.kind:
+  - Reuse prompt_runner as an MVP: a runner whose prompt is "run forgemark ..., emit the result JSON as the last line" (works with today's adapter, if the sandbox allows egress).
+  - A proper non-prompt kind. I saw hints of agent_runner, trail_runner, and one script_runner reference but no command_runner/exec_runner, so a measured/exec runner kind looks like a genuine gap
+  forgemark would be the first real user of.
+
+  Sequencing
+
+  1. forgemark monitor-output mode — the adapter (this repo, no Entire dependency).
+  2. CI/Gate proof — wire it into GitHub Actions on top of open PR #6's threshold flags: forgemark runs, emits the monitor value, gates the PR. Proves the signal with zero new Entire infra.
+  3. Native Entire runner — the regional, egress-capable runtime that runs forgemark in-region and posts monitors to the Trail. The strategic headline.
+
+  What I need from you
+
+  1. Does a Gate already threshold a trail_monitor (so throughput < X fails a Trail), or is Gate still to build? That decides whether forgemark just emits and rides existing gating, or we build the gate
+  too.
+  2. Is there an exec/command/script_runner runtime, or would forgemark be the case that justifies one? This is the biggest scope fork.
+  3. Sandbox reality: can a runner sandbox make outbound git connections and be pinned to a region? That's the gating constraint on the native runner.
+
+  Want me to draft the four runner JSON files and the forgemark report --emit monitor adapter as a concrete first PR (layer 1), so there's something real to run in CI while the runtime questions get
+  answered?
+
+✻ Baked for 3m 51s
+
+※ recap: We're open-sourcing forgemark: core engine PR merged, web-demo PR staged on its branch (unpushed), now planning Entire "runners" for it. Next: your call on the three runtime questions, then I
+  draft the four runner JSONs plus a forgemark monitor-output adapter as the first PR.
+                                                                                                                                                                          new task? /clear to save 719.7k t…
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle) · PR #12 · ← for agents
+  │ trail-perf         │ trail_summary │ the race table rendered as markdown │ —                │
+  └────────────────────┴───────────────┴─────────────────────────────────────┴──────────────────┘
+
+  That's the demo race, but headless, per-branch, and gateable.
+
+  The two build layers
+
+  1. Definitions + a forgemark output adapter (small, mostly in this repo). The runners are JSON, but forgemark needs a machine-readable monitor mode: reduce a results.Doc to the runner's {"value": <n>,
+  "rationale": "..."} last-JSON-line contract. A forgemark report --emit monitor (or a --format entire) over the existing engine + internal/results. Cheap, and it's the seam everything else hangs off.
+
+  2. The runtime (the real work, needs Entire). Every stock runner uses the read-only claude sandbox. forgemark is different: it needs the forgemark binary, network egress to the target forge, and ideally
+  regional placement (forgemark's whole methodology caveat is "run close to the target"). That's a new runner profile, and it's exactly where Entire's regional clusters + mirrors are the differentiator.
+  Two ways to get the runtime.kind:
+  - Reuse prompt_runner as an MVP: a runner whose prompt is "run forgemark ..., emit the result JSON as the last line" (works with today's adapter, if the sandbox allows egress).
+  - A proper non-prompt kind. I saw hints of agent_runner, trail_runner, and one script_runner reference but no command_runner/exec_runner, so a measured/exec runner kind looks like a genuine gap
+  forgemark would be the first real user of.
+
+  Sequencing
+
+  1. forgemark monitor-output mode — the adapter (this repo, no Entire dependency).
+  2. CI/Gate proof — wire it into GitHub Actions on top of open PR #6's threshold flags: forgemark runs, emits the monitor value, gates the PR. Proves the signal with zero new Entire infra.
+  3. Native Entire runner — the regional, egress-capable runtime that runs forgemark in-region and posts monitors to the Trail. The strategic headline.
+
+  What I need from you
+
+  1. Does a Gate already threshold a trail_monitor (so throughput < X fails a Trail), or is Gate still to build? That decides whether forgemark just emits and rides existing gating, or we build the gate
+  too.
+  2. Is there an exec/command/script_runner runtime, or would forgemark be the case that justifies one? This is the biggest scope fork.
+  3. Sandbox reality: can a runner sandbox make outbound git connections and be pinned to a region? That's the gating constraint on the native runner.
+
+  Want me to draft the four runner JSON files and the forgemark report --emit monitor adapter as a concrete first PR (layer 1), so there's something real to run in CI while the runtime questions get
+  answered?
+
+✻ Baked for 3m 51s
+
+※ recap: We're open-sourcing forgemark: core engine PR merged, web-demo PR staged on its branch (unpushed), now planning Entire "runners" for it. Next: your call on the three runtime questions, then I
+  draft the four runner JSONs plus a forgemark monitor-output adapter as the first PR.
+                                                                                                                                                                          new task? /clear to save 719.7k t…
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+──⏵⏵ auto mode on (shift+tab to cycle) · PR─#12 · ← for agents──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle) · PR #12 · ← for agents
+  ├────────────────────┼───────────────┼─────────────────────────────────────┼──────────────────┤
+  │ trail-perf         │ trail_summary │ the race table rendered as markdown │ —                │
+  └────────────────────┴───────────────┴─────────────────────────────────────┴──────────────────┘
+
+  That's the demo race, but headless, per-branch, and gateable.
+
+  The two build layers
+
+  1. Definitions + a forgemark output adapter (small, mostly in this repo). The runners are JSON, but forgemark needs a machine-readable monitor mode: reduce a results.Doc to the runner's {"value": <n>,
+  "rationale": "..."} last-JSON-line contract. A forgemark report --emit monitor (or a --format entire) over the existing engine + internal/results. Cheap, and it's the seam everything else hangs off.
+
+  2. The runtime (the real work, needs Entire). Every stock runner uses the read-only claude sandbox. forgemark is different: it needs the forgemark binary, network egress to the target forge, and ideally
+  regional placement (forgemark's whole methodology caveat is "run close to the target"). That's a new runner profile, and it's exactly where Entire's regional clusters + mirrors are the differentiator. Two
+  ways to get the runtime.kind:
+  - Reuse prompt_runner as an MVP: a runner whose prompt is "run forgemark ..., emit the result JSON as the last line" (works with today's adapter, if the sandbox allows egress).
+  - A proper non-prompt kind. I saw hints of agent_runner, trail_runner, and one script_runner reference but no command_runner/exec_runner, so a measured/exec runner kind looks like a genuine gap forgemark
+  would be the first real user of.
+
+  Sequencing
+
+  1. forgemark monitor-output mode — the adapter (this repo, no Entire dependency).
+  2. CI/Gate proof — wire it into GitHub Actions on top of open PR #6's threshold flags: forgemark runs, emits the monitor value, gates the PR. Proves the signal with zero new Entire infra.
+  3. Native Entire runner — the regional, egress-capable runtime that runs forgemark in-region and posts monitors to the Trail. The strategic headline.
+
+  What I need from you
+
+  1. Does a Gate already threshold a trail_monitor (so throughput < X fails a Trail), or is Gate still to build? That decides whether forgemark just emits and rides existing gating, or we build the gate too.
+  2. Is there an exec/command/script_runner runtime, or would forgemark be the case that justifies one? This is the biggest scope fork.
+  3. Sandbox reality: can a runner sandbox make outbound git connections and be pinned to a region? That's the gating constraint on the native runner.
+
+  Want me to draft the four runner JSON files and the forgemark report --emit monitor adapter as a concrete first PR (layer 1), so there's something real to run in CI while the runtime questions get answered?
+
+✻ Baked for 3m 51s
+
+※ recap: We're open-sourcing forgemark: core engine PR merged, web-demo PR staged on its branch (unpushed), now planning Entire "runners" for it. Next: your call on the three runtime questions, then I draft
+  the four runner JSONs plus a forgemark monitor-output adapter as the first PR.
+                                                                                                                                                                          new task? /clear to save 719.7k tokens
+─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle) · PR #12 · ← for agents
+  └────────────────────┴───────────────┴─────────────────────────────────────┴──────────────────┘
+
+  That's the demo race, but headless, per-branch, and gateable.
+
+  The two build layers
+
+  1. Definitions + a forgemark output adapter (small, mostly in this repo). The runners are JSON, but forgemark needs a machine-readable monitor mode: reduce a results.Doc to the runner's {"value": <n>,
+  "rationale": "..."} last-JSON-line contract. A forgemark report --emit monitor (or a --format entire) over the existing engine + internal/results. Cheap, and it's the seam everything else hangs off.
+
+  2. The runtime (the real work, needs Entire). Every stock runner uses the read-only claude sandbox. forgemark is different: it needs the forgemark binary, network egress to the target forge, and ideally
+  regional placement (forgemark's whole methodology caveat is "run close to the target"). That's a new runner profile, and it's exactly where Entire's regional clusters + mirrors are the differentiator.
+  Two ways to get the runtime.kind:
+  - Reuse prompt_runner as an MVP: a runner whose prompt is "run forgemark ..., emit the result JSON as the last line" (works with today's adapter, if the sandbox allows egress).
+  - A proper non-prompt kind. I saw hints of agent_runner, trail_runner, and one script_runner reference but no command_runner/exec_runner, so a measured/exec runner kind looks like a genuine gap
+  forgemark would be the first real user of.
+
+  Sequencing
+
+  1. forgemark monitor-output mode — the adapter (this repo, no Entire dependency).
+  2. CI/Gate proof — wire it into GitHub Actions on top of open PR #6's threshold flags: forgemark runs, emits the monitor value, gates the PR. Proves the signal with zero new Entire infra.
+  3. Native Entire runner — the regional, egress-capable runtime that runs forgemark in-region and posts monitors to the Trail. The strategic headline.
+
+  What I need from you
+
+  1. Does a Gate already threshold a trail_monitor (so throughput < X fails a Trail), or is Gate still to build? That decides whether forgemark just emits and rides existing gating, or we build the gate
+  too.
+  2. Is there an exec/command/script_runner runtime, or would forgemark be the case that justifies one? This is the biggest scope fork.
+  3. Sandbox reality: can a runner sandbox make outbound git connections and be pinned to a region? That's the gating constraint on the native runner.
+
+  Want me to draft the four runner JSON files and the forgemark report --emit monitor adapter as a concrete first PR (layer 1), so there's something real to run in CI while the runtime questions get
+  answered?
+
+✻ Baked for 3m 51s
+
+※ recap: We're open-sourcing forgemark: core engine PR merged, web-demo PR staged on its branch (unpushed), now planning Entire "runners" for it. Next: your call on the three runtime questions, then I
+  draft the four runner JSONs plus a forgemark monitor-output adapter as the first PR.
+                                                                                                                                                                     new task? /clear to save 719.7k tokens
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle) · PR #12 · ← for agents
+  │ trail-perf         │ trail_summary │ the race table rendered as markdown │ —                │
+  └────────────────────┴───────────────┴─────────────────────────────────────┴──────────────────┘
+
+  That's the demo race, but headless, per-branch, and gateable.
+
+  The two build layers
+
+  1. Definitions + a forgemark output adapter (small, mostly in this repo). The runners are JSON, but forgemark needs a machine-readable monitor mode: reduce a results.Doc to the runner's {"value": <n>,
+  "rationale": "..."} last-JSON-line contract. A forgemark report --emit monitor (or a --format entire) over the existing engine + internal/results. Cheap, and it's the seam everything else hangs off.
+
+  2. The runtime (the real work, needs Entire). Every stock runner uses the read-only claude sandbox. forgemark is different: it needs the forgemark binary, network egress to the target forge, and ideally
+  regional placement (forgemark's whole methodology caveat is "run close to the target"). That's a new runner profile, and it's exactly where Entire's regional clusters + mirrors are the differentiator.
+  Two ways to get the runtime.kind:
+  - Reuse prompt_runner as an MVP: a runner whose prompt is "run forgemark ..., emit the result JSON as the last line" (works with today's adapter, if the sandbox allows egress).
+  - A proper non-prompt kind. I saw hints of agent_runner, trail_runner, and one script_runner reference but no command_runner/exec_runner, so a measured/exec runner kind looks like a genuine gap
+  forgemark would be the first real user of.
+
+  Sequencing
+
+  1. forgemark monitor-output mode — the adapter (this repo, no Entire dependency).
+  2. CI/Gate proof — wire it into GitHub Actions on top of open PR #6's threshold flags: forgemark runs, emits the monitor value, gates the PR. Proves the signal with zero new Entire infra.
+  3. Native Entire runner — the regional, egress-capable runtime that runs forgemark in-region and posts monitors to the Trail. The strategic headline.
+
+  What I need from you
+
+  1. Does a Gate already threshold a trail_monitor (so throughput < X fails a Trail), or is Gate still to build? That decides whether forgemark just emits and rides existing gating, or we build the gate
+  too.
+  2. Is there an exec/command/script_runner runtime, or would forgemark be the case that justifies one? This is the biggest scope fork.
+  3. Sandbox reality: can a runner sandbox make outbound git connections and be pinned to a region? That's the gating constraint on the native runner.
+
+  Want me to draft the four runner JSON files and the forgemark report --emit monitor adapter as a concrete first PR (layer 1), so there's something real to run in CI while the runtime questions get
+  answered?
+
+✻ Baked for 3m 51s
+
+※ recap: We're open-sourcing forgemark: core engine PR merged, web-demo PR staged on its branch (unpushed), now planning Entire "runners" for it. Next: your call on the three runtime questions, then I
+  draft the four runner JSONs plus a forgemark monitor-output adapter as the first PR.
+                                                                                                                                                                     new task? /clear to save 719.7k tokens
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle) · PR #12 · ← for agents
+  ├────────────────────┼───────────────┼─────────────────────────────────────┼──────────────────┤
+  │ trail-perf         │ trail_summary │ the race table rendered as markdown │ —                │
+  └────────────────────┴───────────────┴─────────────────────────────────────┴──────────────────┘
+
+  That's the demo race, but headless, per-branch, and gateable.
+
+  The two build layers
+
+  1. Definitions + a forgemark output adapter (small, mostly in this repo). The runners are JSON, but forgemark needs a machine-readable monitor mode: reduce a results.Doc to the runner's {"value": <n>,
+  "rationale": "..."} last-JSON-line contract. A forgemark report --emit monitor (or a --format entire) over the existing engine + internal/results. Cheap, and it's the seam everything else hangs off.
+
+  2. The runtime (the real work, needs Entire). Every stock runner uses the read-only claude sandbox. forgemark is different: it needs the forgemark binary, network egress to the target forge, and ideally
+  regional placement (forgemark's whole methodology caveat is "run close to the target"). That's a new runner profile, and it's exactly where Entire's regional clusters + mirrors are the differentiator. Two
+  ways to get the runtime.kind:
+  - Reuse prompt_runner as an MVP: a runner whose prompt is "run forgemark ..., emit the result JSON as the last line" (works with today's adapter, if the sandbox allows egress).
+  - A proper non-prompt kind. I saw hints of agent_runner, trail_runner, and one script_runner reference but no command_runner/exec_runner, so a measured/exec runner kind looks like a genuine gap forgemark
+  would be the first real user of.
+
+  Sequencing
+
+  1. forgemark monitor-output mode — the adapter (this repo, no Entire dependency).
+  2. CI/Gate proof — wire it into GitHub Actions on top of open PR #6's threshold flags: forgemark runs, emits the monitor value, gates the PR. Proves the signal with zero new Entire infra.
+  3. Native Entire runner — the regional, egress-capable runtime that runs forgemark in-region and posts monitors to the Trail. The strategic headline.
+
+  What I need from you
+
+  1. Does a Gate already threshold a trail_monitor (so throughput < X fails a Trail), or is Gate still to build? That decides whether forgemark just emits and rides existing gating, or we build the gate too.
+  2. Is there an exec/command/script_runner runtime, or would forgemark be the case that justifies one? This is the biggest scope fork.
+  3. Sandbox reality: can a runner sandbox make outbound git connections and be pinned to a region? That's the gating constraint on the native runner.
+
+  Want me to draft the four runner JSON files and the forgemark report --emit monitor adapter as a concrete first PR (layer 1), so there's something real to run in CI while the runtime questions get answered?
+
+✻ Baked for 3m 51s
+
+※ recap: We're open-sourcing forgemark: core engine PR merged, web-demo PR staged on its branch (unpushed), now planning Entire "runners" for it. Next: your call on the three runtime questions, then I draft
+  the four runner JSONs plus a forgemark monitor-output adapter as the first PR.
+                                                                                                                                                                          new task? /clear to save 719.7k tokens
+─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+  Ran 1 shell command
+
+⏺ I dug into this end-to-end. Here's the diagnosis: your runner config is correct and in the right place. The problem is that the automatic trail-runner pipeline isn't executing for entireio/forgemark,
+  which is a server-side enablement issue, not a repo-file issue.
+
+  Evidence I gathered:
+
+  - Configs are valid and present where the trail engine reads them. All five .entire/runners/*.json parse, are enabled: true, scope: trail, and include push triggers (review/risk/security/summary), and
+  they exist on both origin/main and origin/feat/web-demo. So it's not a missing-file or wrong-ref problem.
+  - entire runner setup only writes/tailors those files — it's not a server registration handshake. So merging the files via PR is the whole config story; nothing was skipped there.
+  - The repo is mirrored to Entire (3 clusters), and pushes to feat/web-demo happened after the runners were live on main. So a push-triggered runner should have fired, and didn't.
+
+  That leaves the automatic push → trail-engine → runner-execution pipeline itself. Ranked by likelihood:
+
+  1. The trail-runner engine isn't turned on for this repo. Mirroring a repo (for benchmarks/sessions) is not the same as onboarding it to the trail evaluator. Working examples like entireio/git-sync and
+  entireio/cli fire runners because they're wired to the trail engine (webhook/App + trail feature enabled). forgemark looks mirrored-but-not-trail-enabled.
+  2. Maturation gate. entire runner is explicitly "hidden during maturation," and there's a pending CLI 0.8.42 → 0.9.0 bump. If runner execution went live in 0.9.0 and the rollout is version/beta-gated,
+  forgemark may not be enrolled yet.
+  3. Trigger delivery — the push event isn't reaching the trail engine for this repo (a subset of #1).
+
+  Immediate workaround to get a review on the trail right now, without the auto-pipeline: entire review --set-output trail runs the multi-agent reviewer on the current branch and posts the verdict to the
+  trail.
+
+  Two things only you can confirm from the Entire backend, and they'll pin it exactly:
+  - How is the trail engine triggered for a repo — GitHub App/webhook on push, or off a mirror sync — and does entireio/forgemark have that wiring? (My bet is no.)
+  - Does runner execution require 0.9.0 / beta enrollment, and is this repo enrolled?
+
+  One aside so it doesn't mislead you: when I tried to git ls-remote the Entire mirror to check sync, it returned "invalid or expired token" — that's just my local jurisdiction git token being stale (my
+  entire auth for the mirror), unrelated to the trail engine, which runs server-side regardless of my token. Want me to brew upgrade entire to 0.9.0 and re-push a trivial commit to see if the runners fire
+  on the newer CLI, as a quick test of hypothesis #2?
+
+✻ Baked for 4m 45s
+
+※ recap: Goal: ship forgemark's web demo as PR #13 and get its Entire trail runners working. PR #13 is green and up for review; the trail shows no runners because the trail engine isn't enabled
+  server-side for this repo. Next: confirm with you whether to upgrade to Entire 0.9.0 and re-test.
+                                                                                                                                                                     new task? /clear to save 764.2k tokens
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle) · PR #13 · ← for agents
+
+
+  Ran 1 shell command
+
+⏺ I dug into this end-to-end. Here's the diagnosis: your runner config is correct and in the right place. The problem is that the automatic trail-runner pipeline isn't executing for entireio/forgemark,
+  which is a server-side enablement issue, not a repo-file issue.
+
+  Evidence I gathered:
+
+  - Configs are valid and present where the trail engine reads them. All five .entire/runners/*.json parse, are enabled: true, scope: trail, and include push triggers (review/risk/security/summary), and
+  they exist on both origin/main and origin/feat/web-demo. So it's not a missing-file or wrong-ref problem.
+  - entire runner setup only writes/tailors those files — it's not a server registration handshake. So merging the files via PR is the whole config story; nothing was skipped there.
+  - The repo is mirrored to Entire (3 clusters), and pushes to feat/web-demo happened after the runners were live on main. So a push-triggered runner should have fired, and didn't.
+
+  That leaves the automatic push → trail-engine → runner-execution pipeline itself. Ranked by likelihood:
+
+  1. The trail-runner engine isn't turned on for this repo. Mirroring a repo (for benchmarks/sessions) is not the same as onboarding it to the trail evaluator. Working examples like entireio/git-sync and
+  entireio/cli fire runners because they're wired to the trail engine (webhook/App + trail feature enabled). forgemark looks mirrored-but-not-trail-enabled.
+  2. Maturation gate. entire runner is explicitly "hidden during maturation," and there's a pending CLI 0.8.42 → 0.9.0 bump. If runner execution went live in 0.9.0 and the rollout is version/beta-gated,
+  forgemark may not be enrolled yet.
+  3. Trigger delivery — the push event isn't reaching the trail engine for this repo (a subset of #1).
+
+  Immediate workaround to get a review on the trail right now, without the auto-pipeline: entire review --set-output trail runs the multi-agent reviewer on the current branch and posts the verdict to the
+  trail.
+
+  Two things only you can confirm from the Entire backend, and they'll pin it exactly:
+  - How is the trail engine triggered for a repo — GitHub App/webhook on push, or off a mirror sync — and does entireio/forgemark have that wiring? (My bet is no.)
+  - Does runner execution require 0.9.0 / beta enrollment, and is this repo enrolled?
+
+  One aside so it doesn't mislead you: when I tried to git ls-remote the Entire mirror to check sync, it returned "invalid or expired token" — that's just my local jurisdiction git token being stale (my
+  entire auth for the mirror), unrelated to the trail engine, which runs server-side regardless of my token. Want me to brew upgrade entire to 0.9.0 and re-push a trivial commit to see if the runners fire
+  on the newer CLI, as a quick test of hypothesis #2?
+
+✻ Baked for 4m 45s
+
+※ recap: Goal: ship forgemark's web demo as PR #13 and get its Entire trail runners working. PR #13 is green and up for review; the trail shows no runners because the trail engine isn't enabled
+  server-side for this repo. Next: confirm with you whether to upgrade to Entire 0.9.0 and re-test.
+                                                                                                                                                                     new task? /clear to save 764.2k tokens
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+──⏵⏵ auto mode on (shift+tab to cycle) · PR─#13 · ← for agents──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle) · PR #12 · ← for agents
+
+  Ran 1 shell command
+
+⏺ I dug into this end-to-end. Here's the diagnosis: your runner config is correct and in the right place. The problem is that the automatic trail-runner pipeline isn't executing for entireio/forgemark, which
+  is a server-side enablement issue, not a repo-file issue.
+
+  Evidence I gathered:
+
+  - Configs are valid and present where the trail engine reads them. All five .entire/runners/*.json parse, are enabled: true, scope: trail, and include push triggers (review/risk/security/summary), and they
+  exist on both origin/main and origin/feat/web-demo. So it's not a missing-file or wrong-ref problem.
+  - entire runner setup only writes/tailors those files — it's not a server registration handshake. So merging the files via PR is the whole config story; nothing was skipped there.
+  - The repo is mirrored to Entire (3 clusters), and pushes to feat/web-demo happened after the runners were live on main. So a push-triggered runner should have fired, and didn't.
+
+  That leaves the automatic push → trail-engine → runner-execution pipeline itself. Ranked by likelihood:
+
+  1. The trail-runner engine isn't turned on for this repo. Mirroring a repo (for benchmarks/sessions) is not the same as onboarding it to the trail evaluator. Working examples like entireio/git-sync and
+  entireio/cli fire runners because they're wired to the trail engine (webhook/App + trail feature enabled). forgemark looks mirrored-but-not-trail-enabled.
+  2. Maturation gate. entire runner is explicitly "hidden during maturation," and there's a pending CLI 0.8.42 → 0.9.0 bump. If runner execution went live in 0.9.0 and the rollout is version/beta-gated,
+  forgemark may not be enrolled yet.
+  3. Trigger delivery — the push event isn't reaching the trail engine for this repo (a subset of #1).
+
+  Immediate workaround to get a review on the trail right now, without the auto-pipeline: entire review --set-output trail runs the multi-agent reviewer on the current branch and posts the verdict to the
+  trail.
+
+  Two things only you can confirm from the Entire backend, and they'll pin it exactly:
+  - How is the trail engine triggered for a repo — GitHub App/webhook on push, or off a mirror sync — and does entireio/forgemark have that wiring? (My bet is no.)
+  - Does runner execution require 0.9.0 / beta enrollment, and is this repo enrolled?
+
+  One aside so it doesn't mislead you: when I tried to git ls-remote the Entire mirror to check sync, it returned "invalid or expired token" — that's just my local jurisdiction git token being stale (my entire
+  auth for the mirror), unrelated to the trail engine, which runs server-side regardless of my token. Want me to brew upgrade entire to 0.9.0 and re-push a trivial commit to see if the runners fire on the
+  newer CLI, as a quick test of hypothesis #2?
+
+✻ Baked for 4m 45s
+
+※ recap: Goal: ship forgemark's web demo as PR #13 and get its Entire trail runners working. PR #13 is green and up for review; the trail shows no runners because the trail engine isn't enabled server-side for
+  this repo. Next: confirm with you whether to upgrade to Entire 0.9.0 and re-test.
+                                                                                                                                                                          new task? /clear to save 764.2k tokens
+─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  landed on the GitHub PR directly (the trail-review runner posts native review comments). Let me check PR #13 for reviews.
+
+  Ran 1 shell command
+
+⏺ Confirmed on both surfaces: there are no trail review findings to fix. The Entire trail is still stuck (phase: building, null baseSha, monitors: [], commentCount: 0), and GitHub PR #13 has 0 reviews and
+  0 inline comments. Let me make sure there isn't a local entire review verdict I'm missing before concluding.
+
+  Ran 1 shell command
+
+⏺ Checked everywhere now, and the answer is: there are no trail review findings to fix — not because the branch is clean, but because the trail review never ran. Verified across all surfaces:
+
+  - Entire trail (us-east cell): phase: building, baseSha: null, monitors: [], commentCount: 0.
+  - Entire trail (in cell): same — building, 0 comments, 0 monitors.
+  - GitHub PR #13: 0 reviews, 0 inline comments.
+  - Local: no entire review verdict artifacts, no review profile.
+
+  So the trail review produced nothing to act on. It's the same blocker from last turn: the trail is stuck resolving its base against main (null baseSha), and my no-op push didn't unstick it — which
+  confirms it's a persistent server-side mirror/base-resolution bug, not timing. Until that's fixed on the Entire side, the trail-review/risk/security/summary runners can't fire, so no findings will
+  appear.
+
+  Two things worth knowing:
+
+  1. This diff isn't actually unreviewed. The /code-review I ran earlier on this exact branch already surfaced and fixed 10 findings, and the "tail" I just (mistakenly) started on is the remainder. So the
+  trail review, if it ran, would likely be re-covering ground.
+  2. To get a real Entire review right now, bypassing the stuck trail engine: entire review runs the multi-agent reviewer against the current branch on demand and can post to the trail (--set-output
+  trail) or save locally. That doesn't depend on base resolution.
+
+  How do you want to proceed?
+  - If you want me to run entire review now and fix whatever it finds, say go — heads up it's a heavyweight multi-agent run and may prompt to configure a review profile on first use.
+  - If you're seeing findings somewhere I haven't looked (a different cell, the web UI trail, a specific reviewer), point me at it and I'll pull them.
+  - Or we treat the earlier /code-review as the review of record and I finish that tail cleanup I had queued (dead code, shared JS helpers, the Go host helper, the race pop-lost bug, history parity).
+
+✻ Crunched for 6m 25s
+
+※ recap: Goal: get the forgemark web-demo PR (#13) reviewed and merged. It's pushed and CI-green, but the Entire trail review produced no findings because the trail is stuck resolving its base. Next: you
+  decide whether I run `entire review` now, point me to findings, or finish the earlier code-review cleanup.
+                                                                                                                                                                     new task? /clear to save 820.4k tokens
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle) · PR #13 · ← for agents
+⏺ Still stuck: phase: building, baseSha: None, monitors: [], commentCount: 0 on the cell trail — so that trail produced no findings. But you're seeing review findings somewhere, which means they likely
+  landed on the GitHub PR directly (the trail-review runner posts native review comments). Let me check PR #13 for reviews.
+
+  Ran 1 shell command
+
+⏺ Confirmed on both surfaces: there are no trail review findings to fix. The Entire trail is still stuck (phase: building, null baseSha, monitors: [], commentCount: 0), and GitHub PR #13 has 0 reviews and
+  0 inline comments. Let me make sure there isn't a local entire review verdict I'm missing before concluding.
+
+  Ran 1 shell command
+
+⏺ Checked everywhere now, and the answer is: there are no trail review findings to fix — not because the branch is clean, but because the trail review never ran. Verified across all surfaces:
+
+  - Entire trail (us-east cell): phase: building, baseSha: null, monitors: [], commentCount: 0.
+  - Entire trail (in cell): same — building, 0 comments, 0 monitors.
+  - GitHub PR #13: 0 reviews, 0 inline comments.
+  - Local: no entire review verdict artifacts, no review profile.
+
+  So the trail review produced nothing to act on. It's the same blocker from last turn: the trail is stuck resolving its base against main (null baseSha), and my no-op push didn't unstick it — which
+  confirms it's a persistent server-side mirror/base-resolution bug, not timing. Until that's fixed on the Entire side, the trail-review/risk/security/summary runners can't fire, so no findings will
+  appear.
+
+  Two things worth knowing:
+
+  1. This diff isn't actually unreviewed. The /code-review I ran earlier on this exact branch already surfaced and fixed 10 findings, and the "tail" I just (mistakenly) started on is the remainder. So the
+  trail review, if it ran, would likely be re-covering ground.
+  2. To get a real Entire review right now, bypassing the stuck trail engine: entire review runs the multi-agent reviewer against the current branch on demand and can post to the trail (--set-output
+  trail) or save locally. That doesn't depend on base resolution.
+
+  How do you want to proceed?
+  - If you want me to run entire review now and fix whatever it finds, say go — heads up it's a heavyweight multi-agent run and may prompt to configure a review profile on first use.
+  - If you're seeing findings somewhere I haven't looked (a different cell, the web UI trail, a specific reviewer), point me at it and I'll pull them.
+  - Or we treat the earlier /code-review as the review of record and I finish that tail cleanup I had queued (dead code, shared JS helpers, the Go host helper, the race pop-lost bug, history parity).
+
+✻ Crunched for 6m 25s
+
+※ recap: Goal: get the forgemark web-demo PR (#13) reviewed and merged. It's pushed and CI-green, but the Entire trail review produced no findings because the trail is stuck resolving its base. Next: you
+  decide whether I run `entire review` now, point me to findings, or finish the earlier code-review cleanup.
+                                                                                                                                                                     new task? /clear to save 820.4k tokens
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+──⏵⏵ auto mode on (shift+tab to cycle) · PR─#13 · ← for agents──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle) · PR #13 · ← for agents
+⏺ Still stuck: phase: building, baseSha: None, monitors: [], commentCount: 0 on the cell trail — so that trail produced no findings. But you're seeing review findings somewhere, which means they likely landed
+  on the GitHub PR directly (the trail-review runner posts native review comments). Let me check PR #13 for reviews.
+
+  Ran 1 shell command
+
+⏺ Confirmed on both surfaces: there are no trail review findings to fix. The Entire trail is still stuck (phase: building, null baseSha, monitors: [], commentCount: 0), and GitHub PR #13 has 0 reviews and 0
+  inline comments. Let me make sure there isn't a local entire review verdict I'm missing before concluding.
+
+  Ran 1 shell command
+
+⏺ Checked everywhere now, and the answer is: there are no trail review findings to fix — not because the branch is clean, but because the trail review never ran. Verified across all surfaces:
+
+  - Entire trail (us-east cell): phase: building, baseSha: null, monitors: [], commentCount: 0.
+  - Entire trail (in cell): same — building, 0 comments, 0 monitors.
+  - GitHub PR #13: 0 reviews, 0 inline comments.
+  - Local: no entire review verdict artifacts, no review profile.
+
+  So the trail review produced nothing to act on. It's the same blocker from last turn: the trail is stuck resolving its base against main (null baseSha), and my no-op push didn't unstick it — which confirms
+  it's a persistent server-side mirror/base-resolution bug, not timing. Until that's fixed on the Entire side, the trail-review/risk/security/summary runners can't fire, so no findings will appear.
+
+  Two things worth knowing:
+
+  1. This diff isn't actually unreviewed. The /code-review I ran earlier on this exact branch already surfaced and fixed 10 findings, and the "tail" I just (mistakenly) started on is the remainder. So the
+  trail review, if it ran, would likely be re-covering ground.
+  2. To get a real Entire review right now, bypassing the stuck trail engine: entire review runs the multi-agent reviewer against the current branch on demand and can post to the trail (--set-output trail) or
+  save locally. That doesn't depend on base resolution.
+
+  How do you want to proceed?
+  - If you want me to run entire review now and fix whatever it finds, say go — heads up it's a heavyweight multi-agent run and may prompt to configure a review profile on first use.
+  - If you're seeing findings somewhere I haven't looked (a different cell, the web UI trail, a specific reviewer), point me at it and I'll pull them.
+  - Or we treat the earlier /code-review as the review of record and I finish that tail cleanup I had queued (dead code, shared JS helpers, the Go host helper, the race pop-lost bug, history parity).
+
+✻ Crunched for 6m 25s
+
+※ recap: Goal: get the forgemark web-demo PR (#13) reviewed and merged. It's pushed and CI-green, but the Entire trail review produced no findings because the trail is stuck resolving its base. Next: you
+  decide whether I run `entire review` now, point me to findings, or finish the earlier code-review cleanup.
+                                                                                                                                                                          new task? /clear to save 820.4k tokens
+─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+     Entire CLI will link this conversation to your next commit.
+
+⏺ Screenshot confirms it: demo targets show "none needed (demo target)" and custom targets expose only a "Credential source" dropdown, no free-text token field anywhere. The source-only change renders
+  correctly. Now running full verification before committing.
+
+  Ran 3 shell commands
+
+⏺ All green: gofmt clean, build passes, all tests pass, lint reports 0 issues, JS syntax OK. Committing the source-only change now.
+
+  Pushed to feat/web-demo, ran 2 shell commands
+
+⏺ Pushed. Watching CI on the PR now.
+
+  Ran 2 shell commands
+
+⏺ Done. Both CI checks (lint 30s, test 43s) pass on feat/web-demo.
+
+  Round 3 trail-review findings, resolved
+
+  newrun.js:255 (High) — pasted credential serialized into request JSON. Fixed with the source-only approach you picked. The web form no longer has a free-text credential field at all. Each non-demo
+  target now names a credential source (gh / glab / entire CLI login) via a dropdown, and the server pulls the token locally at run start. No secret ever gets serialized into the browser request. Demo
+  targets show "none needed (demo target)". Arbitrary forges go through the CLI's -token-file. Screenshot confirmed the rendered form: dropdown only, no token box.
+
+  runmgr.go:493 (Medium) — tail bucket dropped. This was already fixed in an earlier round (r.emitBucket() flushes the tail after lwg.Wait()). It re-appeared as a finding only because the trail is stuck
+  server-side (baseSha: null, phase never left building), so the reviewer is diffing against a stale/empty base and re-surfacing carryovers. No code action needed.
+
+  Verification before commit: gofmt clean, go build ./... clean, all four packages' tests pass, golangci-lint 0 issues, node --check on newrun.js OK.
+
+  Commit 96885f9 pushed. The server keeps accepting a secret via the raw API (CLI/curl parity), still guarded by the non-loopback paste rejection, so nothing regresses for the CLI path.
+
+  One loose end still open from before: the no-op commit bbf117a is sitting in the feat/web-demo history. Want me to drop it before this merges, or leave it?
+
+✻ Sautéed for 13m 41s
+
+※ recap: Wrapping up the forgemark web-demo PR (#13): the source-only credential change is committed, pushed, and CI passes. Next action is deciding whether to drop the leftover no-op commit bbf117a from
+  the branch history before merge.
+                                                                                                                                                            Update available! Run: brew upgrade claude-code
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle) · PR #13 · ← for agents
+
+     Entire CLI will link this conversation to your next commit.
+
+⏺ Screenshot confirms it: demo targets show "none needed (demo target)" and custom targets expose only a "Credential source" dropdown, no free-text token field anywhere. The source-only change renders
+  correctly. Now running full verification before committing.
+
+  Ran 3 shell commands
+
+⏺ All green: gofmt clean, build passes, all tests pass, lint reports 0 issues, JS syntax OK. Committing the source-only change now.
+
+  Pushed to feat/web-demo, ran 2 shell commands
+
+⏺ Pushed. Watching CI on the PR now.
+
+  Ran 2 shell commands
+
+⏺ Done. Both CI checks (lint 30s, test 43s) pass on feat/web-demo.
+
+  Round 3 trail-review findings, resolved
+
+  newrun.js:255 (High) — pasted credential serialized into request JSON. Fixed with the source-only approach you picked. The web form no longer has a free-text credential field at all. Each non-demo
+  target now names a credential source (gh / glab / entire CLI login) via a dropdown, and the server pulls the token locally at run start. No secret ever gets serialized into the browser request. Demo
+  targets show "none needed (demo target)". Arbitrary forges go through the CLI's -token-file. Screenshot confirmed the rendered form: dropdown only, no token box.
+
+  runmgr.go:493 (Medium) — tail bucket dropped. This was already fixed in an earlier round (r.emitBucket() flushes the tail after lwg.Wait()). It re-appeared as a finding only because the trail is stuck
+  server-side (baseSha: null, phase never left building), so the reviewer is diffing against a stale/empty base and re-surfacing carryovers. No code action needed.
+
+  Verification before commit: gofmt clean, go build ./... clean, all four packages' tests pass, golangci-lint 0 issues, node --check on newrun.js OK.
+
+  Commit 96885f9 pushed. The server keeps accepting a secret via the raw API (CLI/curl parity), still guarded by the non-loopback paste rejection, so nothing regresses for the CLI path.
+
+  One loose end still open from before: the no-op commit bbf117a is sitting in the feat/web-demo history. Want me to drop it before this merges, or leave it?
+
+✻ Sautéed for 13m 41s
+
+※ recap: Wrapping up the forgemark web-demo PR (#13): the source-only credential change is committed, pushed, and CI passes. Next action is deciding whether to drop the leftover no-op commit bbf117a from
+  the branch history before merge.
+                                                                                                                                                            Update available! Run: brew upgrade claude-code
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+──⏵⏵ auto mode on (shift+tab to cycle) · PR─#13 · ← for agents──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle) · PR #13 · ← for agents
+
+
+⏺ Screenshot confirms it: demo targets show "none needed (demo target)" and custom targets expose only a "Credential source" dropdown, no free-text token field anywhere. The source-only change renders
+  correctly. Now running full verification before committing.
+
+  Ran 3 shell commands
+
+⏺ All green: gofmt clean, build passes, all tests pass, lint reports 0 issues, JS syntax OK. Committing the source-only change now.
+
+  Pushed to feat/web-demo, ran 2 shell commands
+
+⏺ Pushed. Watching CI on the PR now.
+
+  Ran 2 shell commands
+
+⏺ Done. Both CI checks (lint 30s, test 43s) pass on feat/web-demo.
+
+  Round 3 trail-review findings, resolved
+
+  newrun.js:255 (High) — pasted credential serialized into request JSON. Fixed with the source-only approach you picked. The web form no longer has a free-text credential field at all. Each non-demo target now
+  names a credential source (gh / glab / entire CLI login) via a dropdown, and the server pulls the token locally at run start. No secret ever gets serialized into the browser request. Demo targets show "none
+  needed (demo target)". Arbitrary forges go through the CLI's -token-file. Screenshot confirmed the rendered form: dropdown only, no token box.
+
+  runmgr.go:493 (Medium) — tail bucket dropped. This was already fixed in an earlier round (r.emitBucket() flushes the tail after lwg.Wait()). It re-appeared as a finding only because the trail is stuck
+  server-side (baseSha: null, phase never left building), so the reviewer is diffing against a stale/empty base and re-surfacing carryovers. No code action needed.
+
+  Verification before commit: gofmt clean, go build ./... clean, all four packages' tests pass, golangci-lint 0 issues, node --check on newrun.js OK.
+
+  Commit 96885f9 pushed. The server keeps accepting a secret via the raw API (CLI/curl parity), still guarded by the non-loopback paste rejection, so nothing regresses for the CLI path.
+
+  One loose end still open from before: the no-op commit bbf117a is sitting in the feat/web-demo history. Want me to drop it before this merges, or leave it?
+
+✻ Sautéed for 13m 41s
+
+※ recap: Wrapping up the forgemark web-demo PR (#13): the source-only credential change is committed, pushed, and CI passes. Next action is deciding whether to drop the leftover no-op commit bbf117a from the
+  branch history before merge.
+                                                                                                                                                                 Update available! Run: brew upgrade claude-code
+─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯
+─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle) · PR #13 · ← for agents
+
+  ⎿  Added 2 lines, removed 2 lines
+      104  entry = json.loads(os.environ["SUGGEST"]).get("entire") or {}
+      105  if entry.get("error") or not entry.get("target"):
+      106      # shlex.quote the whole echo argument as one token. Embedding it INSIDE a
+      107 -    # double-quoted string would leave any $(...) in the error to be evaluated
+      108 -    # when this generated line is eval'd.
+      107 +    # double-quoted string would leave any command substitution in the error to
+      108 +    # be evaluated when eval runs this generated line.
+      109      msg = "compare-local: entire discovery failed: " + entry.get("error", "no target")
+      110      print("echo " + shlex.quote(msg) + " >&2; exit 1")
+      111      sys.exit(0)
+
+  Ran 1 shell command
+
+⏺ Now let me verify the injection is actually neutralized — feed a crafted error with a command substitution and confirm the generated shell line is inert:
+
+  Ran 1 shell command
+
+⏺ Injection is neutralized. Let me do a quick live smoke test to confirm nothing regressed end-to-end, then commit.
+
+  Ran 1 shell command
+
+⏺ Clean end-to-end: suggest reachable on loopback, demo run produces the full lifecycle with both level_start events (now emitted at barrier fire), buckets, and run_done. Committing and pushing.
+
+  Pushed to feat/web-demo, ran 2 shell commands
+
+⏺ Both checks green. Pushed as 96f1d1e on feat/web-demo.
+
+  Round 4 verdict
+
+  Seven fixed, two I pushed back on. Ranked by what mattered:
+
+  Fixed
+  - #1 (High) exposed-bind credential abuse — the real teeth. A non-loopback bind now refuses all credential materialization (pasted and secret_source) and disables CLI discovery entirely. Exposed binds
+  are demo-only; real-forge benchmarking requires the default loopback bind. I chose this over "add auth" deliberately: this is a local benchmark tool with no user model, and gating the credential path is
+  the honest boundary, not bolting on a login system.
+  - #3 (High) cleartext token — validateSecretAudience now requires https and rejects userinfo on every CLI-sourced URL. http://github.com and REDACTED are both refused now.
+  - #2 shell injection — verified live: a crafted error with $(touch …) is now shlex.quote'd as one token and stays inert.
+  - #7 rebinding on reads, #8 shutdown vs 30s cleanup, #9 level_start timing, #5 NaN→silent-default — all done, with tests extended (https/userinfo cases, secret_source + suggest rejection on exposed
+  bind, read-route rebinding).
+
+  Declined / deferred
+  - #6 collector mutex — declined. The lock covers a counter bump + one append against git ops that take tens-to-hundreds of ms; the perturbation is unmeasurable and snapshot already drops the lock before
+  the O(window) concat. Sharding is complexity for nothing. Say the word if you disagree and I'll add it.
+  - #4 fractional buckets — real but cosmetic (live sparkline only; the authoritative LevelResult is computed over the true window and is correct). The proper fix is carrying per-bucket elapsed through
+  the wire, the persisted SeriesPoint, and the UI. I didn't ship an inert partial flag. If you want the live chart exact, I'll do the full rate normalization as its own change — your call.
+
+  Still open from earlier: the no-op commit bbf117a is in the branch history. Want it dropped before merge?
+
+✻ Sautéed for 11m 55s
+
+※ recap: Goal: land the forgemark web-demo PR (#13) after clearing Entire trail-review findings. Round 4 is fixed, pushed, and CI is green. Next: decide whether to drop the no-op commit bbf117a from the
+  branch history before merge.
+                                                                                                                                                                 Update available! Run: brew upgrade claude…
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ [Pasted text #2 +52 lines]
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ auto mode on (shift+tab to cycle) · PR #13
+
+---
+
+Just fix it all
+
+---
+
+a OK. B - need more deets
+
+---
+
+Is this a fix for the runners or for forgemark. I'm incredibly confused now
+
+---
+
+Just focus on Forgemark work. oeriod
+
+---
+
+More trail findings : Findings
+
+High
+AI
+Trail Review
+internal/server/runmgr.go:648
+41m ago
+
+The accepted remote is returned verbatim in the hello event, status APIs, target labels, and persisted results. A remote containing URL userinfo such as REDACTED therefore serializes that credential despite Target.Secret redaction; reject userinfo for every real target or store and expose a sanitized URL.
+
+AI
+Trail Review
+scripts/compare-local.sh:139
+41m ago
+
+Native mode treats the unauthenticated /api/local/suggest response as the destination for authenticated entire project/repo commands. Any process that occupies the expected localhost port can return a valuable project/repo or hostile cluster and make pushrace.sh write there; derive destinations from authenticated local CLI data or strictly validate the discovered owner/path/hosts before provisioning.
+
+AI
+Trail Review
+internal/server/server.go:92
+2h ago
+
+For a non-loopback bind this disables the Host restriction, while requests without an Origin are accepted, so any reachable client can start/cancel runs and invoke secret_source resolution using the operator's gh/glab/Entire credentials against attacker-selected repositories. Require authentication for exposed binds, or refuse CLI credential sources and mutating APIs unless the server is loopback-only.
+
+Medium
+AI
+Trail Review
+internal/server/runmgr.go:427
+41m ago
+
+If cancellation occurs while all runners are being resolved, context-aware setup failures mark every target dead and this unconditional branch records the run as failed. Check r.ctx.Err() here and finish as cancelled so shutdown/user cancellation is not published as a forge failure.
+
+AI
+Trail Review
+internal/server/runmgr.go:505
+2h ago
+
+This flush emits the level's final fractional bucket as a raw count, but consumers label every bucket as ops/s or failures/s; ticker phase also makes the first post-warmup bucket fractional. Persist and expose each bucket's actual elapsed duration and normalize rates, or align bucket boundaries to the measured window.
+
+AI
+Trail Review
+internal/server/collector.go:61
+2h ago
+
+Every measured agent synchronously acquires the same collector mutex and may grow a latency slice while holding it. Since OnSample runs between operations, contention delays the next Git operation and depresses web throughput relative to the sink-free CLI; use sharded/atomic collection or a non-blocking observation path.
+
+Low
+AI
+Trail Review
+internal/server/events.go:80
+41m ago
+
+A negative Last-Event-ID parses successfully and reaches l.events[after:], causing a negative-slice-index panic in the SSE handler. Clamp parsed IDs to zero or reject negative values before subscribing.
+
+---
+
+Still two trails : Findings
+
+High
+AI
+Trail Review
+internal/server/runmgr.go:648
+49m ago
+
+The accepted remote is returned verbatim in the hello event, status APIs, target labels, and persisted results. A remote containing URL userinfo such as REDACTED therefore serializes that credential despite Target.Secret redaction; reject userinfo for every real target or store and expose a sanitized URL.
+
+AI
+Trail Review
+scripts/compare-local.sh:139
+49m ago
+
+Native mode treats the unauthenticated /api/local/suggest response as the destination for authenticated entire project/repo commands. Any process that occupies the expected localhost port can return a valuable project/repo or hostile cluster and make pushrace.sh write there; derive destinations from authenticated local CLI data or strictly validate the discovered owner/path/hosts before provisioning.
+
+---
+
+Now for trail 3 
+High
+AI
+Trail Review
+.github/workflows/perf-gate.yml:93
+20m ago
+
+The dispatch inputs are substituted directly into Bash source while ACCESS_TOKEN is present, so a value containing shell syntax such as $(...) executes despite the surrounding quotes and can exfiltrate the forge credential or replace the benchmark command. Pass all expression values through env: and reference the resulting shell variables as quoted data.
+
+Medium
+AI
+Trail Review
+.github/workflows/perf-gate.yml:90
+20m ago
+
+The scheduled benchmark uses the default branch strategy, which creates fresh run-ID-scoped refs and never deletes them; nightly runs therefore accumulate remote branches indefinitely and can eventually perturb the repository and measurements. Add an always-run cleanup restricted to the current ForgeMark run's refs, or explicitly choose a cleanup-capable strategy if its workload semantics are acceptable.
+
+AI
+Trail Review
+.github/workflows/perf-gate.yml:103
+20m ago
+
+awk silently coerces a malformed floor such as abc to numeric zero, allowing a broken gate configuration to pass every nonnegative result. Validate that the floor is a finite nonnegative number before comparing it and fail closed on invalid input.
+
+AI
+Trail Review
+.github/workflows/perf-gate.yml:108
+20m ago
+
+This upload step is implicitly guarded by success(), so when the throughput gate fails, the result document that explains the regression is skipped instead of preserved. Use if: always() && steps.cfg.outputs.ready == 'true' and handle the possible missing file when the benchmark itself fails.
+
+AI
+Trail Review
+cmd/forgemark/report.go:151
+36m ago
+
+Session-strategy clone failures are stored in CloneErrors, but because the label is push, this path excludes them and can report 0 errors despite repeated failed session clones. Include clone failures for session levels or explicitly report push and clone error counts separately.
+
+AI
+Trail Review
+cmd/forgemark/report.go:131
+36m ago
+
+Rounding the published value to tenths destroys the stored measurement: for example, one successful operation in a 60-second window is 0.0167 ops/s but is emitted as zero, and smaller regressions disappear. Preserve the full OpsPerSec value for the machine contract and round only the rationale/text display.
+
+AI
+Trail Review
+cmd/forgemark/report.go:59
+36m ago
+
+Format-2 documents can be cancelled or failed while retaining completed levels, but the report ignores doc.State and can publish a positive peak from an incomplete run, allowing a CI gate to pass. Reject or emit zero for non-complete runs before reducing the selected target.
+
+---
+
+Trail FIndinds for trails #2 Findings
+
+High
+AI
+Trail Review
+internal/server/local.go:38
+yesterday
+
+gh auth token honors GH_HOST, so a server configured for GHES can retrieve that host's token even though audience validation then permits only github.com; the token is subsequently sent to GitHub.com as Basic Auth. Pin both token retrieval and user discovery with --hostname github.com.
+
+AI
+Trail Review
+internal/server/runmgr.go:648
+yesterday
+
+The accepted remote is returned verbatim in the hello event, status APIs, target labels, and persisted results. A remote containing URL userinfo such as REDACTED therefore serializes that credential despite Target.Secret redaction; reject userinfo for every real target or store and expose a sanitized URL.
+
+AI
+Trail Review
+scripts/compare-local.sh:139
+yesterday
+
+Native mode treats the unauthenticated /api/local/suggest response as the destination for authenticated entire project/repo commands. Any process that occupies the expected localhost port can return a valuable project/repo or hostile cluster and make pushrace.sh write there; derive destinations from authenticated local CLI data or strictly validate the discovered owner/path/hosts before provisioning.
+
+Medium
+AI
+Trail Review
+internal/server/runmgr.go:451
+yesterday
+
+The run-wide ticker starts before the barrier releases a level and remains active while RunLevel performs unmeasured session-ref cleanup. It therefore emits and persists zero-throughput or stale-latency buckets outside the warmup+duration window, misleading live and historical timelines; gate bucket emission to each level's timed window or start and stop a ticker per level.
+
+AI
+Trail Review
+internal/server/runmgr.go:502
+yesterday
+
+RunLevel returns a partial summary when the run context is cancelled, but its throughput denominator remains the full configured duration. Unconditionally appending it publishes a cancelled mid-warmup or mid-measurement level as a completed zero/low-throughput result; only publish completed windows, or mark partial results and use their actual measured duration.
+
+---
+
+Findings
+
+High
+AI
+Trail Review
+internal/server/local.go:103
+9m ago
+
+The gh and glab cases validate only remote, but any nonempty token_url or jurisdiction makes NewRunner select the Entire token-exchange path. A crafted request can therefore resolve a GitHub/GitLab CLI token and POST it to an attacker-controlled token_url; reject Entire-only fields for these sources or validate the credential source against the selected runner mode before resolving it.
+
+Medium
+AI
+Trail Review
+internal/server/static/js/views/dashboard.js:217
+9m ago
+
+For session workloads this chart reports only push errors, even though failed clones are recorded exclusively in clone_err and can prevent all pushes. A target with repeated clone/auth failures can therefore display zero throughput and zero failures; include session clone errors in the live error series and tile totals, or expose them separately.
+
+AI
+Trail Review
+internal/server/runmgr.go:417
+9m ago
+
+Every real target receives the same workload RunID, so targets pointing at the same repository generate identical per-agent destination refs. Their pushes—and session cleanup deletions—then interfere, producing artificial CAS failures and invalid comparison results; give each target a distinct ref namespace while retaining the shared run ID for reporting.
+
+AI
+Trail Review
+internal/server/runmgr.go:451
+yesterday
+
+The run-wide ticker starts before the barrier releases a level and remains active while RunLevel performs unmeasured session-ref cleanup. It therefore emits and persists zero-throughput or stale-latency buckets outside the warmup+duration window, misleading live and historical timelines; gate bucket emission to each level's timed window or start and stop a ticker per level.
+
+---
+
+Findings
+
+Medium
+AI
+Trail Review
+internal/server/static/js/views/dashboard.js:198
+1m ago
+
+BucketStats.ok is a count since the previous snapshot, not always a one-second rate: the run-wide ticker is unaligned with level starts and the forced final flush is fractional. Plotting the raw count as throughput/ops/s makes first and tail points misleading (especially for sub-second levels); carry the bucket duration and normalize the count, or align and merge buckets to exact one-second intervals.
+
+AI
+Trail Review
+internal/server/runmgr.go:426
+1m ago
+
+Zeroing t.spec.Secret does not clear the copies retained by bench.Runner and its credential provider, while t.runner remains attached to completed runs kept in memory. PATs and Entire subject/access tokens therefore outlive the benchmark indefinitely; release/close the runner and clear its credentials when the run finishes.
+
+AI
+Trail Review
+internal/server/runmgr.go:245
+1m ago
+
+Reject URL parse failures instead of treating them as credential-free: a remote such as REDACTED bypasses this check, then is emitted verbatim in hello/status data and may be persisted as the target label. Return an error when url.Parse fails before checking u.User.
+
+---
+
+Medium
+AI
+Trail Review
+internal/server/static/js/views/race.js:295
+just now
+
+state.finals retains a target's previous-level result when that target dies or is absent from a later level_result. The final latency table can consequently compare that stale lower-concurrency result against other targets' final concurrency and award an invalid winner; associate results with level_index and clear/exclude targets without a result for the final level.
+
+AI
+Trail Review
+internal/server/static/js/views/race.js:269
+just now
+
+The collector's percentile is a rolling window, but this only updates latency when the current bucket has a success and never clears it when the 10-second window expires. A stalled or failed target can therefore keep displaying and winning with an old latency indefinitely; update from the reported rolling percentile whenever it is positive and set the lane latency to null when it is not.
+
+AI
+Trail Review
+internal/server/static/js/views/history.js:84
+just now
+
+Buckets use whole-second timestamps, and a periodic bucket plus the forced tail flush can share the same t; deduplicating timestamps and using find silently discards every later bucket at that second. Preserve each series point (or aggregate duplicate timestamps using their dt_ms) so history replay does not lose measured operations and latency data.
+
+AI
+Trail Review
+internal/server/static/js/views/race.js:188
+just now
+
+A level with zero successful operations publishes p50_ms: 0, so this ascending sort ranks an all-failed target ahead of targets with real positive latency and can declare it the winner. Treat non-positive latency or final.ok == 0 as unavailable/Infinity and exclude it from the latency podium.
+
+AI
+Trail Review
+internal/server/runmgr.go:426
+14m ago
+
+Zeroing t.spec.Secret does not clear the copies retained by bench.Runner and its credential provider, while t.runner remains attached to completed runs kept in memory. PATs and Entire subject/access tokens therefore outlive the benchmark indefinitely; release/close the runner and clear its credentials when the run finishes.
+
+Low
+AI
+Trail Review
+internal/server/static/js/views/race.js:267
+just now
+
+The race's rolling value labeled operations/second stores raw bucket counts, although first and tail buckets can cover only a fraction of a second as indicated by ev.dt_ms. Normalize ok by dt_ms before adding it to l.rates, otherwise the displayed rate is understated or overstated during those buckets.
+
+---
+
+I think changing the origin on the repo to entire repo clone /gh/entireio/forgemark will help
+
+---
+
+Okay, then fix these new Findings
+
+High
+AI
+Trail Review
+internal/server/runmgr.go:437
+2m ago
+
+NewRunner errors can contain raw authenticated response bodies (for example OAuth exchange or Entire info/refs failures), and markDead then broadcasts and persists that text in SSE, status, and result JSON. Redact errors before storing/emitting them, or ensure authenticated HTTP errors never include response bodies that could echo exchanged credentials.
+
+Medium
+AI
+Trail Review
+internal/bench/runner.go:84
+2m ago
+
+Clearing r.creds does not stop an in-flight detached Entire token refresh, which owns the credential provider and can keep exchanging and retaining tokens for up to 30 seconds after the run finishes. Give credential providers a close/cancel-and-wait operation and invoke it before dropping this reference.
+
+AI
+Trail Review
+internal/server/runmgr.go:338
+2m ago
+
+A start request still resolving CLI credentials is not registered as active when shutdown calls stopActive; afterward this background-derived context can launch a benchmark despite server shutdown, causing remote writes to continue or be killed without persistence/cleanup. Reject starts once shutdown begins and derive run/credential resolution from a server-owned cancellable context.
+
+---
+
+Findings
+
+High
+AI
+Trail Review
+internal/server/runmgr.go:437
+18m ago
+
+NewRunner errors can contain raw authenticated response bodies (for example OAuth exchange or Entire info/refs failures), and markDead then broadcasts and persists that text in SSE, status, and result JSON. Redact errors before storing/emitting them, or ensure authenticated HTTP errors never include response bodies that could echo exchanged credentials.
+
+Medium
+AI
+Trail Review
+internal/server/collector.go:61
+just now
+
+Every measured operation contends on this single mutex, and successful operations may allocate while appending latency samples. At high concurrency the web runner can benchmark collector contention rather than the forge; shard or preallocate the sink so OnSample remains non-blocking and allocation-free.
+
+Low
+AI
+Trail Review
+internal/server/demo.go:64
+just now
+
+strconv.ParseFloat accepts NaN and infinities, which pass this comparison; spread=NaN then produces invalid durations and potentially a tight synthetic loop with meaningless results. Reject non-finite values and bound probability fields to valid ranges.
+
+AI
+Trail Review
+internal/server/static/js/views/newrun.js:113
+just now
+
+Changing the remote only updates the authorization gate, leaving the credential control based on the old demoish value. Typing the advertised demo:// URL into a blank custom target therefore still posts secret_source:"gh" and is rejected; rerender or synchronize credential state when the remote changes.
+
+---
+
+Findings
+
+Medium
+AI
+Trail Review
+internal/server/server.go:74
+just now
+
+If ListenAndServe returns a listener/accept error while a run is active, this path returns without cancelling or draining it. Embedded callers can retain remote load after the server disappears, while CLI exit skips session-ref cleanup and result persistence; invoke the shutdown path before propagating the error.
+
+AI
+Trail Review
+internal/server/runmgr.go:264
+just now
+
+url.Parse accepts relative URLs and non-HTTP schemes, so a pasted-secret target such as file://... can drive go-git's local transport while being reported as a smart-HTTP forge benchmark. Require non-demo remotes to be absolute http/https URLs with a host.
+
+AI
+Trail Review
+internal/server/runmgr.go:561
+just now
+
+The barrier releases runners before windowStart is recorded. Each RunLevel starts its timeout and sample clock immediately after Hold, so scheduler delay makes collector samples use an earlier per-target origin while dt_ms and warm-up shading use this later timestamp, inflating live/persisted rates; record one timestamp before release and use it everywhere.
+
+AI
+Trail Review
+internal/server/collector.go:61
+12m ago
+
+Every measured operation contends on this single mutex, and successful operations may allocate while appending latency samples. At high concurrency the web runner can benchmark collector contention rather than the forge; shard or preallocate the sink so OnSample remains non-blocking and allocation-free.
+
+Low
+AI
+Trail Review
+scripts/compare-local.sh:52
+just now
+
+This preflight follows the user's default gh host, but the server later resolves gh auth token --hostname github.com and benchmarks github.com. With GH_HOST set to GHES, the script can validate/provision enterprise repositories and then fail or target a different GitHub repository; pin all script/login gh commands to github.com.
+
+AI
+Trail Review
+internal/server/static/js/views/history.js:91
+just now
+
+History aggregation keys buckets only by whole-second timestamp, so multiple permitted sub-second concurrency levels within one second are merged despite representing different levels. Their counts and durations are blended and only the latest percentile survives; preserve higher-resolution timestamps or include the level in the aggregation key.
