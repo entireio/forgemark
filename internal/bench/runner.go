@@ -185,18 +185,19 @@ func (r *Runner) RunLevel(ctx context.Context, c int, barrier *StartBarrier) (Le
 	}
 
 	total := r.w.Warmup + r.w.Duration
-	lvlCtx, cancel := context.WithTimeout(ctx, total)
-	defer cancel()
-
-	// Use the barrier's shared fire instant as the sample-clock origin so every
-	// target's sample offsets and the coordinator's window/dt_ms timestamps agree;
-	// a per-target time.Now() here would drift by this goroutine's scheduling
-	// delay after release and inflate the derived rates. Single-target CLI runs
-	// have no barrier and just start now.
+	// Origin the sample clock AND the context deadline on the same instant — the
+	// barrier's shared fire time when there is one. Using FiredAt for the offset
+	// origin but a scheduled-now timeout for the deadline let a target released
+	// late run a full `total` from its late start, recording samples past the
+	// shared window end that summarize then miscounts against the fixed duration.
+	// Deriving the deadline from FiredAt()+total stops every target together.
+	// Single-target CLI runs have no barrier and just start now.
 	start := time.Now()
 	if barrier != nil {
 		start = barrier.FiredAt()
 	}
+	lvlCtx, cancel := context.WithDeadline(ctx, start.Add(total))
+	defer cancel()
 	var wg sync.WaitGroup
 	for _, a := range agents {
 		wg.Add(1)

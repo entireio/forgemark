@@ -224,9 +224,12 @@ export function renderDashboard(app, runId) {
       // correct for every strategy (the other is 0), and it's essential for
       // session, where a run whose clones all fail would otherwise show zero
       // errors and zero throughput.
+      // Normalize by dt like throughput: this chart is failures/s, so the
+      // fractional first/tail buckets must be divided by their duration too, or
+      // the error and CAS rates read high/low at the window edges.
       charts.err.push(ev.t, [
-        ...vals.map((v) => (v ? (v.err || 0) + (v.clone_err || 0) : null)),
-        ...vals.map((v) => (v ? v.cas : null)),
+        ...vals.map((v) => (v ? rate((v.err || 0) + (v.clone_err || 0)) : null)),
+        ...vals.map((v) => (v ? rate(v.cas || 0) : null)),
       ]);
 
       // tiles

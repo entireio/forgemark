@@ -85,11 +85,13 @@ export function renderHistory(app, preselect) {
         // the latest rolling percentile) so replay doesn't silently drop the
         // tail's operations, and normalize count/duration to a true ops/s rate.
         // Legacy series without dt_ms fall back to a 1s bucket.
+        // Aggregate by (t, level), keyed on both: within one level a periodic
+        // bucket and the tail flush can share a second and must merge, but two
+        // different levels sharing a boundary second must NOT be blended (summed
+        // counts/durations with a single surviving percentile) — nor may one be
+        // dropped. Both are retained as distinct slots, plotted at x = t nudged
+        // by level so a shared second shows both points instead of losing one.
         const aggOf = (series) => {
-          // Aggregate by (t, level), not t alone: within one level a periodic
-          // bucket and the tail flush can share a second and must merge, but two
-          // different levels sharing a boundary second must NOT be blended (that
-          // would sum counts/durations across levels and keep only one percentile).
           const byKey = new Map();
           for (const p of series) {
             const lvl = p.level ?? 0;
@@ -101,19 +103,18 @@ export function renderHistory(app, preselect) {
             a.last = p;
             byKey.set(k, a);
           }
-          // One value per whole second for the chart: at a boundary second keep
-          // the later level's aggregate rather than blending the two.
-          const byT = new Map();
-          for (const a of byKey.values()) {
-            const prev = byT.get(a.t);
-            if (!prev || a.level > prev.level) byT.set(a.t, a);
-          }
-          return byT;
+          return byKey;
         };
         const aggs = new Map(withSeries.map((t) => [t, aggOf(t.series)]));
-        const ts = [...new Set(withSeries.flatMap((t) => t.series.map((p) => p.t)))].sort((a, b) => a - b);
-        const mkRows = (val) => ts.map((x) => [x, ...withSeries.map((t) => {
-          const a = aggs.get(t).get(x);
+        // Union of every (t, level) slot across targets, ordered by second then
+        // level. x = t + level/1000 keeps slots in the same second distinct and
+        // strictly increasing so uPlot renders each; the offset is sub-second so
+        // it still reads as that second on a time axis.
+        const slots = [...new Set(withSeries.flatMap((t) => [...aggs.get(t).keys()]))]
+          .map((k) => { const [ts, lvl] = k.split('|').map(Number); return { k, t: ts, level: lvl }; })
+          .sort((a, b) => a.t - b.t || a.level - b.level);
+        const mkRows = (val) => slots.map((s) => [s.t + s.level / 1000, ...withSeries.map((t) => {
+          const a = aggs.get(t).get(s.k);
           return a ? val(a) : null;
         })]);
         const rateOf = (a) => {
