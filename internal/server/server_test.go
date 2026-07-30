@@ -139,6 +139,11 @@ func TestStartRunValidation(t *testing.T) {
 	if code, msg := post(`{"confirm_authorized":true,"targets":[{"remote":"file:///tmp/repo","repos":["a/b"],"secret":"t"}]}`); code != http.StatusBadRequest || !strings.Contains(msg, "absolute http") {
 		t.Fatalf("file:// remote = %d %q, want 400 absolute-http", code, msg)
 	}
+	// A remote must carry no query/fragment — Remote is echoed in status/results,
+	// so ?access_token=… would serialize a credential there.
+	if code, msg := post(`{"confirm_authorized":true,"targets":[{"remote":"https://host/p?access_token=sekret","repos":["a/b"],"secret":"t"}]}`); code != http.StatusBadRequest || !strings.Contains(msg, "query or fragment") {
+		t.Fatalf("query remote = %d %q, want 400 query/fragment", code, msg)
+	}
 	// A CLI-sourced credential must not be materialized for a foreign audience.
 	if code, msg := post(`{"confirm_authorized":true,"targets":[{"remote":"https://evil.example","repos":["a/b"],"secret_source":"gh"}]}`); code != http.StatusBadRequest || !strings.Contains(msg, "github.com") {
 		t.Fatalf("gh source with non-github remote = %d %q, want 400 github.com", code, msg)

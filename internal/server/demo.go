@@ -118,11 +118,18 @@ func (d *demoRunner) RunLevel(ctx context.Context, c int, barrier *bench.StartBa
 		barrier.Hold()
 	}
 
+	// Origin both the deadline and the sample clock on the barrier's shared fire
+	// instant, exactly like bench.Runner, so scheduler delay after release can't
+	// shift or extend the demo's window past the real targets it races against
+	// (which would give it extra ops and make live buckets disagree with the
+	// final result).
 	total := d.w.Warmup + d.w.Duration
-	lctx, cancel := context.WithTimeout(ctx, total)
-	defer cancel()
-
 	start := time.Now()
+	if barrier != nil {
+		start = barrier.FiredAt()
+	}
+	lctx, cancel := context.WithDeadline(ctx, start.Add(total))
+	defer cancel()
 	var mu sync.Mutex
 	var all []bench.Sample
 	var wg sync.WaitGroup

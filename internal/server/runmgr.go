@@ -268,12 +268,20 @@ func (m *RunManager) start(req startRequest) (*Run, []string, error) {
 		if u.User != nil {
 			return nil, nil, fmt.Errorf("target %s: remote must not embed credentials in the URL (user:...@); use secret or secret_source", name)
 		}
-		// A real target must be an absolute http(s) URL with a host. url.Parse
-		// accepts relative URLs and other schemes, so without this a remote like
-		// file:///repo would drive go-git's local transport while being reported
-		// as a smart-HTTP forge benchmark.
-		if !isDemoRemote(bt.Remote) && ((u.Scheme != "http" && u.Scheme != "https") || u.Host == "") {
-			return nil, nil, fmt.Errorf("target %s: remote must be an absolute http(s) URL with a host, got %q", name, bt.Remote)
+		// A real target must be an absolute http(s) URL with a host, and carry no
+		// query or fragment. url.Parse accepts relative URLs and other schemes, so
+		// without the scheme/host check a remote like file:///repo would drive
+		// go-git's local transport while posing as a smart-HTTP forge; and a
+		// remote like https://host/path?access_token=… would serialize a
+		// credential into the SSE/status/label data the Remote is echoed into.
+		// (demo:// legitimately uses the query for its synthetic knobs.)
+		if !isDemoRemote(bt.Remote) {
+			switch {
+			case (u.Scheme != "http" && u.Scheme != "https") || u.Host == "":
+				return nil, nil, fmt.Errorf("target %s: remote must be an absolute http(s) URL with a host, got %q", name, bt.Remote)
+			case u.RawQuery != "" || u.Fragment != "":
+				return nil, nil, fmt.Errorf("target %s: remote must not carry a query or fragment (repos are appended to the base URL); got %q", name, bt.Remote)
+			}
 		}
 		if ts.SecretSource != "" && ts.Secret != "" {
 			return nil, nil, fmt.Errorf("target %s: pass secret or secret_source, not both", name)
@@ -697,9 +705,6 @@ func (r *Run) emitBucket(force bool) {
 	// per second. Lock order is always r.mu → collector.mu, never reversed.
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if !force && !r.measuring {
-		return // outside a timed window: don't rotate collectors or emit idle buckets
-	}
 	// A bucket's OK count spans the interval since the previous bucket, which is
 	// only ~1s for a steady tick but is fractional for the first tick after the
 	// warm-up boundary and for the forced tail flush. Carry the bucket's actual
@@ -710,6 +715,14 @@ func (r *Run) emitBucket(force bool) {
 	wallNow := time.Now()
 	measStart := r.windowStart.Add(r.bw.Warmup)
 	measEnd := measStart.Add(r.bw.Duration)
+	// A periodic tick emits only inside an open window. measuring stays true
+	// through RunLevel's post-window session-ref cleanup (up to 30s), so also
+	// gate on the deadline: past measEnd the ticks are cleanup-time buckets with
+	// zero duration and stale percentiles, which consumers would misread. The
+	// forced tail flush (force=true) still emits the window's real remainder.
+	if !force && (!r.measuring || wallNow.After(measEnd)) {
+		return
+	}
 	lo, hi := r.lastBucketAt, wallNow
 	if lo.Before(measStart) {
 		lo = measStart
