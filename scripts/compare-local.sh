@@ -47,6 +47,10 @@ CONCURRENCY="${FM_CONCURRENCY:-1,4}"
 DURATION_SEC="${FM_DURATION_SEC:-30}"
 WARMUP_SEC="${FM_WARMUP_SEC:-5}"
 
+# Pin every gh command to github.com. The server resolves `gh auth token
+# --hostname github.com` and benchmarks github.com, so a user's GH_HOST (e.g. a
+# GHES host) must not make this script validate/provision a different forge.
+export GH_HOST=github.com
 command -v gh >/dev/null || { echo "compare-local: needs the gh CLI — run scripts/login.sh" >&2; exit 1; }
 command -v python3 >/dev/null || { echo "compare-local: needs python3" >&2; exit 1; }
 gh auth status >/dev/null 2>&1 || { echo "compare-local: gh is not authenticated — run scripts/login.sh" >&2; exit 1; }

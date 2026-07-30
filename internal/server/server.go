@@ -69,24 +69,29 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 	srv := &http.Server{Addr: s.addr, Handler: s.mux, ReadHeaderTimeout: 10 * time.Second}
 	errc := make(chan error, 1)
 	go func() { errc <- srv.ListenAndServe() }()
+	// drain stops new starts and cancels+waits the active run so we never return
+	// while remote load continues or results/refs are unpersisted. Used on both
+	// exit paths: a normal ctx cancellation and a listener/accept failure — the
+	// latter must drain too, or an embedded caller leaks the run and a CLI exit
+	// skips session-ref cleanup and result persistence.
+	drain := func() {
+		// deleteRef runs on a detached 30s context, so wait beyond that so cleanup
+		// finishes before we give up.
+		s.mgr.beginShutdown()
+		s.mgr.stopActive(shutdownDrain)
+	}
 	select {
 	case err := <-errc:
+		// The listener already returned, so there's no srv.Shutdown to do — just
+		// drain the run before propagating the error.
+		drain()
 		return err
 	case <-ctx.Done():
 		// Stop the active run first: cancel it and wait for its coordinator to
 		// persist and clean up. This also ends the load and closes the SSE
 		// streams, so the HTTP shutdown below completes promptly instead of
 		// blocking on long-lived event connections.
-		//
-		// Cancel the base context first so no new run can start (or keep
-		// resolving credentials) during shutdown, then wait for the active run.
-		s.mgr.beginShutdown()
-		// The wait must outlast a run's own cleanup budget, or we'd return (and,
-		// for the embedded CLI serve, exit the process) while a session's ref
-		// deletion is still in flight — leaking the ephemeral refs deleteRef
-		// exists to remove. deleteRef runs on a detached 30s context, so give the
-		// coordinator margin beyond that to drain before we give up.
-		s.mgr.stopActive(shutdownDrain)
+		drain()
 		shutCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
 		_ = srv.Shutdown(shutCtx)

@@ -105,6 +105,7 @@ type StartBarrier struct {
 	arrived chan struct{}
 	release chan struct{}
 	n       int
+	firedAt time.Time // set before release closes; the shared start instant
 }
 
 // NewStartBarrier makes a barrier expecting n participants.
@@ -126,8 +127,20 @@ func (b *StartBarrier) Await() {
 	}
 }
 
-// Fire releases every held participant to begin its timed window together.
-func (b *StartBarrier) Fire() { close(b.release) }
+// Fire releases every held participant to begin its timed window together. It
+// stamps firedAt before closing release, so every participant and the
+// coordinator share one start instant (via FiredAt) rather than each reading
+// its own time.Now after being scheduled — which would skew the sample clock
+// against the window/dt_ms timestamps. The close is a happens-before edge, so
+// the write is visible to every Hold() that returns.
+func (b *StartBarrier) Fire() {
+	b.firedAt = time.Now()
+	close(b.release)
+}
+
+// FiredAt is the shared start instant, valid after Fire (for the coordinator) or
+// after Hold returns (for a participant).
+func (b *StartBarrier) FiredAt() time.Time { return b.firedAt }
 
 // RunLevel runs a single concurrency level: build c agents, wait at the
 // barrier so all targets start together, run for warmup+duration, then fold
@@ -175,7 +188,15 @@ func (r *Runner) RunLevel(ctx context.Context, c int, barrier *StartBarrier) (Le
 	lvlCtx, cancel := context.WithTimeout(ctx, total)
 	defer cancel()
 
+	// Use the barrier's shared fire instant as the sample-clock origin so every
+	// target's sample offsets and the coordinator's window/dt_ms timestamps agree;
+	// a per-target time.Now() here would drift by this goroutine's scheduling
+	// delay after release and inflate the derived rates. Single-target CLI runs
+	// have no barrier and just start now.
 	start := time.Now()
+	if barrier != nil {
+		start = barrier.FiredAt()
+	}
 	var wg sync.WaitGroup
 	for _, a := range agents {
 		wg.Add(1)

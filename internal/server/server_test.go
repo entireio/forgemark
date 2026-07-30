@@ -134,6 +134,11 @@ func TestStartRunValidation(t *testing.T) {
 	if code, msg := post(`{"confirm_authorized":true,"targets":[{"remote":"https://user:tok@git.example","repos":["a/b"],"secret":"t"}]}`); code != http.StatusBadRequest || !strings.Contains(msg, "embed credentials") {
 		t.Fatalf("userinfo remote = %d %q, want 400 embed-credentials", code, msg)
 	}
+	// A real target must be an absolute http(s) URL with a host — a file:// (or
+	// scheme-relative) remote would drive go-git's local transport.
+	if code, msg := post(`{"confirm_authorized":true,"targets":[{"remote":"file:///tmp/repo","repos":["a/b"],"secret":"t"}]}`); code != http.StatusBadRequest || !strings.Contains(msg, "absolute http") {
+		t.Fatalf("file:// remote = %d %q, want 400 absolute-http", code, msg)
+	}
 	// A CLI-sourced credential must not be materialized for a foreign audience.
 	if code, msg := post(`{"confirm_authorized":true,"targets":[{"remote":"https://evil.example","repos":["a/b"],"secret_source":"gh"}]}`); code != http.StatusBadRequest || !strings.Contains(msg, "github.com") {
 		t.Fatalf("gh source with non-github remote = %d %q, want 400 github.com", code, msg)

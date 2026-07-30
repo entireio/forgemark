@@ -86,16 +86,29 @@ export function renderHistory(app, preselect) {
         // tail's operations, and normalize count/duration to a true ops/s rate.
         // Legacy series without dt_ms fall back to a 1s bucket.
         const aggOf = (series) => {
-          const m = new Map();
+          // Aggregate by (t, level), not t alone: within one level a periodic
+          // bucket and the tail flush can share a second and must merge, but two
+          // different levels sharing a boundary second must NOT be blended (that
+          // would sum counts/durations across levels and keep only one percentile).
+          const byKey = new Map();
           for (const p of series) {
-            const a = m.get(p.t) || { ok: 0, clone_ok: 0, dt: 0, last: p };
+            const lvl = p.level ?? 0;
+            const k = p.t + '|' + lvl;
+            const a = byKey.get(k) || { t: p.t, level: lvl, ok: 0, clone_ok: 0, dt: 0, last: p };
             a.ok += p.ok || 0;
             a.clone_ok += p.clone_ok || 0;
             a.dt += p.dt_ms || 1000;
             a.last = p;
-            m.set(p.t, a);
+            byKey.set(k, a);
           }
-          return m;
+          // One value per whole second for the chart: at a boundary second keep
+          // the later level's aggregate rather than blending the two.
+          const byT = new Map();
+          for (const a of byKey.values()) {
+            const prev = byT.get(a.t);
+            if (!prev || a.level > prev.level) byT.set(a.t, a);
+          }
+          return byT;
         };
         const aggs = new Map(withSeries.map((t) => [t, aggOf(t.series)]));
         const ts = [...new Set(withSeries.flatMap((t) => t.series.map((p) => p.t)))].sort((a, b) => a - b);

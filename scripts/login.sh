@@ -6,6 +6,9 @@
 # alone, missing ones launch the CLI's own interactive login flow.
 set -euo pipefail
 
+# Pin gh to github.com so this login (and the token forgemark later reads with
+# --hostname github.com) target the same forge, regardless of any GH_HOST set.
+export GH_HOST=github.com
 command -v gh >/dev/null || { echo "login: gh CLI not found — install it from https://cli.github.com" >&2; exit 1; }
 command -v entire >/dev/null || { echo "login: entire CLI not found — install it from https://docs.entire.io" >&2; exit 1; }
 

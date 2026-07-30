@@ -268,6 +268,13 @@ func (m *RunManager) start(req startRequest) (*Run, []string, error) {
 		if u.User != nil {
 			return nil, nil, fmt.Errorf("target %s: remote must not embed credentials in the URL (user:...@); use secret or secret_source", name)
 		}
+		// A real target must be an absolute http(s) URL with a host. url.Parse
+		// accepts relative URLs and other schemes, so without this a remote like
+		// file:///repo would drive go-git's local transport while being reported
+		// as a smart-HTTP forge benchmark.
+		if !isDemoRemote(bt.Remote) && ((u.Scheme != "http" && u.Scheme != "https") || u.Host == "") {
+			return nil, nil, fmt.Errorf("target %s: remote must be an absolute http(s) URL with a host, got %q", name, bt.Remote)
+		}
 		if ts.SecretSource != "" && ts.Secret != "" {
 			return nil, nil, fmt.Errorf("target %s: pass secret or secret_source, not both", name)
 		}
@@ -558,7 +565,10 @@ func (r *Run) coordinate(m *RunManager) {
 		// pollute the live and persisted timelines, so emission is gated to here.
 		r.mu.Lock()
 		r.measuring = true
-		r.windowStart = time.Now()
+		// Use the barrier's shared fire instant, the same origin RunLevel gives the
+		// sample clock, so dt_ms and warm-up shading line up with the samples
+		// instead of drifting by post-release scheduler delay.
+		r.windowStart = barrier.FiredAt()
 		r.lastBucketAt = r.windowStart
 		r.mu.Unlock()
 		// Emit level_start only now, at the instant the timed window opens. The
