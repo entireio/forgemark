@@ -69,8 +69,15 @@ export function renderDashboard(app, runId) {
       isClone ? 'successful clones per second' : 'successful pushes per second' + (isSession ? ' · dashed = clones/s' : ''),
       { series: tputSeries, unit: fmtNum, bands }).chart;
 
-    const latHead = mk('Latency', `rolling 10s window · shaded = warm-up`, {
-      series: targets.map((t) => ({ label: t.name, color: targetColor(t.id) })),
+    // Session interleaves two op streams with very different timings; a chart
+    // labeled plain "Latency" that silently showed only pushes would present
+    // half the workload as the whole. Clones get their own dashed series.
+    const latSeries = targets.map((t) => ({ label: t.name, color: targetColor(t.id) }));
+    if (isSession) {
+      for (const t of targets) latSeries.push({ label: `${t.name} clones`, color: targetColor(t.id), dash: [5, 5] });
+    }
+    const latHead = mk('Latency', `rolling 10s window · shaded = warm-up${isSession ? ' · dashed = clones' : ''}`, {
+      series: latSeries,
       unit: fmtMs, bands,
     });
     charts.lat = latHead.chart;
@@ -217,6 +224,16 @@ export function renderDashboard(app, runId) {
           : { p50: v.p50_ms, p95: v.p95_ms, p99: v.p99_ms };
         return p.p95 > 0 ? p : null;
       });
+      // Session: clone percentiles ride as extra columns after the push ones,
+      // matching the dashed series order buildCharts registered. latRows keeps
+      // the full width so the p50/p95/p99 toggle refeeds clone lines too.
+      if (state.strategy === 'session') {
+        latVals.push(...vals.map((v) => {
+          if (!v) return null;
+          const p = { p50: v.clone_p50_ms, p95: v.clone_p95_ms, p99: v.clone_p99_ms };
+          return p.p95 > 0 ? p : null;
+        }));
+      }
       state.latRows.push({ ts: ev.t, vals: latVals });
       charts.lat.push(ev.t, latVals.map((v) => (v ? v[pct] : null)));
 

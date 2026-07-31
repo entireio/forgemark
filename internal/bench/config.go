@@ -34,12 +34,16 @@ type Target struct {
 	ClientID     string // public OAuth client id; empty defaults to entire-cli
 }
 
-// maxConcurrency is a hard safety cap on one level's agent count, not a
-// tuning suggestion: a single host can't generate a meaningful benchmark
-// anywhere near it, and an unbounded int from the server API would otherwise
-// reach make([]*agent, c) and c goroutine spawns — a remotely triggerable
-// panic/OOM on an exposed bind with a demo:// target.
-const maxConcurrency = 4096
+// Hard safety caps, not tuning suggestions: a single host can't generate a
+// meaningful benchmark anywhere near them, and unbounded values from the
+// server API would otherwise reach make([]*agent, c), c goroutine spawns,
+// and per-sample retention for the whole window — panic/OOM territory.
+const (
+	maxConcurrency = 4096          // agents per level
+	maxLevels      = 16            // levels per sweep
+	maxDuration    = 6 * time.Hour // measured window per level
+	maxWarmup      = time.Hour     // warm-up per level
+)
 
 // Workload is the target-independent shape of a run: strategy, sweep, and
 // commit content. One Workload is shared by every target of a comparison run.
@@ -75,16 +79,19 @@ func (w Workload) Validate() error {
 	if len(w.Concurrency) == 0 {
 		return errors.New("no concurrency levels")
 	}
+	if len(w.Concurrency) > maxLevels {
+		return fmt.Errorf("too many concurrency levels: %d (max %d)", len(w.Concurrency), maxLevels)
+	}
 	for _, n := range w.Concurrency {
 		if n < 1 || n > maxConcurrency {
 			return fmt.Errorf("invalid concurrency %d (must be 1..%d)", n, maxConcurrency)
 		}
 	}
-	if w.Duration <= 0 {
-		return errors.New("-duration must be > 0")
+	if w.Duration <= 0 || w.Duration > maxDuration {
+		return fmt.Errorf("-duration must be > 0 and <= %s", maxDuration)
 	}
-	if w.Warmup < 0 {
-		return errors.New("-warmup must be >= 0")
+	if w.Warmup < 0 || w.Warmup > maxWarmup {
+		return fmt.Errorf("-warmup must be >= 0 and <= %s", maxWarmup)
 	}
 	if w.Strategy != "clone" {
 		if w.Commit.FilesMin < 1 {

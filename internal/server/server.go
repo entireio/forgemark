@@ -48,10 +48,16 @@ func New(addr, resultsDir string) *Server {
 	// rebinds a hostname to loopback can otherwise read run status, live events,
 	// and history — which name targets and remotes — through a spoofed Host. The
 	// static file server stays open so the SPA itself loads.
-	s.mux.HandleFunc("POST /api/runs", s.requireLocalOrigin(s.handleStartRun))
+	// Starting and cancelling runs additionally requires the CONNECTION PEER to
+	// be loopback: on an exposed bind, remote browsers get a read-only race
+	// viewer (status, events, history), while only the operator's own machine
+	// can drive runs. Without this, any reachable client could start demo://
+	// runs — no credentials needed — and demo agents burn real CPU and retain
+	// every sample in memory, an unauthenticated resource-exhaustion hole.
+	s.mux.HandleFunc("POST /api/runs", s.requireLocalOrigin(s.requireLoopbackPeer(s.handleStartRun)))
 	s.mux.HandleFunc("GET /api/runs", s.requireLocalOrigin(s.handleListRuns))
 	s.mux.HandleFunc("GET /api/runs/{id}", s.requireLocalOrigin(s.handleGetRun))
-	s.mux.HandleFunc("POST /api/runs/{id}/cancel", s.requireLocalOrigin(s.handleCancelRun))
+	s.mux.HandleFunc("POST /api/runs/{id}/cancel", s.requireLocalOrigin(s.requireLoopbackPeer(s.handleCancelRun)))
 	s.mux.HandleFunc("GET /api/runs/{id}/events", s.requireLocalOrigin(s.handleRunEvents))
 	s.mux.HandleFunc("GET /api/history", s.requireLocalOrigin(s.handleHistory))
 	s.mux.HandleFunc("GET /api/history/{file}", s.requireLocalOrigin(s.handleHistoryDoc))
@@ -127,6 +133,23 @@ func (s *Server) requireLocalOrigin(next http.HandlerFunc) http.HandlerFunc {
 				http.Error(w, "forbidden origin", http.StatusForbidden)
 				return
 			}
+		}
+		next(w, r)
+	}
+}
+
+// requireLoopbackPeer requires the request's TCP peer to be the loopback
+// interface. Unlike requireLoopbackBind (a bind-level policy), this is
+// per-connection: on an exposed -addr the operator's own browser (connecting
+// via 127.0.0.1) can still drive runs while every remote client is limited to
+// watching. A TCP source address can't be spoofed on an established
+// connection; the one honest bypass is a local reverse proxy, which is the
+// operator explicitly re-exposing the control surface.
+func (s *Server) requireLoopbackPeer(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !IsLoopbackHost(hostnameOnly(r.RemoteAddr)) {
+			http.Error(w, "starting or cancelling runs requires a loopback connection: remote clients get a read-only view (demo runs still consume this machine's CPU and memory)", http.StatusForbidden)
+			return
 		}
 		next(w, r)
 	}

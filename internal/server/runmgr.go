@@ -519,6 +519,39 @@ func (r *Run) coordinate(m *RunManager) {
 	}
 	r.setState("running")
 
+	// Sweep stale refs from previous runs before any level pushes. Doing it
+	// HERE — inside the run, under the manager's one-active-run rule — makes
+	// the deletion atomic with run registration: a helper script cleaning
+	// refs externally could race a concurrently started run and delete refs
+	// it is actively pushing. It also covers every forge uniformly (EntireDB
+	// included). Best-effort: a failed sweep biases later negotiation but
+	// must not kill the target, so it warns instead of marking dead.
+	var cwg sync.WaitGroup
+	for _, t := range r.aliveTargets() {
+		c, ok := t.runner.(interface {
+			CleanStaleBenchRefs(context.Context) (int, error)
+		})
+		if !ok {
+			continue // demo targets have no refs
+		}
+		cwg.Add(1)
+		go func(t *targetState) {
+			defer cwg.Done()
+			n, err := c.CleanStaleBenchRefs(r.ctx)
+			if err != nil && r.ctx.Err() == nil {
+				r.log.emit("target_error", map[string]any{
+					"target": t.id, "level_index": -1, "fatal": false,
+					"message": fmt.Sprintf("stale bench-ref sweep failed (advertisements may bias results): %v", err),
+				})
+				return
+			}
+			if n > 0 {
+				r.log.emit("cleanup", map[string]any{"target": t.id, "deleted": n})
+			}
+		}(t)
+	}
+	cwg.Wait()
+
 	// One ticker per run: a single bucket event per second carries every
 	// target's stats, so chart columns align by construction.
 	tickerDone := make(chan struct{})

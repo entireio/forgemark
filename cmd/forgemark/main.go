@@ -107,6 +107,15 @@ func run() error {
 	fmt.Printf("           sweep=%v duration=%s warmup=%s\n", cfg.workload.Concurrency, cfg.workload.Duration, cfg.workload.Warmup)
 	fmt.Println()
 
+	// Sweep refs left by earlier runs so this run's receive-pack advertisement
+	// isn't inflated by their leftovers (which would make results depend on
+	// how many benchmarks ran before). Best-effort: warn and measure anyway.
+	if n, err := r.CleanStaleBenchRefs(ctx); err != nil {
+		fmt.Fprintf(os.Stderr, "forgemark: warning: stale bench-ref sweep failed (advertisements may bias results): %v\n", err)
+	} else if n > 0 {
+		fmt.Printf("forgemark: deleted %d stale bench refs from previous runs\n\n", n)
+	}
+
 	var results []bench.LevelResult
 	for _, c := range cfg.workload.Concurrency {
 		if ctx.Err() != nil {

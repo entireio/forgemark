@@ -135,6 +135,7 @@ export function renderHistory(app, preselect) {
           const p = isClone ? a.last.clone_p95_ms : a.last.p95_ms;
           return p > 0 ? p : null;
         };
+        const cloneP95Of = (a) => (a.last.clone_p95_ms > 0 ? a.last.clone_p95_ms : null);
         // Session runs stored both sides of the workload; replay both, exactly
         // like the live dashboard: solid pushes/s plus a dashed clones/s series
         // per target. Without this the stored clone series silently vanishes.
@@ -144,8 +145,14 @@ export function renderHistory(app, preselect) {
         }
         const tput = timeChart(tputEl, { series: tputSeries, unit: fmtNum });
         tput.setAll(mkRows(isSession ? [rateOf, cloneRateOf] : [rateOf]));
-        const lat = timeChart(latEl, { series: withSeries.map((t) => ({ label: t.name, color: colors.get(t) || targetColor(0) })), unit: fmtMs });
-        lat.setAll(mkRows([p95Of]));
+        // Latency replays both sides of a session run too (dashed = clones),
+        // mirroring the live dashboard.
+        const latSeries = withSeries.map((t) => ({ label: t.name, color: colors.get(t) || targetColor(0) }));
+        if (isSession) {
+          latSeries.push(...withSeries.map((t) => ({ label: `${t.name} clones`, color: colors.get(t) || targetColor(0), dash: [5, 5] })));
+        }
+        const lat = timeChart(latEl, { series: latSeries, unit: fmtMs });
+        lat.setAll(mkRows(isSession ? [p95Of, cloneP95Of] : [p95Of]));
         liveCharts.push(tput, lat);
       }
     }

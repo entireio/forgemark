@@ -268,6 +268,38 @@ func TestCredentialsRejectedOnNonLoopback(t *testing.T) {
 	}
 }
 
+// Run start/cancel require the TCP peer to be loopback: on an exposed bind a
+// remote client must get a read-only viewer, never the ability to start
+// demo:// runs (uncredentialed, but they burn this machine's CPU and retain
+// samples in memory) or cancel the operator's run. Reads stay available.
+func TestRunControlRequiresLoopbackPeer(t *testing.T) {
+	s := New("127.0.0.1:0", t.TempDir())
+	do := func(method, path, remote string) int {
+		req := httptest.NewRequest(method, path, strings.NewReader(demoBody(1, "1")))
+		req.Host = "127.0.0.1:8377" // satisfy the DNS-rebinding Host guard; the peer gate is what's under test
+		req.RemoteAddr = remote
+		rec := httptest.NewRecorder()
+		s.Handler().ServeHTTP(rec, req)
+		return rec.Code
+	}
+	if code := do("POST", "/api/runs", "203.0.113.9:44321"); code != http.StatusForbidden {
+		t.Fatalf("remote-peer start = %d, want 403", code)
+	}
+	if code := do("POST", "/api/runs/x/cancel", "203.0.113.9:44321"); code != http.StatusForbidden {
+		t.Fatalf("remote-peer cancel = %d, want 403", code)
+	}
+	if code := do("GET", "/api/runs", "203.0.113.9:44321"); code != http.StatusOK {
+		t.Fatalf("remote-peer list = %d, want 200 (reads stay open)", code)
+	}
+	// The operator's own loopback connection still drives runs (any non-403
+	// outcome proves the gate passed; this one succeeds outright).
+	if code := do("POST", "/api/runs", "127.0.0.1:50000"); code != http.StatusCreated {
+		t.Fatalf("loopback-peer start = %d, want 201", code)
+	}
+	s.mgr.beginShutdown()
+	s.mgr.stopActive(5 * time.Second)
+}
+
 func TestValidateSecretAudience(t *testing.T) {
 	ok := func(src, remote, tok, jur string) {
 		if err := validateSecretAudience(src, remote, tok, jur); err != nil {

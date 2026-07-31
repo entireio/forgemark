@@ -28,6 +28,25 @@ func TestValidateBoundsConcurrency(t *testing.T) {
 			t.Errorf("Validate(concurrency=%v) = nil, want error", levels)
 		}
 	}
+	// Sweep length and window durations are bounded too: many levels × long
+	// windows is the other axis of the same unauthenticated-work problem.
+	w.Concurrency = make([]int, maxLevels+1)
+	for i := range w.Concurrency {
+		w.Concurrency[i] = 1
+	}
+	if err := w.Validate(); err == nil {
+		t.Errorf("Validate(%d levels) = nil, want error", maxLevels+1)
+	}
+	w.Concurrency = []int{1}
+	w.Duration = maxDuration + time.Second
+	if err := w.Validate(); err == nil {
+		t.Error("Validate(over-long duration) = nil, want error")
+	}
+	w.Duration = time.Second
+	w.Warmup = maxWarmup + time.Second
+	if err := w.Validate(); err == nil {
+		t.Error("Validate(over-long warmup) = nil, want error")
+	}
 }
 
 func TestDestRef(t *testing.T) {

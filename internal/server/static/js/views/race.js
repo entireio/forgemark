@@ -278,8 +278,12 @@ export function renderRace(app, arg) {
     // with final-level rates/latencies here would put incompatible windows
     // side by side in one row of a multi-level run; the note says which
     // window is being scored, and the lanes above keep the run totals.
-    const failsOf = (f) => f.cas_failures + f.other_errors + (state.isSession ? f.clone_errors || 0 : 0);
+    // Push and clone are separate op streams for the session strategy, so
+    // they get separate columns rather than a blended failure count that
+    // would make successful pushes look unreliable when clones failed.
+    const failsOf = (f) => f.cas_failures + f.other_errors;
     const finalConc = state.hello && state.finalLevel >= 0 ? state.hello.levels[state.finalLevel] : null;
+    const sess = state.isSession;
     finishBox.append(h('div', { class: 'race-podium card' },
       h('div', { class: 'race-winner' },
         tie
@@ -289,7 +293,8 @@ export function renderRace(app, arg) {
         `scored on the final level's measured window${finalConc != null ? ` (c=${finalConc})` : ''} — the lane counters above are whole-run totals`),
       h('table', { class: 'results' },
         h('thead', {}, h('tr', {}, h('th', {}, ''), h('th', {}, 'target'), h('th', {}, opsNoun()),
-          h('th', {}, `${opsNoun()}/s`), h('th', {}, 'p50'), h('th', {}, 'p95'), h('th', {}, 'failures'))),
+          h('th', {}, `${opsNoun()}/s`), h('th', {}, 'p50'), h('th', {}, 'p95'), h('th', {}, 'failures'),
+          sess ? [h('th', {}, 'clones'), h('th', {}, 'clone err')] : null)),
         h('tbody', {}, rows.map((r, i) => {
           const f = finalOf(r); // final-level result only; a stale earlier level shows '–'
           return h('tr', {},
@@ -299,7 +304,11 @@ export function renderRace(app, arg) {
             h('td', {}, f ? f.ops_per_sec.toFixed(1) : '–'),
             h('td', {}, f ? fmtMs(f.p50_ms) : '–'),
             h('td', {}, f ? fmtMs(f.p95_ms) : '–'),
-            h('td', { class: f && failsOf(f) > 0 ? 'num-bad' : '' }, f ? fmtInt(failsOf(f)) : '–'));
+            h('td', { class: f && failsOf(f) > 0 ? 'num-bad' : '' }, f ? fmtInt(failsOf(f)) : '–'),
+            sess ? [
+              h('td', {}, f ? fmtInt(f.clone_ok || 0) : '–'),
+              h('td', { class: f && f.clone_errors > 0 ? 'num-bad' : '' }, f ? fmtInt(f.clone_errors || 0) : '–'),
+            ] : null);
         })))));
     const saved = resultsSavedBanner(ev);
     if (saved) finishBox.append(saved);
