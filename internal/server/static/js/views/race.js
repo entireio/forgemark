@@ -196,7 +196,10 @@ export function renderRace(app, arg) {
     const rows = (state.hello ? state.hello.targets : [])
       .map((t) => ({ t, lane: state.lanes[t.id], final: state.finals[t.id] }))
       .filter((r) => r.lane);
-    if (!rows.length || !rows.some((r) => r.lane.ok > 0)) return;
+    // No success gate here: a completed run where every operation failed is
+    // still a measured outcome — each metric branch below renders its own
+    // "no successful …" verdict, and the table shows the failure counts.
+    if (!rows.length) return;
 
     // Rank and phrase the verdict by the metric being watched. Final stats
     // come from the measured window (level_result), not the live counters.

@@ -2,9 +2,33 @@ package bench
 
 import (
 	"testing"
+	"time"
 
 	"github.com/go-git/go-git/v6/plumbing"
 )
+
+// Concurrency is bounded on both sides: a non-positive level is meaningless,
+// and an unbounded one (the API accepts arbitrary ints) would reach
+// make([]*agent, c) and c goroutine spawns — a remotely triggerable
+// panic/OOM on an exposed bind with a demo:// target.
+func TestValidateBoundsConcurrency(t *testing.T) {
+	w := Workload{
+		Strategy: "branch", Duration: time.Second,
+		Commit: CommitConfig{FilesMin: 1, FilesMax: 1, FileSize: 1},
+	}
+	for _, levels := range [][]int{{1}, {maxConcurrency}, {1, 4, 128}} {
+		w.Concurrency = levels
+		if err := w.Validate(); err != nil {
+			t.Errorf("Validate(concurrency=%v) = %v, want nil", levels, err)
+		}
+	}
+	for _, levels := range [][]int{{0}, {-1}, {maxConcurrency + 1}, {1<<63 - 1}, {1, 1 << 40}} {
+		w.Concurrency = levels
+		if err := w.Validate(); err == nil {
+			t.Errorf("Validate(concurrency=%v) = nil, want error", levels)
+		}
+	}
+}
 
 func TestDestRef(t *testing.T) {
 	// The prefix is prepended verbatim before the run ID; the assembled ref is what

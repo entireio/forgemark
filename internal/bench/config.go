@@ -34,6 +34,13 @@ type Target struct {
 	ClientID     string // public OAuth client id; empty defaults to entire-cli
 }
 
+// maxConcurrency is a hard safety cap on one level's agent count, not a
+// tuning suggestion: a single host can't generate a meaningful benchmark
+// anywhere near it, and an unbounded int from the server API would otherwise
+// reach make([]*agent, c) and c goroutine spawns — a remotely triggerable
+// panic/OOM on an exposed bind with a demo:// target.
+const maxConcurrency = 4096
+
 // Workload is the target-independent shape of a run: strategy, sweep, and
 // commit content. One Workload is shared by every target of a comparison run.
 type Workload struct {
@@ -69,8 +76,8 @@ func (w Workload) Validate() error {
 		return errors.New("no concurrency levels")
 	}
 	for _, n := range w.Concurrency {
-		if n < 1 {
-			return fmt.Errorf("invalid concurrency %d", n)
+		if n < 1 || n > maxConcurrency {
+			return fmt.Errorf("invalid concurrency %d (must be 1..%d)", n, maxConcurrency)
 		}
 	}
 	if w.Duration <= 0 {

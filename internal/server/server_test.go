@@ -112,6 +112,11 @@ func TestStartRunValidation(t *testing.T) {
 	if code, msg := post(`{"confirm_authorized":true,"workload":{"strategy":"bogus"},"targets":[{"remote":"demo://x"}]}`); code != http.StatusBadRequest || !strings.Contains(msg, "strategy") {
 		t.Fatalf("bad-strategy POST = %d %q, want 400", code, msg)
 	}
+	// An absurd concurrency must be rejected at validation, not allowed through
+	// to make([]*agent, c) / goroutine spawning (panic/OOM on an exposed bind).
+	if code, msg := post(`{"confirm_authorized":true,"workload":{"concurrency":[9223372036854775807]},"targets":[{"remote":"demo://x"}]}`); code != http.StatusBadRequest || !strings.Contains(msg, "concurrency") {
+		t.Fatalf("huge-concurrency POST = %d %q, want 400 concurrency", code, msg)
+	}
 	if code, msg := post(`{"confirm_authorized":true,"targets":[{"remote":"demo://x","secret":"tok","secret_source":"gh"}]}`); code != http.StatusBadRequest || !strings.Contains(msg, "not both") {
 		t.Fatalf("secret+source POST = %d %q, want 400 not-both", code, msg)
 	}

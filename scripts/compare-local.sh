@@ -70,14 +70,35 @@ if ! curl -sf "http://$ADDR/api/runs" >/dev/null 2>&1; then
   curl -sf "http://$ADDR/api/runs" >/dev/null 2>&1 || { echo "compare-local: server did not come up; see /tmp/forgemark-serve.log" >&2; exit 1; }
 fi
 
-# ensure_repo <owner/repo>: throwaway private repo with an initial commit
-# (the EntireDB mirror's initial clone needs one), created on first use.
+# Repos this script creates are stamped with this description so a later run
+# can tell its own throwaway repos from an unrelated repo that happens to
+# carry the default name.
+REPO_MARKER="forgemark bench target"
+
+# ensure_repo <owner/repo> <explicit>: throwaway private repo with an initial
+# commit (the EntireDB mirror's initial clone needs one), created on first
+# use. A repo we didn't create is only reused when the operator named it
+# explicitly (explicit=1, i.e. FM_GH_REPO/FM_ENTIRE_UPSTREAM was set):
+# benchmarks force-push and delete refs, so silently adopting a same-named
+# repo that isn't ours risks someone's real repository.
 ensure_repo() {
-  local repo="$1"
+  local repo="$1" explicit="${2:-0}" desc
   if ! gh repo view "$repo" >/dev/null 2>&1; then
     echo "compare-local: creating throwaway private repo $repo"
-    gh repo create "$repo" --private --add-readme
-  elif ! gh api "repos/$repo/commits?per_page=1" --jq '.[0].sha' >/dev/null 2>&1; then
+    gh repo create "$repo" --private --add-readme --description "$REPO_MARKER (throwaway)"
+    return 0
+  fi
+  if [ "$explicit" != "1" ]; then
+    desc="$(gh repo view "$repo" --json description --jq '.description // ""')"
+    case "$desc" in
+      *"$REPO_MARKER"*) ;;
+      *)
+        echo "compare-local: $repo exists but was not created by this script (description lacks '$REPO_MARKER')." >&2
+        echo "compare-local: to benchmark it anyway, name it explicitly (FM_GH_REPO/FM_ENTIRE_UPSTREAM), or claim it: gh repo edit $repo --description '$REPO_MARKER'" >&2
+        exit 1 ;;
+    esac
+  fi
+  if ! gh api "repos/$repo/commits?per_page=1" --jq '.[0].sha' >/dev/null 2>&1; then
     echo "compare-local: seeding empty repo $repo with an initial commit"
     gh api -X PUT "repos/$repo/contents/README.md" \
       -f message="forgemark bench target" \
@@ -85,10 +106,26 @@ ensure_repo() {
   fi
 }
 
+# clean_bench_refs <owner/repo>: delete refs/heads/bench/* left by earlier
+# runs (every run's refs embed its run ID, so they accumulate). A growing ref
+# advertisement inflates later push negotiation and biases the comparison —
+# each run should start from the same small ref surface. Native EntireDB
+# repos are not covered here (no gh API); mirror mode is, via its upstream.
+clean_bench_refs() {
+  local repo="$1" refs
+  refs="$(gh api --paginate "repos/$repo/git/matching-refs/heads/bench/" --jq '.[].ref' 2>/dev/null || true)"
+  [ -n "$refs" ] || return 0
+  echo "compare-local: deleting $(wc -l <<<"$refs" | tr -d ' ') stale bench/ refs from $repo"
+  while IFS= read -r ref; do
+    gh api -X DELETE "repos/$repo/git/refs/${ref#refs/}" >/dev/null 2>&1 || true
+  done <<<"$refs"
+}
+
 # --- GitHub target ---
 GH_USER="$(gh api user --jq .login)"
 GH_REPO="${FM_GH_REPO:-$GH_USER/forgemark-target}"
-ensure_repo "$GH_REPO"
+ensure_repo "$GH_REPO" "$([ -n "${FM_GH_REPO:-}" ] && echo 1 || echo 0)"
+clean_bench_refs "$GH_REPO"
 export GH_REPO
 
 # --- Entire target: endpoints from the server's discovery, repo provisioned here ---
@@ -197,7 +234,8 @@ PY
     # Mirror create is idempotent on (upstream, cluster) and waits for the
     # initial GitHub→EntireDB clone so the first push has a repo to land in.
     ENTIRE_UPSTREAM="${FM_ENTIRE_UPSTREAM:-$GH_USER/forgemark-target-entire}"
-    ensure_repo "$ENTIRE_UPSTREAM"
+    ensure_repo "$ENTIRE_UPSTREAM" "$([ -n "${FM_ENTIRE_UPSTREAM:-}" ] && echo 1 || echo 0)"
+    clean_bench_refs "$ENTIRE_UPSTREAM"
     echo "compare-local: ensuring mirror of $ENTIRE_UPSTREAM on $ENTIRE_CLUSTER"
     entire repo mirror create "https://github.com/$ENTIRE_UPSTREAM" "$ENTIRE_CLUSTER"
     ENTIRE_REPO_PATH="gh/$ENTIRE_UPSTREAM"
