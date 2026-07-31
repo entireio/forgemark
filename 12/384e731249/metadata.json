@@ -1,14 +1,14 @@
 {
-  "cli_version": "0.8.42",
-  "checkpoint_id": "12384e731249",
-  "strategy": "manual-commit",
   "branch": "feat/web-demo",
-  "checkpoints_count": 1,
+  "checkpoint_id": "12384e731249",
+  "checkpoints_count": 3,
+  "cli_version": "0.8.42",
   "files_touched": [
     "internal/server/runmgr.go",
     "internal/server/static/js/views/race.js",
     "scripts/compare-local.sh"
   ],
+  "has_review": true,
   "sessions": [
     {
       "metadata": "/12/384e731249/0/metadata.json",
@@ -16,13 +16,20 @@
       "compact_transcript": "/12/384e731249/0/transcript.jsonl",
       "content_hash": "/12/384e731249/0/content_hash.txt",
       "prompt": "/12/384e731249/0/prompt.txt"
+    },
+    {
+      "content_hash": "/12/384e731249/1/content_hash.txt",
+      "metadata": "/12/384e731249/1/metadata.json",
+      "prompt": "/12/384e731249/1/prompt.txt",
+      "transcript": "/12/384e731249/1/full.jsonl"
     }
   ],
+  "strategy": "manual-commit",
   "token_usage": {
-    "input_tokens": 149,
+    "input_tokens": 137396,
     "cache_creation_tokens": 207076,
-    "cache_read_tokens": 1960120,
-    "output_tokens": 18848,
-    "api_call_count": 10
+    "cache_read_tokens": 5586610,
+    "output_tokens": 32478,
+    "api_call_count": 58
   }
 }
