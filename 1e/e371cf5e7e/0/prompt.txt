@@ -1,0 +1,44 @@
+Findings
+
+Medium
+AI
+Trail Review
+internal/server/demo.go:149
+7m ago
+
+Finite but extreme demo parameters such as spread=1e308 make the sampled float overflow time.Duration; the resulting non-positive or implementation-dependent duration can make time.After fire immediately and drive an unbounded sample-allocation loop. Validate the computed latency against the positive time.Duration range before converting or cap accepted demo parameters.
+
+AI
+Trail Review
+internal/server/static/js/views/history.js:122
+7m ago
+
+History replay selects clone counts only for the pure clone strategy, so session runs silently lose their stored clone-throughput series; the corresponding latency replay also omits clone percentiles. Add separate clone series for session runs, matching the live dashboard and the persisted format's promised replay fidelity.
+
+AI
+Trail Review
+internal/server/runmgr.go:735
+7m ago
+
+A real measured overlap shorter than 1 ms is truncated to dt_ms == 0; live consumers then interpret zero as 1000 ms, and omitempty makes persisted data indistinguishable from legacy one-second buckets. Fractional-duration runs and fast tail buckets therefore publish severely understated rates; preserve sub-millisecond precision or encode a nonzero exact duration unambiguously.
+
+AI
+Trail Review
+internal/server/local.go:99
+7m ago
+
+Audience validation discards the URL port, so values such as https://github.com:8443 or an Entire endpoint on an arbitrary port pass and receive the CLI token despite being a different origin/service. Validate the canonical HTTPS origin and allow only the default/explicit 443 port for CLI-sourced credentials.
+
+AI
+Trail Review
+internal/server/runmgr.go:295
+7m ago
+
+secret_source targets may also set insecure, after which newHTTPClient disables TLS verification and sends the operator's gh/glab/Entire CLI credential to whichever endpoint answers for the validated hostname. Reject insecure whenever a CLI-sourced credential is used so hostname audience checks cannot be bypassed by DNS/proxy MITM.
+
+AI
+Trail Review
+internal/server/local.go:129
+11h ago
+
+This pins only the initial Entire token URL host, but the default HTTP client follows 307/308 redirects and replays the POST body containing the CLI-sourced subject token. An open redirect on an accepted host therefore bypasses the audience guard; disable redirects for token exchange or validate every redirect destination before following it.
