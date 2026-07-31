@@ -151,6 +151,17 @@ func (s *Server) requireLoopbackPeer(next http.HandlerFunc) http.HandlerFunc {
 			http.Error(w, "starting or cancelling runs requires a loopback connection: remote clients get a read-only view (demo runs still consume this machine's CPU and memory)", http.StatusForbidden)
 			return
 		}
+		// The Host must be loopback too, even though requireLocalOrigin skips
+		// its Host check on an exposed bind: a page at evil.example:<port> can
+		// DNS-rebind that hostname to 127.0.0.1, and the victim browser on this
+		// machine then satisfies both the peer check (loopback connection) and
+		// the Origin check (same-origin request). Its Host header still says
+		// evil.example — the one thing rebinding can't forge — so pinning Host
+		// closes the hole. The legitimate driver browses via localhost anyway.
+		if !IsLoopbackHost(hostnameOnly(r.Host)) {
+			http.Error(w, "run control requires a loopback Host (browse this GUI via localhost/127.0.0.1 to drive runs)", http.StatusForbidden)
+			return
+		}
 		next(w, r)
 	}
 }

@@ -49,6 +49,40 @@ func latHistIdx(ms float64) int {
 
 func (h *latHist) add(ms float64) { h[latHistIdx(ms)]++ }
 
+// quantile is the nearest-rank p-th percentile of one histogram (0 if empty).
+func (h *latHist) quantile(p float64) float64 {
+	total := uint64(0)
+	for _, n := range h {
+		total += uint64(n)
+	}
+	if total == 0 {
+		return 0
+	}
+	rank := uint64(math.Ceil(p / 100 * float64(total)))
+	if rank < 1 {
+		rank = 1
+	}
+	cum := uint64(0)
+	for i, n := range h {
+		cum += uint64(n)
+		if cum >= rank {
+			return latHistValue(i)
+		}
+	}
+	return latHistValue(latHistBuckets - 1)
+}
+
+// maxValue is the representative value of the highest occupied bucket (0 if
+// empty) — the histogram's stand-in for an exact max.
+func (h *latHist) maxValue() float64 {
+	for i := latHistBuckets - 1; i >= 0; i-- {
+		if h[i] > 0 {
+			return latHistValue(i)
+		}
+	}
+	return 0
+}
+
 // latHistValue is the representative latency of bucket idx: the geometric
 // midpoint of its bounds (the edge buckets return their clamp values).
 func latHistValue(idx int) float64 {

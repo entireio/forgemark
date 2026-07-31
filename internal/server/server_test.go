@@ -274,26 +274,33 @@ func TestCredentialsRejectedOnNonLoopback(t *testing.T) {
 // samples in memory) or cancel the operator's run. Reads stay available.
 func TestRunControlRequiresLoopbackPeer(t *testing.T) {
 	s := New("127.0.0.1:0", t.TempDir())
-	do := func(method, path, remote string) int {
+	do := func(method, path, remote, host string) int {
 		req := httptest.NewRequest(method, path, strings.NewReader(demoBody(1, "1")))
-		req.Host = "127.0.0.1:8377" // satisfy the DNS-rebinding Host guard; the peer gate is what's under test
+		req.Host = host
 		req.RemoteAddr = remote
 		rec := httptest.NewRecorder()
 		s.Handler().ServeHTTP(rec, req)
 		return rec.Code
 	}
-	if code := do("POST", "/api/runs", "203.0.113.9:44321"); code != http.StatusForbidden {
+	if code := do("POST", "/api/runs", "203.0.113.9:44321", "127.0.0.1:8377"); code != http.StatusForbidden {
 		t.Fatalf("remote-peer start = %d, want 403", code)
 	}
-	if code := do("POST", "/api/runs/x/cancel", "203.0.113.9:44321"); code != http.StatusForbidden {
+	if code := do("POST", "/api/runs/x/cancel", "203.0.113.9:44321", "127.0.0.1:8377"); code != http.StatusForbidden {
 		t.Fatalf("remote-peer cancel = %d, want 403", code)
 	}
-	if code := do("GET", "/api/runs", "203.0.113.9:44321"); code != http.StatusOK {
+	if code := do("GET", "/api/runs", "203.0.113.9:44321", "127.0.0.1:8377"); code != http.StatusOK {
 		t.Fatalf("remote-peer list = %d, want 200 (reads stay open)", code)
+	}
+	// DNS rebinding: a page at evil.example rebinds its hostname to 127.0.0.1;
+	// the victim browser on this machine gives a loopback peer and a
+	// same-origin request, but the Host header still names the evil origin —
+	// run control must reject it even when the bind-level Host guard is off.
+	if code := do("POST", "/api/runs", "127.0.0.1:50000", "evil.example:8377"); code != http.StatusForbidden {
+		t.Fatalf("rebound-host start = %d, want 403", code)
 	}
 	// The operator's own loopback connection still drives runs (any non-403
 	// outcome proves the gate passed; this one succeeds outright).
-	if code := do("POST", "/api/runs", "127.0.0.1:50000"); code != http.StatusCreated {
+	if code := do("POST", "/api/runs", "127.0.0.1:50000", "127.0.0.1:8377"); code != http.StatusCreated {
 		t.Fatalf("loopback-peer start = %d, want 201", code)
 	}
 	s.mgr.beginShutdown()

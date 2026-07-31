@@ -780,7 +780,11 @@ func (r *Run) emitBucket(force bool) {
 	// gate on the deadline: past measEnd the ticks are cleanup-time buckets with
 	// zero duration and stale percentiles, which consumers would misread. The
 	// forced tail flush (force=true) still emits the window's real remainder.
-	if !force && (!r.measuring || wallNow.After(measEnd)) {
+	// A cancelled run closes the window immediately, whatever the wall clock:
+	// agents stop at cancel, but session cleanup keeps lwg (and therefore
+	// measuring) alive for up to 30s, during which mid-window ticks would
+	// publish zero-count buckets with stale percentiles and positive dt.
+	if !force && (!r.measuring || r.ctx.Err() != nil || wallNow.After(measEnd)) {
 		return
 	}
 	lo, hi := r.lastBucketAt, wallNow

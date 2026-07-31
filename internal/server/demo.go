@@ -111,6 +111,84 @@ func (d *demoRunner) nextOp(pushesLeft int) bench.OpKind {
 	return bench.OpPush
 }
 
+// demoAgg folds a level's synthetic samples into bounded state as they are
+// produced, instead of retaining them for an end-of-level summarize: at the
+// supported envelope (4096 agents × the 1ms latency floor × a long level,
+// times up to 8 targets) retained samples reach millions per second and OOM
+// the server. Counters plus two fixed-size histograms (~2KB) carry everything
+// LevelResult needs; percentiles come out with the histogram's ~6.7% bucket
+// resolution, which is indistinguishable on a chart of synthetic data.
+type demoAgg struct {
+	mu              sync.Mutex
+	warmup          time.Duration
+	pushes, ok, cas int
+	errs            int
+	clones, cloneOK int
+	cloneErrs       int
+	lat, cloneLat   latHist
+}
+
+func (a *demoAgg) add(s bench.Sample) {
+	if s.Offset < a.warmup {
+		return // warm-up: excluded from every statistic, like summarize
+	}
+	idx := latHistIdx(float64(s.Dur) / float64(time.Millisecond))
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if s.Op == bench.OpClone {
+		a.clones++
+		if s.Res == bench.OutcomeOK {
+			a.cloneOK++
+			a.cloneLat[idx]++
+		} else {
+			a.cloneErrs++
+		}
+		return
+	}
+	a.pushes++
+	switch s.Res {
+	case bench.OutcomeOK:
+		a.ok++
+		a.lat[idx]++
+	case bench.OutcomeCAS:
+		a.cas++
+	default:
+		a.errs++
+	}
+}
+
+// result assembles the LevelResult the way bench.summarize would have,
+// including the clone-strategy remap of clone stats into the primary fields.
+func (a *demoAgg) result(c int, strategy string, window time.Duration, commitDesc string) bench.LevelResult {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	r := bench.LevelResult{
+		Concurrency: c, Strategy: strategy, Repos: 1, Nodes: 1,
+		WindowSec: window.Seconds(), CommitFiles: commitDesc,
+		Pushes: a.pushes, OK: a.ok, CASFailures: a.cas, OtherErrors: a.errs,
+		Clones: a.clones, CloneOK: a.cloneOK, CloneErrors: a.cloneErrs,
+		P50ms: a.lat.quantile(50), P95ms: a.lat.quantile(95),
+		P99ms: a.lat.quantile(99), P999ms: a.lat.quantile(99.9), Maxms: a.lat.maxValue(),
+		CloneP50ms: a.cloneLat.quantile(50), CloneP95ms: a.cloneLat.quantile(95), CloneP99ms: a.cloneLat.quantile(99),
+	}
+	if a.errs > 0 {
+		r.ErrorMessages = []bench.ErrGroup{{Message: "demo: synthetic error", Count: a.errs}}
+	}
+	if a.cloneErrs > 0 {
+		r.CloneErrorMessages = []bench.ErrGroup{{Message: "demo: synthetic error", Count: a.cloneErrs}}
+	}
+	if strategy == "clone" {
+		r.Pushes, r.OK, r.OtherErrors, r.CASFailures = r.Clones, r.CloneOK, r.CloneErrors, 0
+		r.ErrorMessages = r.CloneErrorMessages
+		r.P50ms, r.P95ms, r.P99ms = r.CloneP50ms, r.CloneP95ms, r.CloneP99ms
+		r.P999ms, r.Maxms = a.cloneLat.quantile(99.9), a.cloneLat.maxValue()
+	}
+	if window > 0 {
+		r.OpsPerSec = float64(r.OK) / window.Seconds()
+	}
+	return r
+}
+
 // sampleLatency draws one op's synthetic latency, clamped into [1ms, 1h]
 // BEFORE the float→Duration conversion. The clamp is a hard safety bound, not
 // shaping: with an extreme-but-finite spread (say 1e308, which parses fine)
@@ -152,8 +230,7 @@ func (d *demoRunner) RunLevel(ctx context.Context, c int, barrier *bench.StartBa
 	}
 	lctx, cancel := context.WithDeadline(ctx, start.Add(total))
 	defer cancel()
-	var mu sync.Mutex
-	var all []bench.Sample
+	agg := &demoAgg{warmup: d.w.Warmup}
 	var wg sync.WaitGroup
 	for i := range c {
 		wg.Add(1)
@@ -193,12 +270,10 @@ func (d *demoRunner) RunLevel(ctx context.Context, c int, barrier *bench.StartBa
 				if d.sink != nil {
 					d.sink.OnSample(s)
 				}
-				mu.Lock()
-				all = append(all, s)
-				mu.Unlock()
+				agg.add(s)
 			}
 		}(i)
 	}
 	wg.Wait()
-	return bench.SummarizeSamples(all, c, d.w.Strategy, 1, 1, d.w.Warmup, d.w.Duration, d.w.CommitDesc()), nil
+	return agg.result(c, d.w.Strategy, d.w.Duration, d.w.CommitDesc()), nil
 }
