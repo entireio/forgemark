@@ -96,6 +96,12 @@ func validateSecretAudience(source, remote, tokenURL, jurisdiction string) error
 		if u.User != nil {
 			return "", fmt.Errorf("secret_source %s: %s must not embed userinfo, got %q", source, label, raw)
 		}
+		// The audience is an origin, not a hostname: https://github.com:8443 is a
+		// different service than https://github.com even though Hostname() matches,
+		// so a non-default port would send the CLI token to whatever answers there.
+		if p := u.Port(); p != "" && p != "443" {
+			return "", fmt.Errorf("secret_source %s: %s must use the default https port, got %q", source, label, raw)
+		}
 		return u.Hostname(), nil
 	}
 	underEntire := func(h string) bool { return h == "entire.io" || strings.HasSuffix(h, ".entire.io") }

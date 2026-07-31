@@ -108,6 +108,19 @@ func (d *demoRunner) opFor(n int) bench.OpKind {
 	return bench.OpPush
 }
 
+// sampleLatency draws one op's synthetic latency, clamped into [1ms, 1h]
+// BEFORE the float→Duration conversion. The clamp is a hard safety bound, not
+// shaping: with an extreme-but-finite spread (say 1e308, which parses fine)
+// the product overflows float64 or int64, and Go's float→int conversion on
+// overflow is implementation-defined — a zero/negative duration would make
+// time.After fire instantly and turn every agent into an unbounded
+// sample-allocating spin. The floor also bounds the op rate (≤1000/s per
+// agent) for legitimately tiny p50s; real git ops are never sub-millisecond.
+func (d *demoRunner) sampleLatency(rng *rand.Rand, inflate float64) time.Duration {
+	f := float64(d.p50) * inflate * math.Exp(d.sigma*rng.NormFloat64())
+	return time.Duration(math.Min(math.Max(f, float64(time.Millisecond)), float64(time.Hour)))
+}
+
 func (d *demoRunner) RunLevel(ctx context.Context, c int, barrier *bench.StartBarrier) (bench.LevelResult, error) {
 	// Saturation: offered load approaches cap → queueing inflates latency.
 	inflate := 1.0
@@ -146,7 +159,7 @@ func (d *demoRunner) RunLevel(ctx context.Context, c int, barrier *bench.StartBa
 			// Deterministic per agent, like the engine's commit content rng.
 			rng := rand.New(rand.NewSource(int64(id)*7919 + 42)) //nolint:gosec // synthetic demo data
 			for n := 0; lctx.Err() == nil; n++ {
-				lat := time.Duration(float64(d.p50) * inflate * math.Exp(d.sigma*rng.NormFloat64()))
+				lat := d.sampleLatency(rng, inflate)
 				t0 := time.Now()
 				select {
 				case <-time.After(lat):

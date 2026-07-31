@@ -151,6 +151,12 @@ func TestStartRunValidation(t *testing.T) {
 	if code, msg := post(`{"confirm_authorized":true,"targets":[{"remote":"https://evil.example","repos":["r"],"secret_source":"entire","token_url":"https://evil.example/oauth/token","jurisdiction":"https://evil.example"}]}`); code != http.StatusBadRequest || !strings.Contains(msg, "entire.io") {
 		t.Fatalf("entire source with non-entire token_url = %d %q, want 400 entire.io", code, msg)
 	}
+	// insecure disables TLS verification, which is the only thing binding the
+	// audience-validated hostname to the endpoint that actually answers — a
+	// CLI-sourced credential must never ride on an unverified connection.
+	if code, msg := post(`{"confirm_authorized":true,"targets":[{"remote":"https://github.com","repos":["a/b"],"secret_source":"gh","insecure":true}]}`); code != http.StatusBadRequest || !strings.Contains(msg, "insecure") {
+		t.Fatalf("insecure + secret_source = %d %q, want 400 insecure", code, msg)
+	}
 }
 
 func TestStartRejectedDuringShutdown(t *testing.T) {
@@ -284,6 +290,13 @@ func TestValidateSecretAudience(t *testing.T) {
 	// carrying them would POST the resolved CLI token to that token_url.
 	bad("gh", "https://github.com", "https://in.auth.entire.io/oauth/token", "")
 	bad("glab", "https://gitlab.com", "", "https://in.entire.io")
+	// The audience is an origin: a non-default port on an accepted hostname is a
+	// different service and must not receive the CLI token. Explicit 443 is the
+	// same origin and stays valid.
+	bad("gh", "https://github.com:8443", "", "")
+	bad("entire", "https://in.entire.io:9443", "https://in.auth.entire.io/oauth/token", "https://in.entire.io")
+	bad("entire", "https://in.entire.io", "https://in.auth.entire.io:8080/oauth/token", "https://in.entire.io")
+	ok("gh", "https://github.com:443", "", "")
 }
 
 func TestRunLifecycleSSEAndRedaction(t *testing.T) {

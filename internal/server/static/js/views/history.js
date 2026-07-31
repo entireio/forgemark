@@ -80,6 +80,7 @@ export function renderHistory(app, preselect) {
         const latEl = mkCard('Timeline replay — p95 latency', 'rolling 10s window as recorded');
         const colors = new Map(seriesList().map((s) => [s.target, s.color]));
         const isClone = doc.strategy === 'clone';
+        const isSession = doc.strategy === 'session';
         // A periodic bucket and the forced tail flush can share the same
         // whole-second t. Aggregate points per t (sum counts and durations, keep
         // the latest rolling percentile) so replay doesn't silently drop the
@@ -113,25 +114,36 @@ export function renderHistory(app, preselect) {
         const slots = [...new Set(withSeries.flatMap((t) => [...aggs.get(t).keys()]))]
           .map((k) => { const [ts, lvl] = k.split('|').map(Number); return { k, t: ts, level: lvl }; })
           .sort((a, b) => a.t - b.t || a.level - b.level);
-        const mkRows = (val) => slots.map((s) => [s.t + s.level / 1000, ...withSeries.map((t) => {
+        // mkRows takes a list of value extractors and emits one column per
+        // (extractor × target), matching a series list built the same way — so
+        // a session run's clone columns line up with its dashed clone series.
+        const mkRows = (vals) => slots.map((s) => [s.t + s.level / 1000, ...vals.flatMap((val) => withSeries.map((t) => {
           const a = aggs.get(t).get(s.k);
           return a ? val(a) : null;
-        })]);
+        }))]);
         const rateOf = (a) => {
           const dt = a.dt / 1000;
           const n = isClone ? a.clone_ok : a.ok;
           return dt > 0 ? n / dt : null;
         };
+        const cloneRateOf = (a) => (a.dt > 0 ? a.clone_ok / (a.dt / 1000) : null);
         // Gate on the recorded rolling p95, not this second's completions, so a
         // quiet bucket doesn't drop a point the stored window still covered.
         const p95Of = (a) => {
           const p = isClone ? a.last.clone_p95_ms : a.last.p95_ms;
           return p > 0 ? p : null;
         };
-        const tput = timeChart(tputEl, { series: withSeries.map((t) => ({ label: t.name, color: colors.get(t) || targetColor(0) })), unit: fmtNum });
-        tput.setAll(mkRows(rateOf));
+        // Session runs stored both sides of the workload; replay both, exactly
+        // like the live dashboard: solid pushes/s plus a dashed clones/s series
+        // per target. Without this the stored clone series silently vanishes.
+        const tputSeries = withSeries.map((t) => ({ label: t.name, color: colors.get(t) || targetColor(0) }));
+        if (isSession) {
+          tputSeries.push(...withSeries.map((t) => ({ label: `${t.name} clones`, color: colors.get(t) || targetColor(0), dash: [5, 5] })));
+        }
+        const tput = timeChart(tputEl, { series: tputSeries, unit: fmtNum });
+        tput.setAll(mkRows(isSession ? [rateOf, cloneRateOf] : [rateOf]));
         const lat = timeChart(latEl, { series: withSeries.map((t) => ({ label: t.name, color: colors.get(t) || targetColor(0) })), unit: fmtMs });
-        lat.setAll(mkRows(p95Of));
+        lat.setAll(mkRows([p95Of]));
         liveCharts.push(tput, lat);
       }
     }

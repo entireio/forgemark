@@ -292,6 +292,13 @@ func (m *RunManager) start(req startRequest) (*Run, []string, error) {
 		// arbitrary token_url (leaking the subject token to the exchange). A
 		// self-hosted forge should paste a token instead of naming a CLI source.
 		if ts.SecretSource != "" {
+			// Verified TLS is what makes the audience pinning below mean anything:
+			// with insecure set, newHTTPClient skips certificate verification, so
+			// the "github.com" the check approved could be answered by any on-path
+			// endpoint — which would then receive the operator's CLI credential.
+			if ts.Insecure {
+				return nil, nil, fmt.Errorf("target %s: insecure cannot be combined with secret_source (unverified TLS would send the CLI credential to whoever answers for the host); paste a scoped secret instead", name)
+			}
 			if err := validateSecretAudience(ts.SecretSource, bt.Remote, bt.TokenURL, bt.Jurisdiction); err != nil {
 				return nil, nil, fmt.Errorf("target %s: %w", name, err)
 			}
@@ -730,9 +737,13 @@ func (r *Run) emitBucket(force bool) {
 	if hi.After(measEnd) {
 		hi = measEnd
 	}
+	// Round a positive overlap UP to a whole millisecond, never truncate: every
+	// consumer reads dt_ms 0/absent as the ~1s legacy fallback, so a real
+	// sub-millisecond overlap truncated to 0 would understate that bucket's
+	// rate by up to 1000×. Ceiling instead overstates the sliver by <1ms.
 	dtMs := int64(0)
-	if hi.After(lo) {
-		dtMs = hi.Sub(lo).Milliseconds()
+	if d := hi.Sub(lo); d > 0 {
+		dtMs = int64((d + time.Millisecond - 1) / time.Millisecond)
 	}
 	r.lastBucketAt = wallNow
 
