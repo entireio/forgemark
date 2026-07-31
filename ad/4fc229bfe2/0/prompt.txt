@@ -1,0 +1,43 @@
+Medium
+AI
+Trail Review
+internal/server/local.go:129
+11h ago
+
+This pins only the initial Entire token URL host, but the default HTTP client follows 307/308 redirects and replays the POST body containing the CLI-sourced subject token. An open redirect on an accepted host therefore bypasses the audience guard; disable redirects for token exchange or validate every redirect destination before following it.
+
+AI
+Trail Review
+internal/server/static/js/views/race.js:212
+11h ago
+
+The reliability and throughput verdicts rank cumulative live counters across every concurrency level, including partial levels from targets that later died, while the displayed rates come from final-level results. Rank using finalOf data and exclude targets without a final-level result, otherwise the announced winner can contradict the authoritative table.
+
+AI
+Trail Review
+internal/server/static/js/views/race.js:175
+11h ago
+
+finish declares a podium regardless of ev.state, so cancelling a run or a run failing during setup/measurement can still announce a winner from incomplete samples. Suppress competitive results unless the run completed normally.
+
+AI
+Trail Review
+internal/server/collector.go:61
+11h ago
+
+Every measured operation synchronously contends on this single collector mutex, and successful operations may allocate while holding it. At high concurrency the observer serializes agent progress and can depress the throughput being measured; use atomic/sharded counters and a non-blocking or bounded latency-observation path.
+
+AI
+Trail Review
+internal/server/runmgr.go:583
+11h ago
+
+RunLevel performs session-ref deletion before returning, potentially blocking for 30 seconds, but measuring remains true throughout this wait. The ticker consequently publishes and persists cleanup-time buckets with zero duration and stale percentiles (consumers even treat dt_ms: 0 as one second); close the measured window at its configured deadline while cleanup finishes separately.
+
+Low
+AI
+Trail Review
+internal/server/demo.go:77
+11h ago
+
+err and cas are accepted independently up to 1, but they share one random roll, so configurations where their sum exceeds 1 silently produce a smaller CAS rate than requested (for example, 0.8+0.8 yields only about 0.2 CAS). Reject configurations with errRate + casRate > 1.

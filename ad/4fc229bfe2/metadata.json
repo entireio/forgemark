@@ -1,0 +1,30 @@
+{
+  "cli_version": "0.8.42",
+  "checkpoint_id": "ad4fc229bfe2",
+  "strategy": "manual-commit",
+  "branch": "feat/web-demo",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "internal/bench/creds.go",
+    "internal/bench/creds_test.go",
+    "internal/server/demo.go",
+    "internal/server/demo_test.go",
+    "internal/server/static/js/views/race.js"
+  ],
+  "sessions": [
+    {
+      "metadata": "/ad/4fc229bfe2/0/metadata.json",
+      "transcript": "/ad/4fc229bfe2/0/full.jsonl",
+      "compact_transcript": "/ad/4fc229bfe2/0/transcript.jsonl",
+      "content_hash": "/ad/4fc229bfe2/0/content_hash.txt",
+      "prompt": "/ad/4fc229bfe2/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 5594,
+    "cache_creation_tokens": 84084,
+    "cache_read_tokens": 1802892,
+    "output_tokens": 18991,
+    "api_call_count": 22
+  }
+}
