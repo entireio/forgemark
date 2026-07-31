@@ -1,6 +1,10 @@
 package bench
 
-import "testing"
+import (
+	"strconv"
+	"testing"
+	"time"
+)
 
 // The sweep deletes whatever this regex matches, so its precision is the
 // entire safety story: it must catch every shape forgemark pushes (CLI runs,
@@ -37,5 +41,31 @@ func TestStaleBenchRefRe(t *testing.T) {
 	}
 	if staleBenchRefRe("").MatchString("refs/heads/bench/fmk3x9q2ab4z-c1-a0") {
 		t.Error("empty-prefix regex must not reach into other prefixes")
+	}
+}
+
+// The age guard protects runs the active-run lock can't see (another process
+// or machine sharing the repo): a ref is swept only when its embedded
+// run-start time is older than the cutoff. Shape alone must never suffice.
+func TestStaleRefAgeGuard(t *testing.T) {
+	re := staleBenchRefRe("bench/")
+	cutoff := time.Now().Add(-staleAfter)
+	id := func(at time.Time) string { return strconv.FormatInt(at.UnixNano(), 36) }
+
+	old := "refs/heads/bench/fm" + id(time.Now().Add(-2*staleAfter)) + "-t0-c16-a3"
+	if !staleRef(re, old, cutoff) {
+		t.Errorf("ref from %v ago not swept; stale refs would accumulate", 2*staleAfter)
+	}
+	recent := "refs/heads/bench/fm" + id(time.Now().Add(-time.Hour)) + "-c4-a0"
+	if staleRef(re, recent, cutoff) {
+		t.Error("hour-old ref swept; it could belong to a concurrently running benchmark")
+	}
+	if staleRef(re, "refs/heads/bench/my-feature", cutoff) {
+		t.Error("non-forgemark ref treated as stale")
+	}
+	// A shape match whose timestamp doesn't parse as base36 int64 (overflow)
+	// must be left alone — when in doubt, never delete.
+	if staleRef(re, "refs/heads/bench/fmzzzzzzzzzzzzzzzzzzzz-c1-a0", cutoff) {
+		t.Error("unparseable run-id timestamp treated as stale")
 	}
 }

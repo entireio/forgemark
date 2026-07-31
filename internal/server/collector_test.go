@@ -9,6 +9,22 @@ import (
 
 func ms(n float64) time.Duration { return time.Duration(n * float64(time.Millisecond)) }
 
+// The collector's percentiles come from log-spaced histograms (~6.7% bucket
+// width), so latency assertions allow that resolution rather than exact
+// equality. Counters stay exact.
+func near(t *testing.T, label string, got, want float64) {
+	t.Helper()
+	if want == 0 {
+		if got != 0 {
+			t.Fatalf("%s = %v, want exactly 0", label, got)
+		}
+		return
+	}
+	if got < want*0.92 || got > want*1.08 {
+		t.Fatalf("%s = %v, want %v ±8%% (one histogram bucket)", label, got, want)
+	}
+}
+
 func TestCollectorBucketsAndRollingPercentiles(t *testing.T) {
 	c := &collector{}
 
@@ -27,26 +43,22 @@ func TestCollectorBucketsAndRollingPercentiles(t *testing.T) {
 	if st.CloneOK != 1 || st.CloneErr != 0 {
 		t.Fatalf("clone counters = %+v, want clone_ok=1 clone_err=0", st)
 	}
-	if st.P50 != 20 || st.P99 != 40 {
-		t.Fatalf("percentiles p50=%v p99=%v, want 20/40 (nearest-rank over 10,20,30,40)", st.P50, st.P99)
-	}
+	near(t, "p50", st.P50, 20) // nearest-rank over 10,20,30,40
+	near(t, "p99", st.P99, 40)
+	near(t, "clone p50", st.CloneP50, 100)
 
 	// Second 2: no new samples — rolling window still holds second 1's latencies.
 	st = c.snapshot()
 	if st.OK != 0 && st.CAS != 0 && st.Err != 0 {
 		t.Fatalf("second bucket counters = %+v, want empty", st)
 	}
-	if st.P50 != 20 {
-		t.Fatalf("rolling p50 after empty second = %v, want 20 (window retains prior seconds)", st.P50)
-	}
+	near(t, "rolling p50 after empty second", st.P50, 20)
 
 	// After windowSecs empty seconds the window drains entirely.
 	for range windowSecs {
 		st = c.snapshot()
 	}
-	if st.P50 != 0 {
-		t.Fatalf("p50 after window drained = %v, want 0", st.P50)
-	}
+	near(t, "p50 after window drained", st.P50, 0)
 }
 
 func TestCollectorResetClearsWindow(t *testing.T) {
@@ -57,5 +69,24 @@ func TestCollectorResetClearsWindow(t *testing.T) {
 	st := c.snapshot()
 	if st.OK != 0 || st.P50 != 0 {
 		t.Fatalf("after reset snapshot = %+v, want empty", st)
+	}
+}
+
+// The histogram must clamp, not index out of range, at both extremes, and
+// stay within its documented resolution across the whole span.
+func TestLatHistBoundsAndResolution(t *testing.T) {
+	var h latHist
+	h.add(0)    // below the floor
+	h.add(1e12) // absurdly above the ceiling
+	if h[0] != 1 || h[latHistBuckets-1] != 1 {
+		t.Fatalf("edge samples landed in wrong buckets: h[0]=%d h[last]=%d", h[0], h[latHistBuckets-1])
+	}
+	for _, want := range []float64{0.1, 1, 15, 250, 4000, 90_000} {
+		var g latHist
+		g.add(want)
+		p50, _, _ := histPercentiles(&g)
+		if p50 < want*0.92 || p50 > want*1.08 {
+			t.Errorf("round-trip of %vms = %vms, want within one bucket (±8%%)", want, p50)
+		}
 	}
 }

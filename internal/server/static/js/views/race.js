@@ -324,7 +324,19 @@ export function renderRace(app, arg) {
       badge.className = 'badge running';
       badge.textContent = 'running';
     },
-    level_start(ev) { state.curLevel = ev; },
+    level_start(ev) {
+      state.curLevel = ev;
+      // A new level opens a fresh measured window, and no buckets arrive
+      // during its warm-up — so without this reset the previous level's
+      // rolling rate and latency would sit on screen (and keep the crown)
+      // until the first post-warm-up bucket. Only the deliberately
+      // cumulative counters (ok/good/errs) survive across levels.
+      for (const l of Object.values(state.lanes)) {
+        l.rates = [];
+        l.lat = null;
+      }
+      updateLanes();
+    },
     bucket(ev) {
       if (!state.hello) return;
       // Normalize this bucket's counts to a per-second rate: the first

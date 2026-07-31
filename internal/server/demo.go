@@ -92,16 +92,19 @@ func (d *demoRunner) Label() string        { return d.label }
 func (d *demoRunner) Nodes() int           { return 1 }
 func (d *demoRunner) ObjectFormat() string { return "sha1" }
 
-// opFor mirrors the real strategies' op mix so demo buckets exercise the same
-// consumer paths: clone strategy emits only clones, and session emits one
-// clone followed by SessionCommits pushes per simulated session (n is the
-// agent's op counter).
-func (d *demoRunner) opFor(n int) bench.OpKind {
+// nextOp mirrors the real strategies' op mix so demo buckets exercise the
+// same consumer paths: clone strategy emits only clones; session emits one
+// clone and then, ONLY if that clone succeeded, SessionCommits pushes before
+// the next clone — a real session agent retries the clone immediately after
+// a clone failure (runSessions' `continue`), so an error-heavy demo must not
+// publish pushes against a session that never cloned. pushesLeft is the
+// agent's session state: how many pushes remain in its current session.
+func (d *demoRunner) nextOp(pushesLeft int) bench.OpKind {
 	switch d.w.Strategy {
 	case "clone":
 		return bench.OpClone
 	case "session":
-		if d.w.SessionCommits > 0 && n%(d.w.SessionCommits+1) == 0 {
+		if pushesLeft == 0 {
 			return bench.OpClone
 		}
 	}
@@ -158,7 +161,8 @@ func (d *demoRunner) RunLevel(ctx context.Context, c int, barrier *bench.StartBa
 			defer wg.Done()
 			// Deterministic per agent, like the engine's commit content rng.
 			rng := rand.New(rand.NewSource(int64(id)*7919 + 42)) //nolint:gosec // synthetic demo data
-			for n := 0; lctx.Err() == nil; n++ {
+			pushesLeft := 0                                      // session state: pushes remaining before the next clone
+			for lctx.Err() == nil {
 				lat := d.sampleLatency(rng, inflate)
 				t0 := time.Now()
 				select {
@@ -166,13 +170,25 @@ func (d *demoRunner) RunLevel(ctx context.Context, c int, barrier *bench.StartBa
 				case <-lctx.Done():
 					return // drop the truncated op, like the engine does
 				}
-				s := bench.Sample{Offset: t0.Sub(start), Dur: time.Since(t0), Op: d.opFor(n)}
+				s := bench.Sample{Offset: t0.Sub(start), Dur: time.Since(t0), Op: d.nextOp(pushesLeft)}
 				switch roll := rng.Float64(); {
 				case roll < d.errRate:
 					s.Res = bench.OutcomeErr
 					s.Msg = "demo: synthetic error"
 				case roll < d.errRate+d.casRate && s.Op == bench.OpPush:
 					s.Res = bench.OutcomeCAS // CAS is a ref-update outcome; clones can't CAS
+				}
+				// Session bookkeeping mirrors runSessions: a successful clone opens a
+				// session of SessionCommits pushes; a failed clone retries (pushesLeft
+				// stays 0); each push consumes an attempt whatever its outcome.
+				if d.w.Strategy == "session" {
+					if s.Op == bench.OpClone {
+						if s.Res == bench.OutcomeOK {
+							pushesLeft = d.w.SessionCommits
+						}
+					} else {
+						pushesLeft--
+					}
 				}
 				if d.sink != nil {
 					d.sink.OnSample(s)

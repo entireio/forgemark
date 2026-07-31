@@ -51,10 +51,14 @@ func (l *eventLog) emit(name string, v any) {
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	// The cap bounds bulk events (buckets), but terminal events must always
-	// land: a client only settles on run_done, so dropping it would leave every
-	// viewer of a capped (~day-long) run reconnect-looping on a finished run.
-	if l.closed || (len(l.events) >= maxBufferedEvents && name != "run_done") {
+	// The cap bounds ONLY the bulk stream (one bucket event per second);
+	// lifecycle events always land. They are O(levels + targets) — a handful
+	// past the cap at most — and every consumer's correctness hangs on them:
+	// dropping a level_start/level_result would let the race podium crown a
+	// winner from an earlier level's data, and dropping run_done would leave
+	// every viewer of a capped run reconnect-looping forever. Bucket loss
+	// degrades gracefully (a gap in the replayed charts).
+	if l.closed || (len(l.events) >= maxBufferedEvents && name == "bucket") {
 		return
 	}
 	e := event{seq: int64(len(l.events)) + 1, name: name, data: data}
