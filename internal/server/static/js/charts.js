@@ -37,6 +37,13 @@ export const fmtNum = (v) => {
 };
 export const fmtMs = (v) => (v == null ? '' : v >= 1000 ? (v / 1000).toFixed(1) + 's' : Math.round(v) + 'ms');
 
+// bucketSecs: a bucket event's / series point's measured duration in seconds.
+// The server emits every bucket with dt_ms >= 1 (zero-overlap ticks are
+// skipped at the source), so 0/absent occurs only in legacy result docs,
+// where the cadence was a steady ~1s. Every consumer that turns a bucket
+// count into a rate must divide by THIS — never assume one second.
+export const bucketSecs = (b) => (b.dt_ms || 1000) / 1000;
+
 // timeChart: a streaming time-series chart. `series` is
 // [{label, color, dash?}] — one per plotted line. `bands()` returns
 // [{from,to}] x-ranges (unix secs) shaded as warm-up. push()/setAll() update

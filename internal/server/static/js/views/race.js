@@ -8,7 +8,7 @@
 
 import { h } from '../dom.js';
 import { openRunStream } from '../sse.js';
-import { targetColor, fmtMs } from '../charts.js';
+import { targetColor, fmtMs, bucketSecs } from '../charts.js';
 import { levelCountdown, resultsSavedBanner } from './shared.js';
 
 const fmtInt = (n) => n.toLocaleString('en-US');
@@ -309,7 +309,7 @@ export function renderRace(app, arg) {
       // Normalize this bucket's counts to a per-second rate: the first
       // post-warmup bucket and the tail flush cover only a fraction of a second
       // (ev.dt_ms), so a raw count would over/understate the rolling rate.
-      const dt = (ev.dt_ms || 1000) / 1000;
+      const dt = bucketSecs(ev);
       for (const t of state.hello.targets) {
         const v = ev.targets[String(t.id)];
         const l = state.lanes[t.id];

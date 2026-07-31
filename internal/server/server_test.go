@@ -358,8 +358,37 @@ func TestRunLifecycleSSEAndRedaction(t *testing.T) {
 	if len(files) != 1 {
 		t.Fatalf("results dir has %d docs, want 1", len(files))
 	}
-	if b, _ := os.ReadFile(files[0]); strings.Contains(string(b), testSecret) {
+	b, _ := os.ReadFile(files[0])
+	if strings.Contains(string(b), testSecret) {
 		t.Fatal("secret leaked into the persisted result doc")
+	}
+	// Bucket invariant: every persisted series point carries dt_ms >= 1.
+	// Consumers read 0/absent as a legacy ~1s bucket, so a zero here (a
+	// warm-up tick, or a truncated sub-millisecond overlap) would silently
+	// corrupt replayed rates. p50=10ms demo with warmup_sec 0.2 exercises
+	// both warm-up ticks and a fractional first/tail bucket.
+	var doc struct {
+		Targets []struct {
+			Series []struct {
+				T    int64 `json:"t"`
+				DtMs int64 `json:"dt_ms"`
+			} `json:"series"`
+		} `json:"targets"`
+	}
+	if err := json.Unmarshal(b, &doc); err != nil {
+		t.Fatalf("decode result doc: %v", err)
+	}
+	points := 0
+	for _, tg := range doc.Targets {
+		for _, p := range tg.Series {
+			points++
+			if p.DtMs < 1 {
+				t.Fatalf("series point t=%d has dt_ms %d; every emitted bucket must carry >= 1", p.T, p.DtMs)
+			}
+		}
+	}
+	if points == 0 {
+		t.Fatal("result doc stored no series points; the invariant check checked nothing")
 	}
 
 	// Replay: with Last-Event-ID at the end, nothing but nothing comes back;

@@ -703,8 +703,14 @@ func (r *Run) persistResults(dir string) string {
 // don't append zero/stale buckets to the timeline. The end-of-level flush calls
 // it with force=true to emit the window's final partial second even though the
 // window has just closed.
+//
+// Invariant: every emitted bucket carries dt_ms >= 1 and a t inside its
+// level's window. Consumers read dt_ms 0/absent as a legacy ~1s bucket
+// (bucketSecs in charts.js), so a zero must never be emitted, and the tail
+// flush must be stamped at the second the window closed — not at emission
+// time, which for the session strategy trails the window by up to 30s of
+// ref cleanup and would plot the tail deep in the between-level gap.
 func (r *Run) emitBucket(force bool) {
-	now := time.Now().Unix()
 	// Hold r.mu across the whole tick so a level transition (which resets the
 	// collectors and advances levelIdx under the same lock) can't interleave:
 	// otherwise a snapshot could carry the previous level's samples under the
@@ -759,6 +765,11 @@ func (r *Run) emitBucket(force bool) {
 		}
 		dtMs = 1
 	}
+	// Stamp the bucket at the end of the interval it covers. For a periodic
+	// tick hi is wallNow, so nothing changes; for the tail flush hi is clamped
+	// to the window end, which is where its samples belong. History replay
+	// merges a flush that shares the final tick's whole second by design.
+	now := hi.Unix()
 
 	li, c := r.levelIdx, r.levelConc
 	stats := make(map[string]BucketStats, len(r.targets))

@@ -4,7 +4,7 @@
 
 import { h } from '../dom.js';
 import { api } from '../api.js';
-import { sweepChart, timeChart, targetColor, fmtNum, fmtMs } from '../charts.js';
+import { sweepChart, timeChart, targetColor, fmtNum, fmtMs, bucketSecs } from '../charts.js';
 
 // preselect (from #history/<file-or-run-id>) checks that run on load, so a
 // finished run can deep-link straight into its comparison view.
@@ -103,7 +103,7 @@ export function renderHistory(app, preselect) {
             const a = byKey.get(k) || { t: p.t, level: lvl, ok: 0, clone_ok: 0, dt: 0, last: p };
             a.ok += p.ok || 0;
             a.clone_ok += p.clone_ok || 0;
-            a.dt += p.dt_ms || 1000;
+            a.dt += bucketSecs(p); // seconds; legacy points without dt_ms count as ~1s
             a.last = p;
             byKey.set(k, a);
           }
@@ -125,11 +125,10 @@ export function renderHistory(app, preselect) {
           return a ? val(a) : null;
         }))]);
         const rateOf = (a) => {
-          const dt = a.dt / 1000;
           const n = isClone ? a.clone_ok : a.ok;
-          return dt > 0 ? n / dt : null;
+          return a.dt > 0 ? n / a.dt : null;
         };
-        const cloneRateOf = (a) => (a.dt > 0 ? a.clone_ok / (a.dt / 1000) : null);
+        const cloneRateOf = (a) => (a.dt > 0 ? a.clone_ok / a.dt : null);
         // Gate on the recorded rolling p95, not this second's completions, so a
         // quiet bucket doesn't drop a point the stored window still covered.
         const p95Of = (a) => {

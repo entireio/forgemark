@@ -58,7 +58,7 @@ type TargetResult struct {
 // replay from history with the same fidelity they streamed with.
 type SeriesPoint struct {
 	T     int64   `json:"t"`
-	DtMs  int64   `json:"dt_ms,omitempty"` // measured duration of this bucket; 0/absent → treat as ~1s (legacy)
+	DtMs  int64   `json:"dt_ms,omitempty"` // measured duration; writers emit >= 1 (zero-overlap ticks are skipped), so 0/absent occurs only in legacy docs → treat as ~1s
 	Level int     `json:"level"`
 	OK    int     `json:"ok"`
 	CAS   int     `json:"cas"`

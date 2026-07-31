@@ -5,7 +5,7 @@
 import { h } from '../dom.js';
 import { api } from '../api.js';
 import { openRunStream } from '../sse.js';
-import { timeChart, targetColor, fmtNum, fmtMs } from '../charts.js';
+import { timeChart, targetColor, fmtNum, fmtMs, bucketSecs } from '../charts.js';
 import { levelCountdown, resultsSavedBanner } from './shared.js';
 
 export function renderDashboard(app, runId) {
@@ -197,8 +197,8 @@ export function renderDashboard(app, runId) {
       // A bucket's ok is a count over the bucket's measured duration, which is
       // ~1s for a steady tick but fractional for the first post-warm-up bucket
       // and the tail flush. Normalize count → ops/s by that duration so those
-      // points aren't misleading; dt_ms absent (legacy series) falls back to 1s.
-      const dt = (ev.dt_ms || 1000) / 1000;
+      // points aren't misleading.
+      const dt = bucketSecs(ev);
       const rate = (n) => (dt > 0 ? n / dt : null);
 
       // throughput (+ dashed clone series for session)
