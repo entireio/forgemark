@@ -1,0 +1,44 @@
+High
+AI
+Trail Review
+scripts/compare-local.sh:116
+2h ago
+
+This selects every refs/heads/bench/* ref and the loop below deletes them, including unrelated user branches when FM_GH_REPO or FM_ENTIRE_UPSTREAM explicitly names an existing repository. Restrict deletion to the exact ForgeMark-owned ref pattern (and exclude any active run) to avoid permanent remote data loss.
+
+Medium
+AI
+Trail Review
+scripts/compare-local.sh:211
+2h ago
+
+Native mode reuses the Entire repository without removing prior ForgeMark branches, while the GitHub side is cleaned before every run. Because pushrace.sh defaults to native mode, repeated races give Entire an ever-growing receive-pack advertisement and make results history-dependent; clean only ForgeMark-owned refs on this path or provision a fresh native repo per run.
+
+AI
+Trail Review
+internal/server/static/js/views/race.js:289
+2h ago
+
+The finished podium mixes cumulative bucket counts from every concurrency level (lane.ok, and similarly cumulative failures below) with rate and latency fields from only the final level_result. Multi-level runs therefore present incompatible denominators in one row; use the final-level result's counts or explicitly label the live totals as whole-run cumulative values.
+
+AI
+Trail Review
+internal/server/runmgr.go:392
+2h ago
+
+The authoritative registration check only tests m.active; shutdown can cancel baseCtx, have stopActive observe no active run, and then this start can register a coordinator after the drain has completed. Track shutdown under m.mu and reject it atomically here so ListenAndServe cannot return while a newly registered coordinator persists or cleans up in the background.
+
+AI
+Trail Review
+internal/server/runmgr.go:244
+2h ago
+
+The API accepts arbitrarily large positive concurrency values; a tiny request such as concurrency:[9223372036854775807] passes validation, then the real runner panics allocating its agent slice or the demo runner exhausts memory spawning goroutines. This is remotely triggerable with a demo:// target on an exposed bind, so enforce hard per-level and aggregate concurrency limits before registering the run.
+
+Low
+AI
+Trail Review
+internal/server/runmgr.go:596
+2h ago
+
+The event timestamp is taken after releasing all agents, not from the barrier's shared fire instant used by samples and bucket windows. Under high concurrency the coordinator can be delayed, shifting countdown and warm-up shading relative to the actual measurement; emit barrier.FiredAt().UTC() here.
