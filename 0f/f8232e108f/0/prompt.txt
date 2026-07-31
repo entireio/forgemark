@@ -1,0 +1,31 @@
+Findings
+
+Medium
+AI
+Trail Review
+internal/bench/endpoint.go:88
+5m ago
+
+Redacting only the literal password does not prevent an authenticated endpoint from echoing the Authorization: Basic … value or another encoded representation into this persisted/SSE error. Avoid returning authenticated response bodies, or also scrub the complete authorization value and relevant encodings before constructing the error.
+
+AI
+Trail Review
+internal/server/runmgr.go:730
+5m ago
+
+Warm-up-only ticks are persisted with dt_ms == 0, which omitempty removes; replay then treats them as legacy one-second buckets. If such a tick and the measured tail share a (t, level) slot, the extra second is added to the denominator and materially understates replayed throughput; skip zero-overlap buckets or preserve an explicit distinguishable duration.
+
+AI
+Trail Review
+internal/server/static/js/views/history.js:69
+5m ago
+
+Levels with zero successful operations have p95_ms == 0, so this chart plots failed targets as having perfect zero latency. Emit a null point unless l.ok > 0 so failures cannot appear faster than successful targets.
+
+Low
+AI
+Trail Review
+internal/server/static/js/views/race.js:325
+5m ago
+
+The advertised five-second rolling rate averages per-bucket rates equally even though edge buckets may cover only milliseconds. A tiny tail bucket can therefore dominate the displayed rate; retain counts and durations and calculate sum(ok)/sum(dt) across the rolling window.

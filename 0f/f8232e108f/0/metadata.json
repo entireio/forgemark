@@ -1,0 +1,58 @@
+{
+  "cli_version": "0.8.42",
+  "checkpoint_id": "0ff8232e108f",
+  "session_id": "cbf3f9a4-6cc7-420c-b4e5-0dc500040981",
+  "strategy": "manual-commit",
+  "created_at": "2026-07-31T07:32:51.512731Z",
+  "branch": "feat/web-demo",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "internal/bench/redact.go",
+    "internal/bench/endpoint.go",
+    "internal/bench/creds.go",
+    "internal/server/runmgr.go",
+    "internal/server/static/js/views/history.js",
+    "internal/server/static/js/views/race.js",
+    "internal/bench/redact_test.go"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-fable-5",
+  "turn_id": "dcf49643cb54",
+  "checkpoint_transcript_start": 255,
+  "transcript_lines_at_start": 255,
+  "compact_transcript_start": 59,
+  "token_usage": {
+    "input_tokens": 409,
+    "cache_creation_tokens": 17063,
+    "cache_read_tokens": 1643856,
+    "output_tokens": 11578,
+    "api_call_count": 11
+  },
+  "session_metrics": {
+    "turn_count": 3
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-07-31T07:32:51.455538Z",
+    "agent_lines": 69,
+    "agent_removed": 7,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 69,
+    "total_lines_changed": 76,
+    "agent_percentage": 100,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 17,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".claude/settings.local.json": 17
+      }
+    }
+  ]
+}
