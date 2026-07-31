@@ -28,4 +28,8 @@ func TestNewDemoRunnerValidation(t *testing.T) {
 	// Probabilities are bounded to [0,1].
 	bad("demo://x?err=2")
 	bad("demo://x?cas=1.5")
+	// err and cas share one probability roll, so their sum is bounded too:
+	// err=0.8&cas=0.8 would silently yield only ~0.2 CAS, not the requested 0.8.
+	bad("demo://x?err=0.8&cas=0.8")
+	ok("demo://x?err=0.4&cas=0.6")
 }

@@ -77,6 +77,12 @@ func newDemoRunner(remote string, w bench.Workload, sink bench.Sink) (*demoRunne
 	if d.errRate > 1 || d.casRate > 1 {
 		return nil, fmt.Errorf("demo: err and cas must be probabilities in [0,1]")
 	}
+	// Both outcomes resolve from one shared roll (bands [0,err) and
+	// [err,err+cas)), so a sum over 1 would silently clip the CAS band — e.g.
+	// err=0.8&cas=0.8 would yield only ~0.2 CAS instead of the requested 0.8.
+	if d.errRate+d.casRate > 1 {
+		return nil, fmt.Errorf("demo: err + cas must not exceed 1 (each op resolves one shared probability roll)")
+	}
 	// For a log-normal around the median, p99 = median * exp(sigma * z99).
 	d.sigma = math.Log(spread) / 2.326
 	return d, nil

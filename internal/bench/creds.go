@@ -3,6 +3,7 @@ package bench
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -76,9 +77,18 @@ type tokenEntry struct {
 const singleflightKey = "jurisdiction"
 
 func newJurisdictionCreds(httpc *http.Client, tokenURL, audience, clientID, subject, username string) *jurisdictionCreds {
+	// The exchange must never follow a redirect: the POST body carries the
+	// subject token, and Go's default client replays the body on 307/308 — so a
+	// redirect served by the (audience-validated) token host could bounce the
+	// token to an arbitrary origin, silently bypassing the host pinning. Copy
+	// the client (sharing its transport/pool) with redirects refused outright.
+	noRedirect := *httpc
+	noRedirect.CheckRedirect = func(*http.Request, []*http.Request) error {
+		return errors.New("token endpoint attempted a redirect; refusing to forward the subject token")
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	return &jurisdictionCreds{
-		httpc:    httpc,
+		httpc:    &noRedirect,
 		tokenURL: tokenURL,
 		audience: strings.TrimRight(audience, "/"),
 		clientID: clientID,

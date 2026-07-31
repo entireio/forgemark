@@ -174,7 +174,15 @@ export function renderRace(app, arg) {
 
   function finish(ev) {
     clock.textContent = '0:00';
-    phase.textContent = 'finished';
+    phase.textContent = ev.state === 'done' ? 'finished' : ev.state;
+    // A podium is only meaningful for a run that completed its full sweep: a
+    // cancelled or failed run stopped mid-window, and crowning a winner from
+    // those partial samples would present an unfinished race as a result.
+    if (ev.state !== 'done') {
+      finishBox.append(h('div', { class: 'banner' },
+        `run ${ev.state} — no podium, the race didn't finish`));
+      return;
+    }
     // finalOf returns a target's result only when it's from the final level: a
     // target that died at a lower concurrency keeps that lower-level result in
     // state.finals, and comparing it against other targets' final-level numbers
@@ -209,23 +217,50 @@ export function renderRace(app, arg) {
             : ' — only target with a comparable median latency';
       }
     } else if (metric === 'reliability') {
-      const pct = (r) => (r.lane.good + r.lane.errs ? r.lane.good / (r.lane.good + r.lane.errs) : -1);
-      rows.sort((a, b) => pct(b) - pct(a) || b.lane.good - a.lane.good);
+      // Rank from the final level's measured result, like latency — never the
+      // cumulative live counters: those mix every level, including partial
+      // levels from a target that died early, so a lane's cumulative rate can
+      // out-rank the survivors and contradict the authoritative table below.
+      // A target without a final-level result gets -1 and can never win.
+      const pct = (r) => {
+        const f = finalOf(r);
+        if (!f) return -1;
+        let good = f.ok;
+        let bad = f.cas_failures + f.other_errors;
+        if (state.isSession) { good += f.clone_ok || 0; bad += f.clone_errors || 0; }
+        return good + bad > 0 ? good / (good + bad) : -1;
+      };
+      rows.sort((a, b) => pct(b) - pct(a) || (finalOf(b)?.ok || 0) - (finalOf(a)?.ok || 0));
       const [win, next] = rows;
-      if (next) {
+      if (pct(win) < 0) {
+        tie = true; // nobody finished the final level — suppress a lone winner
+        verdict = ' — no final-level result to compare';
+      } else if (next) {
         tie = pct(win) === pct(next);
         verdict = tie
           ? ` — ${(pct(win) * 100).toFixed(1)}% success across the board`
-          : ` — ${(pct(win) * 100).toFixed(1)}% vs ${(pct(next) * 100).toFixed(1)}% success`;
+          : pct(next) >= 0
+            ? ` — ${(pct(win) * 100).toFixed(1)}% vs ${(pct(next) * 100).toFixed(1)}% success at the final level`
+            : ' — only target with a final-level result';
       }
     } else {
-      rows.sort((a, b) => b.lane.ok - a.lane.ok);
+      // Throughput ranks the final level's measured rate (the table's ops/s
+      // column), not the cumulative lane counter, for the same reason as
+      // reliability: cumulative counts include partial levels from dead
+      // targets and would let the verdict contradict the table.
+      const rateOf = (r) => { const f = finalOf(r); return f ? f.ops_per_sec : -1; };
+      rows.sort((a, b) => rateOf(b) - rateOf(a) || b.lane.ok - a.lane.ok);
       const [win, next] = rows;
-      if (next && next.lane.ok > 0) {
-        tie = win.lane.ok === next.lane.ok;
+      if (rateOf(win) <= 0) {
+        tie = true; // no successful final-level ops anywhere — nothing to crown
+        verdict = ` — no successful ${opsNoun()} at the final level`;
+      } else if (next) {
+        tie = rateOf(win) === rateOf(next);
         verdict = tie
-          ? ` — ${fmtInt(win.lane.ok)} ${opsNoun()} each`
-          : ` — ${(win.lane.ok / next.lane.ok).toFixed(1)}× more ${opsNoun()}`;
+          ? ` — ${rateOf(win).toFixed(1)} ${opsNoun()}/s each at the final level`
+          : rateOf(next) > 0
+            ? ` — ${(rateOf(win) / rateOf(next)).toFixed(1)}× higher throughput at the final level`
+            : ' — only target with a final-level result';
       }
     }
     const win = rows[0];
