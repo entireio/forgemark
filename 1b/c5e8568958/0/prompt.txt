@@ -1,0 +1,53 @@
+Findings
+
+High
+AI
+Trail Review
+internal/bench/cleanup.go:75
+5h ago
+
+The sweep deletes every ref whose name matches the ForgeMark pattern, with no ownership, age, or active-run check. A concurrently running ForgeMark process using the same repo/prefix can have its live refs deleted, corrupting its measurements; restrict cleanup to positively recorded stale run IDs or coordinate across processes before deleting.
+
+AI
+Trail Review
+internal/server/server.go:191
+5h ago
+
+An exposed bind still accepts unauthenticated demo:// runs, but workloads permit 4096 agents, arbitrarily many levels, and unbounded duration while demoRunner retains every sample and the collector retains rolling latencies. A reachable client can therefore exhaust memory/CPU without credentials; require loopback/authentication or enforce a bounded total work/sample budget before accepting these runs.
+
+Medium
+AI
+Trail Review
+internal/server/demo.go:104
+5h ago
+
+Demo session operation selection advances to pushes regardless of whether the preceding synthetic clone failed. Real session agents retry cloning immediately after a clone failure, so error-heavy demo runs publish an impossible clone/push mix; track per-agent session state and emit pushes only after a successful clone.
+
+AI
+Trail Review
+internal/server/collector.go:82
+5h ago
+
+Every measured completion contends on one mutex and retains an exact latency sample; the once-per-second snapshot then copies and sorts the full 10-second window. At supported high concurrency this can consume substantial CPU/memory and throttle the load generator itself, so use bounded/sharded aggregation or a fixed-size quantile structure on the Sink path.
+
+AI
+Trail Review
+internal/server/events.go:57
+5h ago
+
+Valid workloads can exceed this cap (five 6-hour measured levels already produce over 100,000 buckets), after which level_start and level_result are silently dropped along with buckets. The race view can then crown a winner using an earlier level; always preserve lifecycle events and rotate/drop only replayable bucket data, or cap total measured time below this limit.
+
+AI
+Trail Review
+internal/server/static/js/views/dashboard.js:215
+5h ago
+
+For session, isClone is false, so this chart always selects push latency and silently ignores the separately collected clone_p* fields while presenting the result as generic “Latency.” Plot and label separate push and clone latency series so session timing remains semantically complete.
+
+Low
+AI
+Trail Review
+internal/server/static/js/views/race.js:327
+5h ago
+
+Starting a new level leaves each lane's rolling rates and latency from the previous concurrency intact. Because no buckets are emitted during warm-up, the race view displays and crowns stale prior-level performance throughout that period; clear per-level rolling state on level_start while retaining only the intentionally cumulative counters.
