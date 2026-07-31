@@ -1,9 +1,8 @@
 {
-  "cli_version": "0.8.42",
-  "checkpoint_id": "fc100fe3cb6f",
-  "strategy": "manual-commit",
   "branch": "feat/web-demo",
-  "checkpoints_count": 1,
+  "checkpoint_id": "fc100fe3cb6f",
+  "checkpoints_count": 3,
+  "cli_version": "0.8.42",
   "files_touched": [
     "internal/bench/stats.go",
     "internal/server/collector.go",
@@ -12,6 +11,7 @@
     "internal/server/server.go",
     "internal/server/server_test.go"
   ],
+  "has_review": true,
   "sessions": [
     {
       "metadata": "/fc/100fe3cb6f/0/metadata.json",
@@ -19,13 +19,20 @@
       "compact_transcript": "/fc/100fe3cb6f/0/transcript.jsonl",
       "content_hash": "/fc/100fe3cb6f/0/content_hash.txt",
       "prompt": "/fc/100fe3cb6f/0/prompt.txt"
+    },
+    {
+      "content_hash": "/fc/100fe3cb6f/1/content_hash.txt",
+      "metadata": "/fc/100fe3cb6f/1/metadata.json",
+      "prompt": "/fc/100fe3cb6f/1/prompt.txt",
+      "transcript": "/fc/100fe3cb6f/1/full.jsonl"
     }
   ],
+  "strategy": "manual-commit",
   "token_usage": {
-    "input_tokens": 4161,
+    "input_tokens": 133753,
     "cache_creation_tokens": 16323,
-    "cache_read_tokens": 3238626,
-    "output_tokens": 12168,
-    "api_call_count": 10
+    "cache_read_tokens": 6129187,
+    "output_tokens": 25242,
+    "api_call_count": 52
   }
 }
