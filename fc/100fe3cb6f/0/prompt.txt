@@ -1,0 +1,22 @@
+High
+AI
+Trail Review
+internal/bench/config.go:42
+8m ago
+
+The accepted limits still allow a demo workload with 4,096 agents and 1 ms latency, while demoRunner retains every sample for the entire level; this allocates millions of samples per second and can OOM the server within seconds (and eight targets multiply it). Add a bound on total retained samples/workload rate or aggregate demo results without unbounded retention.
+
+Medium
+AI
+Trail Review
+internal/server/runmgr.go:783
+8m ago
+
+An early cancellation does not stop periodic bucket emission until every RunLevel goroutine returns. Session agents can spend up to 30 seconds deleting refs on detached contexts, so the ticker publishes zero-count buckets with stale percentiles and positive durations after measurement stopped; also gate periodic emission on r.ctx.Err() or close the measuring window immediately on cancellation.
+
+AI
+Trail Review
+internal/server/server.go:126
+8m ago
+
+The rebinding Host check is disabled whenever the server binds non-loopback, but run control still accepts loopback peers. A page served from evil.example:<port> can rebind that same origin to 127.0.0.1, satisfy both the Origin and peer checks, and start resource-intensive demo runs; enforce an allowed local Host for mutating endpoints even on exposed binds.
