@@ -746,6 +746,19 @@ func (r *Run) emitBucket(force bool) {
 		dtMs = int64((d + time.Millisecond - 1) / time.Millisecond)
 	}
 	r.lastBucketAt = wallNow
+	if dtMs == 0 {
+		// Zero overlap means nothing measured happened in this tick — a warm-up
+		// second, typically. dt_ms 0 is dropped by omitempty on persist, and every
+		// consumer reads absent as a legacy ~1s bucket, so emitting it would add a
+		// phantom second to any (t, level) slot the replay merges it into and
+		// understate the replayed rate. Skip periodic ticks outright; a forced
+		// tail flush may still carry boundary-sliver completions, so emit those
+		// under a 1ms floor rather than an ambiguous zero.
+		if !force {
+			return
+		}
+		dtMs = 1
+	}
 
 	li, c := r.levelIdx, r.levelConc
 	stats := make(map[string]BucketStats, len(r.targets))

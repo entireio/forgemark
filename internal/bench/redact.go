@@ -1,6 +1,10 @@
 package bench
 
-import "strings"
+import (
+	"encoding/base64"
+	"net/url"
+	"strings"
+)
 
 // redactSecrets removes any occurrence of the given secret values from s,
 // replacing each with a placeholder. Errors built from authenticated HTTP
@@ -15,4 +19,18 @@ func redactSecrets(s string, secrets ...string) string {
 		}
 	}
 	return s
+}
+
+// authForms returns every representation a basic-auth credential took on the
+// wire, so all of them can be scrubbed from an echoed response: the raw
+// secret, its URL-encoded form (as it appears in a form body or URL), and the
+// complete `Authorization: Basic` value base64(user:pass). Redacting only the
+// literal secret would let an endpoint that echoes the authorization header —
+// or any encoded rendition of the request — leak the credential verbatim.
+func authForms(user, pass string) []string {
+	return []string{
+		pass,
+		url.QueryEscape(pass),
+		base64.StdEncoding.EncodeToString([]byte(user + ":" + pass)),
+	}
 }

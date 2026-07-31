@@ -220,7 +220,9 @@ func (j *jurisdictionCreds) exchange(ctx context.Context) (tokenEntry, error) {
 		return tokenEntry{}, fmt.Errorf("read token response: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return tokenEntry{}, fmt.Errorf("HTTP %d: %s", resp.StatusCode, redactSecrets(strings.TrimSpace(string(body)), j.subject))
+		// The subject token traveled URL-encoded in the form body, so scrub that
+		// rendition too if the endpoint echoes the request back.
+		return tokenEntry{}, fmt.Errorf("HTTP %d: %s", resp.StatusCode, redactSecrets(strings.TrimSpace(string(body)), j.subject, url.QueryEscape(j.subject)))
 	}
 	var jr struct {
 		AccessToken string `json:"access_token"`

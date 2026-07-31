@@ -66,7 +66,10 @@ export function renderHistory(app, preselect) {
     liveCharts.push(sweepChart(mkCard('p95 latency vs concurrency', 'per-op p95 in the measured window'), {
       seriesData: series.map((s) => ({
         label: s.label, color: s.color,
-        points: s.target.levels.map((l) => [l.concurrency, l.p95_ms]),
+        // A level with no successful ops has p95_ms 0 — that's "no latency to
+        // report", not "0ms". Plot null so a fully-failed target shows a gap
+        // instead of a perfect-looking zero line under everyone else.
+        points: s.target.levels.map((l) => [l.concurrency, l.ok > 0 && l.p95_ms > 0 ? l.p95_ms : null]),
       })),
       unit: fmtMs,
     }));

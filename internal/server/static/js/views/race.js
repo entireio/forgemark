@@ -98,7 +98,12 @@ export function renderRace(app, arg) {
     if (metric === 'pushes') {
       const leader = Math.max(1, ...lanes.map((l) => l.ok));
       for (const l of lanes) {
-        const avg = l.rates.length ? l.rates.reduce((a, b) => a + b, 0) / l.rates.length : 0;
+        // Rate = total ops / total covered time over the rolling window, not a
+        // mean of per-bucket rates: buckets are duration-weighted, so a
+        // milliseconds-wide edge bucket can't swing the displayed rate the way
+        // it would if its instantaneous rate were averaged in equally.
+        const win = l.rates.reduce((a, b) => ({ ok: a.ok + b.ok, dt: a.dt + b.dt }), { ok: 0, dt: 0 });
+        const avg = win.dt > 0 ? win.ok / win.dt : 0;
         l.els.big.textContent = fmtInt(l.ok);
         l.els.unit.textContent = opsNoun();
         l.els.side.textContent = `${avg >= 10 ? Math.round(avg) : avg.toFixed(1)} ${opsNoun()}/s`;
@@ -322,7 +327,9 @@ export function renderRace(app, arg) {
         l.good += good;
         l.errs += err;
         if (dt > 0) {
-          l.rates.push(ok / dt);
+          // Keep count and duration, not a precomputed rate: the rolling rate
+          // is sum(ok)/sum(dt) so fractional edge buckets weigh by their size.
+          l.rates.push({ ok, dt });
           if (l.rates.length > 5) l.rates.shift();
         }
         // Latency is the collector's rolling 10s-window percentile, reported
