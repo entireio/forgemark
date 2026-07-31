@@ -1,0 +1,38 @@
+Findings
+
+High
+AI
+Trail Review
+internal/server/server.go:191
+14m ago
+
+An exposed bind still accepts unauthenticated demo:// runs, but workloads permit 4096 agents, arbitrarily many levels, and unbounded duration while demoRunner retains every sample and the collector retains rolling latencies. A reachable client can therefore exhaust memory/CPU without credentials; require loopback/authentication or enforce a bounded total work/sample budget before accepting these runs.
+
+Medium
+AI
+Trail Review
+scripts/compare-local.sh:172
+14m ago
+
+The earlier active-run check is not atomic with this cleanup, so another GUI request can start a run after the check and have its matching bench/ refs deleted here. Coordinate cleanup with server run registration, or rework it into a server-side operation protected by the active-run lock, so cleanup cannot corrupt an in-progress benchmark.
+
+AI
+Trail Review
+internal/server/static/js/views/race.js:281
+14m ago
+
+In session results this adds clone failures to the failure column, but the same row shows only successful pushes (f.ok) and push latency/rate. That mixes incompatible denominators and can make successful pushes appear unreliable; either include clone_ok in the success/attempt fields or present clone failures separately.
+
+AI
+Trail Review
+internal/server/static/js/views/dashboard.js:215
+14m ago
+
+For session, isClone is false, so this chart always selects push latency and silently ignores the separately collected clone_p* fields while presenting the result as generic “Latency.” Plot and label separate push and clone latency series so session timing remains semantically complete.
+
+AI
+Trail Review
+scripts/compare-local.sh:211
+2h ago
+
+Native mode reuses the Entire repository without removing prior ForgeMark branches, while the GitHub side is cleaned before every run. Because pushrace.sh defaults to native mode, repeated races give Entire an ever-growing receive-pack advertisement and make results history-dependent; clean only ForgeMark-owned refs on this path or provision a fresh native repo per run.
