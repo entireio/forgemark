@@ -1,0 +1,24 @@
+Findings
+
+Medium
+AI
+Trail Review
+scripts/compare-local.sh:77
+1m ago
+
+The helper silently reuses any repository with the default name, even seeding an existing empty repository, without verifying that ForgeMark created it. Repeated branch runs also leave bench/ refs in that reused repo, growing advertisements and biasing later measurements; require explicit opt-in/ownership verification and clean only ForgeMark-owned refs or create a fresh repository.
+
+AI
+Trail Review
+internal/server/runmgr.go:244
+1m ago
+
+The API accepts arbitrarily large positive concurrency values; a tiny request such as concurrency:[9223372036854775807] passes validation, then the real runner panics allocating its agent slice or the demo runner exhausts memory spawning goroutines. This is remotely triggerable with a demo:// target on an exposed bind, so enforce hard per-level and aggregate concurrency limits before registering the run.
+
+Low
+AI
+Trail Review
+internal/server/static/js/views/race.js:199
+1m ago
+
+A completed run with zero successful primary operations returns without rendering any terminal summary, so the intended “no successful operations” verdict, failure counts, and result table never appear. Remove this success gate and let the metric-specific no-success handling render the measured failure outcome; for session reliability, successful clones may also be meaningful even when every push fails.
