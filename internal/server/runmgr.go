@@ -389,6 +389,18 @@ func (m *RunManager) start(req startRequest) (*Run, []string, error) {
 	}
 
 	m.mu.Lock()
+	// Re-check shutdown atomically with registration: the unlocked check above
+	// can pass, then beginShutdown+stopActive both complete (seeing no active
+	// run), and registering here would launch a coordinator that persists and
+	// cleans up after ListenAndServe has already returned. beginShutdown cancels
+	// baseCtx before stopActive locks m.mu, so a cancel that precedes a missed
+	// active run is always visible to this locked check — either we register
+	// before stopActive looks (it waits for us), or we see the cancel and refuse.
+	if m.baseCtx.Err() != nil {
+		m.mu.Unlock()
+		cancel()
+		return nil, nil, errShuttingDown
+	}
 	if m.active != nil {
 		m.mu.Unlock()
 		cancel()
@@ -586,14 +598,16 @@ func (r *Run) coordinate(m *RunManager) {
 		r.windowStart = barrier.FiredAt()
 		r.lastBucketAt = r.windowStart
 		r.mu.Unlock()
-		// Emit level_start only now, at the instant the timed window opens. The
-		// agents' measured clocks start at Fire, so an "at" stamped before the
-		// per-target build (which the barrier absorbs) would make the UI's warm-up
-		// shading and countdown lead the real window by the setup time.
+		// Emit level_start only now, at the instant the timed window opens, and
+		// stamp "at" with the barrier's shared fire instant — the same origin the
+		// samples, deadline, and bucket windows use. A time.Now() here would lag
+		// Fire by however long the coordinator took to get rescheduled (real under
+		// high concurrency), shifting the UI's countdown and warm-up shading
+		// relative to the actual measurement.
 		r.log.emit("level_start", map[string]any{
 			"level_index": li, "concurrency": c,
 			"warmup_sec": r.bw.Warmup.Seconds(), "duration_sec": r.bw.Duration.Seconds(),
-			"at": time.Now().UTC(),
+			"at": barrier.FiredAt().UTC(),
 		})
 		lwg.Wait()
 		r.mu.Lock()

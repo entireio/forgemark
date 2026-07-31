@@ -273,11 +273,20 @@ export function renderRace(app, arg) {
     }
     const win = rows[0];
 
+    // Every table column comes from the final level's measured window — one
+    // denominator per row. Mixing the lanes' whole-run cumulative counters
+    // with final-level rates/latencies here would put incompatible windows
+    // side by side in one row of a multi-level run; the note says which
+    // window is being scored, and the lanes above keep the run totals.
+    const failsOf = (f) => f.cas_failures + f.other_errors + (state.isSession ? f.clone_errors || 0 : 0);
+    const finalConc = state.hello && state.finalLevel >= 0 ? state.hello.levels[state.finalLevel] : null;
     finishBox.append(h('div', { class: 'race-podium card' },
       h('div', { class: 'race-winner' },
         tie
           ? ['🤝 dead heat', verdict]
           : ['🏆 ', h('b', { style: { color: targetColor(win.t.id) } }, win.t.name), ' wins', verdict]),
+      h('div', { class: 'u-note' },
+        `scored on the final level's measured window${finalConc != null ? ` (c=${finalConc})` : ''} — the lane counters above are whole-run totals`),
       h('table', { class: 'results' },
         h('thead', {}, h('tr', {}, h('th', {}, ''), h('th', {}, 'target'), h('th', {}, opsNoun()),
           h('th', {}, `${opsNoun()}/s`), h('th', {}, 'p50'), h('th', {}, 'p95'), h('th', {}, 'failures'))),
@@ -286,11 +295,11 @@ export function renderRace(app, arg) {
           return h('tr', {},
             h('td', {}, tie && i < 2 ? '🥇' : ['🥇', '🥈', '🥉'][i] || ''),
             h('td', { class: 'tname' }, h('span', { class: 'dot', style: { '--tcolor': targetColor(r.t.id), marginRight: '6px' } }), r.t.name),
-            h('td', {}, fmtInt(r.lane.ok)),
+            h('td', {}, f ? fmtInt(f.ok) : '–'),
             h('td', {}, f ? f.ops_per_sec.toFixed(1) : '–'),
             h('td', {}, f ? fmtMs(f.p50_ms) : '–'),
             h('td', {}, f ? fmtMs(f.p95_ms) : '–'),
-            h('td', { class: r.lane.errs > 0 ? 'num-bad' : '' }, fmtInt(r.lane.errs)));
+            h('td', { class: f && failsOf(f) > 0 ? 'num-bad' : '' }, f ? fmtInt(failsOf(f)) : '–'));
         })))));
     const saved = resultsSavedBanner(ev);
     if (saved) finishBox.append(saved);

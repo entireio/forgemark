@@ -106,20 +106,64 @@ ensure_repo() {
   fi
 }
 
-# clean_bench_refs <owner/repo>: delete refs/heads/bench/* left by earlier
-# runs (every run's refs embed its run ID, so they accumulate). A growing ref
-# advertisement inflates later push negotiation and biases the comparison —
-# each run should start from the same small ref surface. Native EntireDB
-# repos are not covered here (no gh API); mirror mode is, via its upstream.
+# Exactly the refs ForgeMark pushes with this script's branch_prefix (bench/):
+# DestRef is <prefix><runID>-c<level>-a<agent>, the run ID is "fm"+base36
+# UnixNano (12+ chars, hence the {8,} floor — it also keeps a human branch
+# like bench/fmt-c1-a1 out), the server inserts -t<target>, and session
+# strategy appends -s<n>. Cleanup deletes ONLY matches — never bench/*
+# wholesale: an explicitly named (FM_GH_REPO/FM_ENTIRE_UPSTREAM) pre-existing
+# repo may carry a user's own bench/ branches, and deleting those would be
+# permanent data loss.
+FM_BENCH_REF_RE='^refs/heads/bench/fm[0-9a-z]{8,}(-t[0-9]+)?-c[0-9]+-a[0-9]+(-s[0-9]+)?$'
+
+# clean_bench_refs <owner/repo>: delete ForgeMark-owned bench refs left by
+# earlier runs (every run's refs embed its run ID, so they accumulate). A
+# growing ref advertisement inflates later push negotiation and biases the
+# comparison — each run should start from the same small ref surface.
 clean_bench_refs() {
   local repo="$1" refs
-  refs="$(gh api --paginate "repos/$repo/git/matching-refs/heads/bench/" --jq '.[].ref' 2>/dev/null || true)"
+  refs="$(gh api --paginate "repos/$repo/git/matching-refs/heads/bench/" --jq '.[].ref' 2>/dev/null | grep -E "$FM_BENCH_REF_RE" || true)"
   [ -n "$refs" ] || return 0
-  echo "compare-local: deleting $(wc -l <<<"$refs" | tr -d ' ') stale bench/ refs from $repo"
+  echo "compare-local: deleting $(wc -l <<<"$refs" | tr -d ' ') stale forgemark bench/ refs from $repo"
   while IFS= read -r ref; do
     gh api -X DELETE "repos/$repo/git/refs/${ref#refs/}" >/dev/null 2>&1 || true
   done <<<"$refs"
 }
+
+# clean_entire_bench_refs <base-url> <repo-path[,repo-path…]>: same cleanup for
+# EntireDB repos, which have no gh API — enumerate and delete over git smart
+# HTTP. The credential is produced inside git's credential-helper callback by
+# `entire auth token`, so no token ever lands in this script's variables,
+# argv, or environment. Best-effort: a failure warns and the run proceeds.
+clean_entire_bench_refs() {
+  local base="$1" repos="$2" repo url tmp refs
+  command -v git >/dev/null || { echo "compare-local: git not found; skipping entire bench-ref cleanup" >&2; return 0; }
+  local helper='!f() { if [ "$1" = get ]; then echo username=token; echo "password=$(entire auth token)"; fi; }; f'
+  tmp="$(mktemp -d)"
+  git -C "$tmp" init -q
+  for repo in ${repos//,/ }; do
+    url="$base/$repo"
+    refs="$(GIT_TERMINAL_PROMPT=0 git -C "$tmp" -c credential.helper= -c "credential.helper=$helper" \
+      ls-remote "$url" 'refs/heads/bench/*' 2>/dev/null | awk '{print $2}' | grep -E "$FM_BENCH_REF_RE" || true)"
+    [ -n "$refs" ] || continue
+    echo "compare-local: deleting $(wc -l <<<"$refs" | tr -d ' ') stale forgemark bench/ refs from $repo"
+    sed 's/^/:/' <<<"$refs" | GIT_TERMINAL_PROMPT=0 xargs git -C "$tmp" \
+      -c credential.helper= -c "credential.helper=$helper" push -q "$url" \
+      || echo "compare-local: warning: bench-ref cleanup on $repo failed; advertisements may grow" >&2
+  done
+  rm -rf "$tmp"
+}
+
+# Refuse to proceed while a run is active on this server: the POST below
+# would 409 anyway, and cleaning bench refs first would delete refs the
+# active run is still pushing to.
+ACTIVE_RUN="$(curl -sf "http://$ADDR/api/runs" | python3 -c 'import json,sys
+runs = json.load(sys.stdin) or []
+print(next((r["id"] for r in runs if r.get("state") in ("starting", "running")), ""))' 2>/dev/null || true)"
+if [ -n "$ACTIVE_RUN" ]; then
+  echo "compare-local: run $ACTIVE_RUN is already active on $ADDR — wait for it or cancel it first" >&2
+  exit 1
+fi
 
 # --- GitHub target ---
 GH_USER="$(gh api user --jq .login)"
@@ -241,6 +285,12 @@ PY
     ENTIRE_REPO_PATH="gh/$ENTIRE_UPSTREAM"
   fi
   export FM_ENTIRE_REPOS="${FM_ENTIRE_REPOS:-$ENTIRE_REPO_PATH}"
+  # Clean the EntireDB side too — native mode especially (pushrace.sh's
+  # default): the GitHub side is cleaned via the gh API above, but without
+  # this the Entire repo's receive-pack advertisement grows every race and
+  # results become history-dependent. Covers the mirror path as well, since
+  # benchmark pushes land on the cluster copy.
+  clean_entire_bench_refs "$FM_ENTIRE_REMOTE" "$FM_ENTIRE_REPOS"
   ENTIRE_ENABLED=1
 fi
 
