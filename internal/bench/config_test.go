@@ -49,6 +49,37 @@ func TestValidateBoundsConcurrency(t *testing.T) {
 	}
 }
 
+// Commit-content fields arrive from the server API just as unbounded as
+// concurrency does, and an unchecked FileSize flows into make([]byte, FileSize)
+// in every agent — near MaxInt that's a runtime panic ("len out of range")
+// that kills the whole server process, not just the run. FilesMax × FileSize
+// is bounded too: it's the working set every agent keeps in its worktree.
+func TestValidateBoundsCommitContent(t *testing.T) {
+	check := func(c CommitConfig, wantOK bool) {
+		t.Helper()
+		w := Workload{Strategy: "branch", Concurrency: []int{1}, Duration: time.Second, Commit: c}
+		if err := w.Validate(); (err == nil) != wantOK {
+			t.Errorf("Validate(%+v) = %v, want ok=%v", c, err, wantOK)
+		}
+	}
+	check(CommitConfig{FilesMin: 1, FilesMax: maxFilesMax, FileSize: 1}, true)
+	check(CommitConfig{FilesMin: 1, FilesMax: 1, FileSize: maxFileSize}, true)
+	check(CommitConfig{FilesMin: 1, FilesMax: maxFilesMax + 1, FileSize: 1}, false)
+	check(CommitConfig{FilesMin: 1, FilesMax: 1, FileSize: maxFileSize + 1}, false)
+	check(CommitConfig{FilesMin: 1, FilesMax: 1, FileSize: 1<<63 - 1}, false)
+	// Each factor within its own cap can still multiply past the per-commit
+	// aggregate.
+	check(CommitConfig{FilesMin: 1, FilesMax: maxFilesMax, FileSize: maxFileSize}, false)
+
+	// clone never commits, so its commit config is inert and stays unvalidated
+	// — a huge FileSize on a clone run must not start failing.
+	w := Workload{Strategy: "clone", Concurrency: []int{1}, Duration: time.Second,
+		Commit: CommitConfig{FileSize: 1 << 40}}
+	if err := w.Validate(); err != nil {
+		t.Errorf("Validate(clone, huge inert FileSize) = %v, want nil", err)
+	}
+}
+
 func TestDestRef(t *testing.T) {
 	// The prefix is prepended verbatim before the run ID; the assembled ref is what
 	// Workload.Validate checks. Readable prefixes pass; typo shapes git rejects fail fast

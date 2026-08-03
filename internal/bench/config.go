@@ -43,6 +43,15 @@ const (
 	maxLevels      = 16            // levels per sweep
 	maxDuration    = 6 * time.Hour // measured window per level
 	maxWarmup      = time.Hour     // warm-up per level
+
+	// Commit content is the same class of API-reachable allocation: FileSize
+	// goes straight into make([]byte, FileSize) in every agent (a near-MaxInt
+	// value is a runtime panic that kills the whole process, not just the
+	// run), and FilesMax × FileSize is the working set every agent keeps in
+	// its in-memory worktree.
+	maxFilesMax    = 1024     // files per commit
+	maxFileSize    = 16 << 20 // bytes per file
+	maxCommitBytes = 64 << 20 // files-max × file-size, one commit's payload
 )
 
 // Workload is the target-independent shape of a run: strategy, sweep, and
@@ -100,8 +109,19 @@ func (w Workload) Validate() error {
 		if w.Commit.FilesMax < w.Commit.FilesMin {
 			return errors.New("-files-max < -files-min")
 		}
+		if w.Commit.FilesMax > maxFilesMax {
+			return fmt.Errorf("-files-max must be <= %d", maxFilesMax)
+		}
 		if w.Commit.FileSize < 1 {
 			return errors.New("-file-size must be >= 1 (empty blobs reproduce → ErrEmptyCommit)")
+		}
+		if w.Commit.FileSize > maxFileSize {
+			return fmt.Errorf("-file-size must be <= %d (%dMiB)", maxFileSize, maxFileSize>>20)
+		}
+		// Both factors already fit comfortably in int64, so the product can't
+		// overflow this aggregate check.
+		if int64(w.Commit.FilesMax)*int64(w.Commit.FileSize) > maxCommitBytes {
+			return fmt.Errorf("-files-max × -file-size must be <= %dMiB per commit", maxCommitBytes>>20)
 		}
 	}
 	// Validate the assembled ref, not the prefix alone: validity is context-dependent

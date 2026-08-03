@@ -125,6 +125,19 @@ func (ts TargetSpec) toTarget() bench.Target {
 	}
 }
 
+// strippedRemote renders a rejected remote without userinfo, query, or
+// fragment. Rejection errors travel into the JSON response and from there
+// into callers' logs (compare-local.sh prints them verbatim), and a rejected
+// URL is precisely where a credential can be riding — echo only the parts
+// that identify the target, never the parts that can carry a secret.
+func strippedRemote(u *url.URL) string {
+	c := *u
+	c.User = nil
+	c.RawQuery = ""
+	c.Fragment = ""
+	return c.String()
+}
+
 // TargetInfo is the redacted, stable identity of a target within a run.
 type TargetInfo struct {
 	ID     int    `json:"id"`
@@ -264,7 +277,15 @@ func (m *RunManager) start(req startRequest) (*Run, []string, error) {
 		// still be emitted verbatim.
 		u, err := url.Parse(bt.Remote)
 		if err != nil {
-			return nil, nil, fmt.Errorf("target %s: invalid remote URL %q: %w", name, bt.Remote, err)
+			// The rejection travels into the JSON error and callers' logs, and a
+			// rejected remote is exactly where a credential can ride (userinfo, a
+			// ?access_token=… query) — so never echo it. url.Error embeds the full
+			// URL in its message too; unwrap to the bare parse error.
+			var ue *url.Error
+			if errors.As(err, &ue) {
+				err = ue.Err
+			}
+			return nil, nil, fmt.Errorf("target %s: invalid remote URL: %w", name, err)
 		}
 		if u.User != nil {
 			return nil, nil, fmt.Errorf("target %s: remote must not embed credentials in the URL (user:...@); use secret or secret_source", name)
@@ -279,9 +300,9 @@ func (m *RunManager) start(req startRequest) (*Run, []string, error) {
 		if !isDemoRemote(bt.Remote) {
 			switch {
 			case (u.Scheme != "http" && u.Scheme != "https") || u.Host == "":
-				return nil, nil, fmt.Errorf("target %s: remote must be an absolute http(s) URL with a host, got %q", name, bt.Remote)
+				return nil, nil, fmt.Errorf("target %s: remote must be an absolute http(s) URL with a host, got %q", name, strippedRemote(u))
 			case u.RawQuery != "" || u.Fragment != "":
-				return nil, nil, fmt.Errorf("target %s: remote must not carry a query or fragment (repos are appended to the base URL); got %q", name, bt.Remote)
+				return nil, nil, fmt.Errorf("target %s: remote must not carry a query or fragment (repos are appended to the base URL); got %q with the query/fragment redacted", name, strippedRemote(u))
 			}
 		}
 		if ts.SecretSource != "" && ts.Secret != "" {

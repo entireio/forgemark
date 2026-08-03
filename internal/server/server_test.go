@@ -117,6 +117,11 @@ func TestStartRunValidation(t *testing.T) {
 	if code, msg := post(`{"confirm_authorized":true,"workload":{"concurrency":[9223372036854775807]},"targets":[{"remote":"demo://x"}]}`); code != http.StatusBadRequest || !strings.Contains(msg, "concurrency") {
 		t.Fatalf("huge-concurrency POST = %d %q, want 400 concurrency", code, msg)
 	}
+	// Same class: an unbounded file_size reaches make([]byte, FileSize) in every
+	// agent — a runtime panic that kills the process, not just the run.
+	if code, msg := post(`{"confirm_authorized":true,"workload":{"file_size":9223372036854775807},"targets":[{"remote":"demo://x"}]}`); code != http.StatusBadRequest || !strings.Contains(msg, "file-size") {
+		t.Fatalf("huge-file-size POST = %d %q, want 400 file-size", code, msg)
+	}
 	if code, msg := post(`{"confirm_authorized":true,"targets":[{"remote":"demo://x","secret":"tok","secret_source":"gh"}]}`); code != http.StatusBadRequest || !strings.Contains(msg, "not both") {
 		t.Fatalf("secret+source POST = %d %q, want 400 not-both", code, msg)
 	}
@@ -145,9 +150,17 @@ func TestStartRunValidation(t *testing.T) {
 		t.Fatalf("file:// remote = %d %q, want 400 absolute-http", code, msg)
 	}
 	// A remote must carry no query/fragment — Remote is echoed in status/results,
-	// so ?access_token=… would serialize a credential there.
-	if code, msg := post(`{"confirm_authorized":true,"targets":[{"remote":"https://host/p?access_token=sekret","repos":["a/b"],"secret":"t"}]}`); code != http.StatusBadRequest || !strings.Contains(msg, "query or fragment") {
-		t.Fatalf("query remote = %d %q, want 400 query/fragment", code, msg)
+	// so ?access_token=… would serialize a credential there. The rejection
+	// itself must not echo the query either: the error lands in the JSON
+	// response and in callers' logs (compare-local.sh prints it verbatim).
+	if code, msg := post(`{"confirm_authorized":true,"targets":[{"remote":"https://host/p?access_token=sekret","repos":["a/b"],"secret":"t"}]}`); code != http.StatusBadRequest || !strings.Contains(msg, "query or fragment") || strings.Contains(msg, "sekret") {
+		t.Fatalf("query remote = %d %q, want 400 query/fragment without the query echoed", code, msg)
+	}
+	// A malformed remote can carry credentials too, and url.Error embeds the
+	// full URL in its message — the parse-failure rejection must not echo
+	// either rendition of it.
+	if code, msg := post(`{"confirm_authorized":true,"targets":[{"remote":"https://user:sekret@host/%zz","repos":["a/b"],"secret":"t"}]}`); code != http.StatusBadRequest || !strings.Contains(msg, "invalid remote URL") || strings.Contains(msg, "sekret") {
+		t.Fatalf("malformed credentialed remote = %d %q, want 400 invalid-URL without the credential echoed", code, msg)
 	}
 	// A CLI-sourced credential must not be materialized for a foreign audience.
 	if code, msg := post(`{"confirm_authorized":true,"targets":[{"remote":"https://evil.example","repos":["a/b"],"secret_source":"gh"}]}`); code != http.StatusBadRequest || !strings.Contains(msg, "github.com") {

@@ -21,11 +21,16 @@ import (
 // could plausibly still be executing SOMEWHERE (another process or machine
 // sharing the repo; within one server the active-run lock already
 // serializes), and deleting a live run's refs would corrupt its
-// measurements. Two overlapping generators on one repo+prefix corrupt each
-// other's numbers regardless, so this guard is belt-and-braces for an
-// unsupported setup; the cost is that refs from runs within the window
-// linger until a later sweep, a few dozen refs at typical sweep sizes.
-const staleAfter = 12 * time.Hour
+// measurements. "Plausibly still executing" must cover the longest run
+// Validate itself admits — maxLevels × (maxDuration + maxWarmup) ≈ 112h —
+// or a second forgemark process starting past the cutoff would sweep a
+// still-running long run's refs mid-measurement; seven days covers that
+// envelope with margin. Two overlapping generators on one repo+prefix
+// corrupt each other's numbers regardless, so this guard is belt-and-braces
+// for an unsupported setup; the cost is that refs from runs within the
+// window linger until a later sweep, a few dozen refs at typical sweep
+// sizes.
+const staleAfter = 7 * 24 * time.Hour
 
 // staleBenchRefRe matches exactly the refs forgemark itself pushes under a
 // branch prefix, and nothing else: DestRef is
