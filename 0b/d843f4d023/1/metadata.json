@@ -1,0 +1,19 @@
+{
+  "agent": "Codex",
+  "checkpoint_id": "0bd843f4d023",
+  "checkpoints_count": 2,
+  "created_at": "2026-08-03T10:13:22.301Z",
+  "files_touched": [],
+  "kind": "agent_review",
+  "model": "gpt-5.6-sol",
+  "review_prompt": "\u003cenvironment_context\u003e\n  \u003ccwd\u003e/home/user/repo\u003c/cwd\u003e\n  \u003cshell\u003ebash\u003c/shell\u003e\n  \u003ccurrent_date\u003e2026-08-03\u003c/current_date\u003e\n  \u003ctimezone\u003eEtc/UTC\u003c/timezone\u003e\n  \u003cfilesystem\u003e\u003cworkspace_roots\u003e\u003croot\u003e/home/user/repo\u003c/root\u003e\u003c/workspace_roots\u003e\u003cpermission_profile type=\"disabled\"\u003e\u003cfile_system type=\"unrestricted\" /\u003e\u003c/permission_profile\u003e\u003c/filesystem\u003e\n\u003c/environment_context\u003e",
+  "session_id": "01KZ3JDPQAWF0TBVHSMG6RW0J5",
+  "strategy": "manual-commit",
+  "token_usage": {
+    "input_tokens": 153409,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 4266458,
+    "output_tokens": 19350,
+    "api_call_count": 53
+  }
+}
