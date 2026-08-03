@@ -400,6 +400,10 @@ export function renderRace(app, arg) {
       for (const [id, r] of Object.entries(ev.targets)) state.finals[id] = { ...r, _level: ev.level_index };
       state.finalLevel = Math.max(state.finalLevel, ev.level_index);
     },
+    series_truncated() {
+      banners.append(h('div', { class: 'banner warn' },
+        '⚠ live timeline truncated: this run outlasted the chart buffer — the race keeps measuring and level results stay complete'));
+    },
     target_error(ev) {
       const t = state.hello?.targets.find((x) => x.id === ev.target);
       banners.append(h('div', { class: 'banner error' },

@@ -263,6 +263,10 @@ export function renderDashboard(app, runId) {
       });
     },
     level_result(ev) { appendLevelResult(ev); },
+    series_truncated() {
+      banners.append(h('div', { class: 'banner warn' },
+        '⚠ live timeline truncated: this run outlasted the chart buffer, so charts stop updating here — the run keeps measuring and level results below stay complete'));
+    },
     target_error(ev) {
       banners.append(h('div', { class: 'banner error' },
         `✖ ${targetName(ev.target)}: ${ev.message}${ev.fatal ? ' — target removed from the run' : ''}`));

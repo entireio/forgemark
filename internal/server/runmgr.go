@@ -147,11 +147,12 @@ type targetState struct {
 	runner levelRunner
 	col    *collector
 
-	label    string
-	dead     bool
-	fatalErr string
-	results  []bench.LevelResult
-	series   []results.SeriesPoint // 1s buckets, retained for the result doc
+	label           string
+	dead            bool
+	fatalErr        string
+	results         []bench.LevelResult
+	series          []results.SeriesPoint // 1s buckets, retained for the result doc
+	seriesTruncated bool                  // series hit maxBufferedEvents; the stored timeline is incomplete
 }
 
 // Run is one comparison run: N targets driven through one workload with
@@ -729,6 +730,7 @@ func (r *Run) persistResults(dir string) string {
 		doc.Targets = append(doc.Targets, results.TargetResult{
 			Name: t.name, Label: t.label, Error: t.fatalErr,
 			Levels: slices.Clone(t.results), Series: slices.Clone(t.series),
+			SeriesTruncated: t.seriesTruncated,
 		})
 	}
 	r.mu.Unlock()
@@ -837,6 +839,11 @@ func (r *Run) emitBucket(force bool) {
 				CloneOK: st.CloneOK, CloneErr: st.CloneErr,
 				CloneP50: st.CloneP50, CloneP95: st.CloneP95, CloneP99: st.CloneP99,
 			})
+		} else {
+			// A validated workload can outlast the cap (16 × 7h ≈ 400k buckets);
+			// record that the stored timeline is incomplete so the history replay
+			// can say so instead of presenting a run that seemingly ended early.
+			t.seriesTruncated = true
 		}
 	}
 	if len(stats) == 0 {

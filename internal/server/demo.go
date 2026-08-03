@@ -202,14 +202,27 @@ func (d *demoRunner) sampleLatency(rng *rand.Rand, inflate float64) time.Duratio
 	return time.Duration(math.Min(math.Max(f, float64(time.Millisecond)), float64(time.Hour)))
 }
 
-func (d *demoRunner) RunLevel(ctx context.Context, c int, barrier *bench.StartBarrier) (bench.LevelResult, error) {
-	// Saturation: offered load approaches cap → queueing inflates latency.
-	inflate := 1.0
-	if d.cap > 0 {
-		offered := float64(c) / d.p50.Seconds()
-		util := math.Min(offered/d.cap, 0.95)
-		inflate = 1 / (1 - util)
+// saturationInflate models a closed loop hitting an ops/sec ceiling. Each demo
+// agent completes ops serially, so a level's throughput is offered/inflate with
+// offered = c/p50; inflate therefore fully determines the throughput curve.
+// (1 + u⁴)^¼ is a smooth max(1, u) of utilization u = offered/cap: well below
+// cap it's ~1 (throughput ≈ offered, latency ≈ p50), around cap latency bends
+// up (~19% at u=1), and past cap inflate ≈ u, so throughput plateaus at ~cap
+// (a shade under: the log-normal mean sits above p50) while latency keeps
+// growing linearly with overload — a real queue's closed-loop shape. The
+// open-loop 1/(1-util) formula this replaces behaved unphysically in a closed
+// loop: throughput FELL as offered load approached cap, and once util hit its
+// 0.95 clamp it grew linearly again with no ceiling at all.
+func (d *demoRunner) saturationInflate(c int) float64 {
+	if d.cap <= 0 {
+		return 1
 	}
+	u := float64(c) / d.p50.Seconds() / d.cap
+	return math.Sqrt(math.Sqrt(1 + u*u*u*u))
+}
+
+func (d *demoRunner) RunLevel(ctx context.Context, c int, barrier *bench.StartBarrier) (bench.LevelResult, error) {
+	inflate := d.saturationInflate(c)
 
 	// Wait for the shared start so the demo target's window aligns with the
 	// real targets it's compared against.

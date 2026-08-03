@@ -102,6 +102,45 @@ func TestDemoSessionPushesOnlyAfterSuccessfulClone(t *testing.T) {
 	}
 }
 
+// cap must be an actual throughput ceiling. The demo is a closed loop —
+// throughput is offered/inflate with offered = c/p50 — so the curve inflate
+// produces must be monotone in concurrency and asymptote to cap, never exceed
+// it. (The old open-loop 1/(1-util) inflation failed both ways: throughput
+// fell toward saturation, then grew past cap without bound once util clamped.)
+func TestDemoSaturationCapIsCeiling(t *testing.T) {
+	w := bench.Workload{Strategy: "branch", Concurrency: []int{1}}
+	d, err := newDemoRunner("demo://x?p50=100ms&cap=200", w, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prev := 0.0
+	for c := 1; c <= 4096; c *= 2 {
+		offered := float64(c) / d.p50.Seconds()
+		tput := offered / d.saturationInflate(c)
+		if tput > d.cap {
+			t.Fatalf("c=%d: modeled throughput %.1f exceeds cap %.0f", c, tput, d.cap)
+		}
+		if tput < prev {
+			t.Fatalf("c=%d: modeled throughput %.1f fell below previous level's %.1f", c, tput, prev)
+		}
+		prev = tput
+	}
+	// Deep overload (c=4096 → offered 40960 ops/s vs cap 200) must sit at the
+	// plateau, not partway up a linear climb.
+	if prev < d.cap*0.99 {
+		t.Fatalf("throughput %.1f at deep overload, want ~cap %.0f", prev, d.cap)
+	}
+
+	// No cap → no inflation at any concurrency.
+	d, err = newDemoRunner("demo://x?p50=100ms", w, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := d.saturationInflate(4096); got != 1 {
+		t.Fatalf("uncapped inflate = %v, want 1", got)
+	}
+}
+
 // Extreme-but-finite parameters (spread=1e308 parses fine) overflow the
 // latency product past float64/int64; an unclamped float→Duration conversion
 // is implementation-defined and can go non-positive, turning time.After into

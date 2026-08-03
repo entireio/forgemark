@@ -67,6 +67,17 @@ func staleRef(re *regexp.Regexp, ref string, cutoff time.Time) bool {
 // under this workload's branch prefix, from runs older than staleAfter, are
 // touched.
 func (r *Runner) CleanStaleBenchRefs(ctx context.Context) (int, error) {
+	// The sweep's ls-remote/push run over the same HTTP client the measured
+	// agents use, which would leave warm TCP/TLS keep-alives in the pool and
+	// quietly subtract cold-connection cost from a warmup=0 run's first
+	// samples. Drop them when done (even on error — the ListContext alone
+	// warms a connection) so level one dials as cold as it would have without
+	// housekeeping. OS-level DNS caching remains either way.
+	defer func() {
+		if r.httpc != nil {
+			r.httpc.CloseIdleConnections()
+		}
+	}()
 	re := staleBenchRefRe(r.w.BranchPrefix)
 	deleted := 0
 	seen := map[string]bool{}

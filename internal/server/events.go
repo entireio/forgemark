@@ -9,8 +9,10 @@ import (
 	"time"
 )
 
-// maxBufferedEvents caps a run's replayable event log. At ~1 bucket event per
-// second this is over a day of run time — a backstop, not a working limit.
+// maxBufferedEvents caps a run's replayable event log. Validated workloads can
+// legitimately outlast it (16 levels × 6h measured + 1h warm-up ≈ 400k bucket
+// seconds), so hitting the cap is announced with a series_truncated event
+// rather than treated as unreachable.
 const maxBufferedEvents = 100_000
 
 // event is one serialized SSE frame: a 1-based sequence number (the SSE id,
@@ -28,10 +30,11 @@ type event struct {
 // everything after its Last-Event-ID, then stream. That makes dropping a slow
 // subscriber lossless: it reconnects and replays what it missed.
 type eventLog struct {
-	mu     sync.Mutex
-	events []event
-	subs   map[chan event]struct{}
-	closed bool
+	mu        sync.Mutex
+	events    []event
+	subs      map[chan event]struct{}
+	closed    bool
+	truncated bool // a bucket event has been dropped at the cap (announced once)
 }
 
 func newEventLog() *eventLog {
@@ -57,9 +60,20 @@ func (l *eventLog) emit(name string, v any) {
 	// dropping a level_start/level_result would let the race podium crown a
 	// winner from an earlier level's data, and dropping run_done would leave
 	// every viewer of a capped run reconnect-looping forever. Bucket loss
-	// degrades gracefully (a gap in the replayed charts).
-	if l.closed || (len(l.events) >= maxBufferedEvents && name == "bucket") {
+	// degrades gracefully (a gap in the replayed charts) — but never silently:
+	// the first dropped bucket becomes a one-time series_truncated marker so
+	// live viewers see WHY their charts froze instead of a run that looks
+	// stalled, and replays know the timeline is incomplete.
+	if l.closed {
 		return
+	}
+	if len(l.events) >= maxBufferedEvents && name == "bucket" {
+		if l.truncated {
+			return
+		}
+		l.truncated = true
+		name = "series_truncated"
+		data = fmt.Appendf(nil, `{"cap":%d}`, maxBufferedEvents)
 	}
 	e := event{seq: int64(len(l.events)) + 1, name: name, data: data}
 	l.events = append(l.events, e)

@@ -79,8 +79,11 @@ export function renderHistory(app, preselect) {
       const doc = [...selected.values()][0];
       const withSeries = (doc.targets || []).filter((t) => t.series && t.series.length);
       if (withSeries.length) {
-        const tputEl = mkCard('Timeline replay — throughput', 'stored 1s buckets from the live run');
-        const latEl = mkCard('Timeline replay — p95 latency', 'rolling 10s window as recorded');
+        // A run that outlasted the server's series retention cap stored only the
+        // head of its timeline; say so, or the replay reads as an early finish.
+        const cut = withSeries.some((t) => t.series_truncated) ? ' · truncated at the retention cap — level results are complete' : '';
+        const tputEl = mkCard('Timeline replay — throughput', 'stored 1s buckets from the live run' + cut);
+        const latEl = mkCard('Timeline replay — p95 latency', 'rolling 10s window as recorded' + cut);
         const colors = new Map(seriesList().map((s) => [s.target, s.color]));
         const isClone = doc.strategy === 'clone';
         const isSession = doc.strategy === 'session';

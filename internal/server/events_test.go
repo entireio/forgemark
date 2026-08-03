@@ -22,13 +22,17 @@ func TestSubscribeNegativeAfter(t *testing.T) {
 // The buffer cap may drop only bulk bucket events. Lifecycle events (they are
 // O(levels+targets)) must always land even past the cap: a dropped
 // level_result would let the race podium score an earlier level as final, and
-// a dropped run_done would strand every viewer reconnect-looping.
+// a dropped run_done would strand every viewer reconnect-looping. The first
+// dropped bucket must surface as a one-time series_truncated marker — a
+// validated 16-level × 6h workload legitimately outruns the cap, and without
+// the marker its frozen charts would be indistinguishable from a stalled run.
 func TestEventLogCapDropsOnlyBuckets(t *testing.T) {
 	l := newEventLog()
 	for range maxBufferedEvents {
 		l.emit("bucket", 1)
 	}
-	l.emit("bucket", 2) // over the cap: dropped
+	l.emit("bucket", 2) // over the cap: becomes the one-time truncation marker
+	l.emit("bucket", 3) // dropped silently — the marker is emitted exactly once
 	l.emit("level_start", map[string]any{"level_index": 4})
 	l.emit("level_result", map[string]any{"level_index": 4})
 	l.emit("run_done", map[string]any{"state": "done"})
@@ -39,7 +43,7 @@ func TestEventLogCapDropsOnlyBuckets(t *testing.T) {
 	for _, e := range replay {
 		names = append(names, e.name)
 	}
-	want := []string{"level_start", "level_result", "run_done"}
+	want := []string{"series_truncated", "level_start", "level_result", "run_done"}
 	if len(names) != len(want) {
 		t.Fatalf("events past the cap = %v, want %v", names, want)
 	}
