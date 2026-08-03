@@ -1,0 +1,48 @@
+Next list of trail findings attached. Are there any nits here? Findings
+
+Medium
+AI
+Trail Review
+internal/server/demo.go:170
+30m ago
+
+Demo level results populate the standard percentile and maximum fields from log-bucket representative values, making them approximate while real results and consumers treat these fields as exact. This can change ties or winners when demo targets are compared; preserve exact final statistics or explicitly separate and label approximate synthetic metrics.
+
+AI
+Trail Review
+internal/server/runmgr.go:94
+30m ago
+
+The new API copies unbounded files_max and file_size values into the workload, while validation only enforces positive values. A small loopback POST can therefore pass a near-MaxInt file size and panic/OOM the process at make([]byte, FileSize); add hard per-field and aggregate commit-size bounds before starting the run.
+
+AI
+Trail Review
+internal/server/runmgr.go:284
+30m ago
+
+The query/fragment guard returns the complete rejected URL, so a remote such as https://host/repo?access_token=secret sends that credential back in the JSON error and callers such as compare-local.sh print it to logs. Do not echo the raw URL here; redact userinfo, query, and fragment or report only the parsed host.
+
+AI
+Trail Review
+internal/bench/cleanup.go:84
+30m ago
+
+This sweep runs for every strategy, so a clone-only benchmark can issue receive-pack deletion pushes when matching stale refs exist, despite clone mode being documented as read-only. Skip remote ref cleanup for clone runs and restrict cleanup to repositories the selected write strategy actually uses.
+
+AI
+Trail Review
+internal/bench/cleanup.go:28
+30m ago
+
+The 12-hour cutoff is shorter than a valid run: 16 allowed levels × (6h duration + 1h warm-up) can run for 112 hours. Another ForgeMark process starting after hour 12 can therefore delete refs belonging to the still-active run and corrupt its measurements; make the guard exceed the maximum run lifetime or use positive liveness ownership.
+
+AI
+Trail Review
+internal/bench/cleanup.go:98
+2d ago
+
+The unconditional pre-run ListContext uses the benchmark runner's HTTP client, warming DNS/TLS/keep-alive state before level one even when no refs are deleted. For supported warmup=0 runs this silently removes cold-connection cost from the measured samples; perform housekeeping with a separate transport and discard its connections.
+
+---
+
+fix the three real ones.
