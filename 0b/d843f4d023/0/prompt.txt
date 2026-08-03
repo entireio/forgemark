@@ -1,0 +1,36 @@
+Here are some more finding. Before you fix them, Are these nits as well? 
+
+Findings
+
+Medium
+AI
+Trail Review
+internal/server/events.go:61
+2d ago
+
+Accepted workloads can produce over 345,000 measured seconds (16 levels × 6h), but bucket events are silently dropped after 100,000; persisted series are capped identically. Long valid runs therefore freeze live charts and omit their final timeline without indicating truncation; align workload limits with this cap or downsample/record truncation explicitly.
+
+AI
+Trail Review
+internal/server/demo.go:210
+2d ago
+
+Clamping utilization to 0.95 means cap is not an ops/sec ceiling: after saturation, latency inflation stays fixed at 20× and throughput resumes increasing linearly with concurrency. Enforce the requested rate with a limiter or make inflation continue scaling with offered load.
+
+AI
+Trail Review
+internal/bench/cleanup.go:98
+2d ago
+
+The unconditional pre-run ListContext uses the benchmark runner's HTTP client, warming DNS/TLS/keep-alive state before level one even when no refs are deleted. For supported warmup=0 runs this silently removes cold-connection cost from the measured samples; perform housekeeping with a separate transport and discard its connections.
+
+AI
+Trail Review
+internal/bench/cleanup.go:70
+2d ago
+
+CleanStaleBenchRefs has no strategy guard and is called for every run. With strategy=clone, matching stale refs trigger receive-pack deletions, turning an explicitly read-only benchmark into a remote writer; return immediately for clone workloads.
+
+---
+
+Fix the top three
