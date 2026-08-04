@@ -350,11 +350,11 @@ func statusField(status, label string) string {
 }
 
 // statusHandle pulls the @handle from the "User:" line. The line leads with
-// the account's DISPLAY NAME when one is set — "User: Karthik Rameshkumar
-// @karthik-rameshkumar <mail>" — so the first field is a person's first name,
-// not an identifier; taking it builds an invalid (and wrong) project name
-// like forgemark-Karthik. The handle is the @-prefixed field wherever it
-// sits; fall back to the first field for a bare "User: handle" shape.
+// the account's DISPLAY NAME when one is set — "User: John Doe @john-doe
+// <mail>" — so the first field is a person's first name, not an identifier;
+// taking it builds an invalid (and wrong) project name like forgemark-John.
+// The handle is the @-prefixed field wherever it sits; fall back to the
+// first field for a bare "User: handle" shape.
 func statusHandle(status string) string {
 	for _, line := range strings.Split(status, "\n") {
 		rest, ok := strings.CutPrefix(strings.TrimSpace(line), "User:")

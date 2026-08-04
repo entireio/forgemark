@@ -171,7 +171,7 @@ PY
   # cluster or a repo we don't own.
   AUTH_STATUS="$(entire auth status 2>/dev/null || true)"
   # The handle is the @-prefixed field: the User line leads with the account's
-  # display name when one is set ("User: Karthik R @karthik-r <mail>"), so $2
+  # display name when one is set ("User: John Doe @john-doe <mail>"), so $2
   # would be a first name, not an identifier.
   AUTH_HANDLE="$(awk '/User:/{for(i=1;i<=NF;i++) if($i ~ /^@/){sub(/^@/,"",$i); print $i; exit}}' <<<"$AUTH_STATUS")"
   AUTH_JUR="$(awk '/Jurisdiction:/{print $2; exit}' <<<"$AUTH_STATUS")"

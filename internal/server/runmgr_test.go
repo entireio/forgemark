@@ -11,14 +11,14 @@ func i(v int) *int           { return &v }
 
 // The `entire auth status` User line leads with the account's display name
 // when one is set, so naive first-field parsing yields a person's first name
-// — which then builds an invalid project name (forgemark-Karthik) in the
+// — which then builds an invalid project name (forgemark-John) in the
 // suggest payload. The handle is the @-prefixed field, wherever it sits.
 func TestStatusHandle(t *testing.T) {
 	withDisplayName := "Logged in to https://us.auth.entire.io\n" +
-		"  User:         Karthik Rameshkumar @karthik-rameshkumar <mail@example.com>\n" +
+		"  User:         John Doe @john-doe <mail@example.com>\n" +
 		"  Jurisdiction: us\n"
-	if got := statusHandle(withDisplayName); got != "karthik-rameshkumar" {
-		t.Errorf("statusHandle(display-name line) = %q, want karthik-rameshkumar", got)
+	if got := statusHandle(withDisplayName); got != "john-doe" {
+		t.Errorf("statusHandle(display-name line) = %q, want john-doe", got)
 	}
 	if got := statusHandle("User: @bare-handle\n"); got != "bare-handle" {
 		t.Errorf("statusHandle(@handle only) = %q, want bare-handle", got)
