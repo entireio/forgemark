@@ -165,6 +165,16 @@ glab repo create forgemark-target --private
 # Gitea / self-hosted: create an empty repo in the UI or via the forge's API,
 # ensure your token/user can push, and (for clone/session) push a base branch
 # with at least one commit.
+
+# Entire, native EntireDB repo (needs the entire CLI): repos live on ONE
+# cluster, so point the target's remote at that cluster's URL. Repo path:
+# et/forgemark-<you>/forgemark-target
+entire project create forgemark-<you> --owner github:<you> --owner-type account --region <region>
+entire repo create forgemark-target --project forgemark-<you> --cluster-host <cluster>
+
+# Entire, GitHub mirror (write-throughs to GitHub on every push — benchmarks
+# the sync flow, not the forge alone). Repo path: gh/<you>/forgemark-target
+entire repo mirror create https://github.com/<you>/forgemark-target <cluster>
 ```
 
 ### 2. Run

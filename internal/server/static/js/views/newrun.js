@@ -387,11 +387,41 @@ export function renderNewRun(app) {
     updateWorkloadSummary();
   }
 
+  // Repo setup is the #1 first-run stumble: forgemark never creates repos, so
+  // a new user's first real run dies on the info/refs 404 unless this page
+  // says what to provision. One collapsed block on the landing form, matching
+  // the README's "Set up targets" and the commands the probe's 404 hint names.
+  const forgeRow = (forge, ...rest) => h('p', { style: { margin: '8px 0' } }, h('b', {}, forge + ' — '), ...rest);
+  const setupHelp = h('details', { class: 'disclose', style: { marginTop: '18px' } },
+    h('summary', {}, 'First run? Create the target repos'),
+    h('div', { class: 'dbody' },
+      h('p', { style: { marginTop: '0' } },
+        'ForgeMark ', h('b', {}, 'does not create repos'), ' — it pushes to ones you provide. Give each real forge a ',
+        h('b', {}, 'private throwaway repo'), ': bench refs and sustained load land in it, so never point it at a repo you care about. (',
+        h('code', {}, 'scripts/compare-local.sh'), ' provisions all of this automatically.)'),
+      forgeRow('GitHub', h('code', {}, 'gh repo create <you>/forgemark-target --private'),
+        ' — repos field: ', h('code', {}, '<you>/forgemark-target')),
+      forgeRow('GitLab', h('code', {}, 'glab repo create forgemark-target --private'),
+        ' — repos field: ', h('code', {}, '<you>/forgemark-target.git')),
+      forgeRow('Entire (native)', h('code', {}, 'entire project create forgemark-<you> --owner github:<you> --owner-type account --region <region>'),
+        ' then ', h('code', {}, 'entire repo create forgemark-target --project forgemark-<you> --cluster-host <cluster>'),
+        ' — repos field: ', h('code', {}, 'et/forgemark-<you>/forgemark-target'),
+        ', remote: that cluster’s URL (repos live on one cluster, not the whole jurisdiction)'),
+      forgeRow('Entire (GitHub mirror)', h('code', {}, 'entire repo mirror create https://github.com/<you>/forgemark-target <cluster>'),
+        ' — repos field: ', h('code', {}, 'gh/<you>/forgemark-target'),
+        '. Mirror mode write-throughs to GitHub on every push, so it benchmarks the sync flow, not the forge alone.'),
+      forgeRow('Gitea / self-hosted', 'create an empty repo in the forge UI or API, and make sure your token can push.'),
+      h('p', { style: { marginBottom: '0' } },
+        'The ', h('code', {}, 'clone'), ' and ', h('code', {}, 'session'), ' strategies read a base branch, so give the repo content first: ',
+        h('code', {}, 'git commit --allow-empty -m base && git push'),
+        '. An empty repo would measure cloning nothing.')));
+
   const form = h('form', { onsubmit: submit },
     h('p', { class: 'eyebrow' }, 'ForgeMark'),
     h('h1', {}, 'New benchmark run'),
     h('p', { class: 'sub' }, 'Drive real git push/clone load against one or more forges and watch them race, live. Pick how you want to start:'),
-    body);
+    body,
+    setupHelp);
 
   app.append(form);
   renderBody();
