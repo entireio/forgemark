@@ -1,0 +1,49 @@
+push
+
+---
+
+More feedback : 
+Medium
+AI
+Trail Review
+internal/server/demo.go:128
+22h ago
+
+demoAgg reuses the per-second uint32 latency histogram for an entire level, so high-rate long demos wrap bucket counters and publish corrupted percentiles; with 4096 agents, 1ms latency, and spread=1, the sole bucket can overflow in roughly 18 minutes although six-hour levels are accepted. Use a uint64 whole-level histogram or otherwise prevent counter wraparound.
+
+AI
+Trail Review
+internal/bench/config.go:42
+22h ago
+
+These independent caps still permit 4096 agents to retain every operation sample for a six-hour level; even at one operation per agent-second that is about 88 million Sample values, and realistic rates can exhaust memory before summarization. Add an aggregate concurrency-duration/sample-retention bound or replace per-operation retention with bounded online aggregation while preserving exact published statistics.
+
+AI
+Trail Review
+internal/server/runmgr.go:381
+22h ago
+
+Credential resolution is parented only to the server context, so a client that disconnects while the POST is pending cannot cancel startup; after resolution completes, the run is still registered and begins writing to remotes even though the requester never received its ID. Pass the request context into startup, use it during credential resolution, and verify it remains live before registration while keeping the accepted run itself parented to the server context.
+
+AI
+Trail Review
+internal/server/demo.go:170
+23h ago
+
+Demo level results populate the standard percentile and maximum fields from log-bucket representative values, making them approximate while real results and consumers treat these fields as exact. This can change ties or winners when demo targets are compared; preserve exact final statistics or explicitly separate and label approximate synthetic metrics.
+
+AI
+Trail Review
+internal/server/runmgr.go:94
+23h ago
+
+The new API copies unbounded files_max and file_size values into the workload, while validation only enforces positive values. A small loopback POST can therefore pass a near-MaxInt file size and panic/OOM the process at make([]byte, FileSize); add hard per-field and aggregate commit-size bounds before starting the run.
+
+AI
+Trail Review
+internal/bench/cleanup.go:84
+23h ago
+
+---
+
+fix the real ones and add comments for the ones where we have already fixed or why we won't fix.
