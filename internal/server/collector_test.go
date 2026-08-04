@@ -90,3 +90,19 @@ func TestLatHistBoundsAndResolution(t *testing.T) {
 		}
 	}
 }
+
+// demoAgg accumulates a WHOLE LEVEL into one histogram, and the envelope's
+// worst case (4096 agents at the 1ms floor with spread=1, 6h level) puts
+// ~8.8e10 increments in a single bucket. The counters must hold level-scale
+// counts without wrapping — as uint32 they wrapped after ~18 minutes and the
+// published percentiles were garbage for the rest of the level.
+func TestLatHistHoldsLevelScaleCounts(t *testing.T) {
+	var h latHist
+	h[10] = 100_000_000_000 // > MaxUint32: a uint32 counter would have wrapped
+	if got := h.quantile(50); got != latHistValue(10) {
+		t.Fatalf("p50 over a level-scale bucket = %v, want %v", got, latHistValue(10))
+	}
+	if got := h.maxValue(); got != latHistValue(10) {
+		t.Fatalf("max over a level-scale bucket = %v, want %v", got, latHistValue(10))
+	}
+}

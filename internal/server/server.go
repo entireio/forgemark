@@ -231,7 +231,7 @@ func (s *Server) handleStartRun(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	run, warnings, err := s.mgr.start(req)
+	run, warnings, err := s.mgr.start(r.Context(), req)
 	if err != nil {
 		code := http.StatusBadRequest
 		switch {

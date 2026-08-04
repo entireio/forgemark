@@ -83,6 +83,9 @@ func (ws WorkloadSpec) withDefaults() WorkloadSpec {
 }
 
 // toWorkload assumes withDefaults already ran, so every pointer is non-nil.
+// It copies wire values verbatim — bounding them (concurrency, durations,
+// files_max/file_size, and their aggregates) is Workload.Validate's job,
+// which start() runs before any of these reach an allocation.
 func (ws WorkloadSpec) toWorkload(runID string) bench.Workload {
 	return bench.Workload{
 		RunID:          runID,
@@ -241,7 +244,11 @@ func (m *RunManager) list() []*Run {
 
 // start validates a request and launches its coordinator. It returns
 // user-facing warnings (e.g. the github.com abuse note) alongside the run.
-func (m *RunManager) start(req startRequest) (*Run, []string, error) {
+// reqCtx is the POST's context: it governs the work done on the requester's
+// behalf BEFORE the run exists (credential resolution, registration) — an
+// accepted run is parented to the manager's base context, since it outlives
+// the request by design.
+func (m *RunManager) start(reqCtx context.Context, req startRequest) (*Run, []string, error) {
 	if !req.ConfirmAuthorized {
 		return nil, nil, errors.New("confirm_authorized must be true: only benchmark infrastructure you own or are explicitly authorized to load-test")
 	}
@@ -366,6 +373,17 @@ func (m *RunManager) start(req startRequest) (*Run, []string, error) {
 	// CLI (15s timeout apiece), and serial resolution would stack that latency
 	// into this synchronous POST handler. Failures still surface here as a 400
 	// so a bad login is immediate feedback, not a mid-run target death.
+	//
+	// Resolution is parented to the REQUEST context: this window is the slowest
+	// part of the POST, and a client that vanishes during it (curl timeout, a
+	// script's Ctrl-C) must not have a run registered on its behalf — the sweep
+	// would write to remotes for hours while the requester never learned its
+	// run ID. Server shutdown still cancels a pending exec promptly via the
+	// AfterFunc (http.Server.Shutdown does not cancel request contexts).
+	resCtx, resCancel := context.WithCancel(reqCtx)
+	defer resCancel()
+	stopOnShutdown := context.AfterFunc(m.baseCtx, resCancel)
+	defer stopOnShutdown()
 	var (
 		secWG   sync.WaitGroup
 		secMu   sync.Mutex
@@ -378,7 +396,7 @@ func (m *RunManager) start(req startRequest) (*Run, []string, error) {
 		secWG.Add(1)
 		go func(t *targetState, source string) {
 			defer secWG.Done()
-			user, secret, err := resolveSecretSource(m.baseCtx, source, t.spec.Remote)
+			user, secret, err := resolveSecretSource(resCtx, source, t.spec.Remote)
 			if err != nil {
 				secMu.Lock()
 				secErrs = append(secErrs, fmt.Errorf("target %s: %w", t.name, err))
@@ -399,6 +417,13 @@ func (m *RunManager) start(req startRequest) (*Run, []string, error) {
 	// benchmark can't start (and write to remotes) after the server is stopping.
 	if m.baseCtx.Err() != nil {
 		return nil, nil, errShuttingDown
+	}
+	// Likewise the requester may have gone away while credentials resolved (or
+	// between resolution and here): registering the run anyway would start a
+	// sweep nobody asked to see through. Nobody reads this error — that's the
+	// point — but the message documents the refusal in the server log.
+	if err := reqCtx.Err(); err != nil {
+		return nil, nil, fmt.Errorf("request abandoned before the run was registered: %w", err)
 	}
 
 	// Derive from the manager's base context so shutdown cancels this run even in

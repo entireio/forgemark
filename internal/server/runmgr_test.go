@@ -1,9 +1,34 @@
 package server
 
-import "testing"
+import (
+	"context"
+	"strings"
+	"testing"
+)
 
 func f64(v float64) *float64 { return &v }
 func i(v int) *int           { return &v }
+
+// A client that vanishes during the POST (curl timeout, a script's Ctrl-C —
+// most plausibly during the up-to-15s CLI credential resolution) must not have
+// a run registered on its behalf: the sweep would write to remotes for hours
+// while the requester never learned its run ID.
+func TestStartRejectsAbandonedRequest(t *testing.T) {
+	m := newRunManager(t.TempDir())
+	defer m.beginShutdown()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // the requester is already gone
+	_, _, err := m.start(ctx, startRequest{
+		ConfirmAuthorized: true,
+		Targets:           []TargetSpec{{Remote: "demo://x"}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "abandoned") {
+		t.Fatalf("start(cancelled request ctx) = %v, want abandoned-request error", err)
+	}
+	if runs := m.list(); len(runs) != 0 {
+		t.Fatalf("run registered despite abandoned request: %d runs", len(runs))
+	}
+}
 
 // Absent (nil) fields take CLI defaults; explicit values — including
 // meaningful zeros — pass through untouched.

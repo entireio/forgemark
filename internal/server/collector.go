@@ -18,7 +18,7 @@ const windowSecs = 10
 // of samples per second, where retaining exact latencies and sorting the
 // full 10s window every snapshot would burn hundreds of MB and whole cores —
 // the observer throttling the load it measures. Latencies therefore go into
-// fixed-size log-spaced histograms: O(1) insert with no allocation, ~1KB per
+// fixed-size log-spaced histograms: O(1) insert with no allocation, ~2KB per
 // second per op kind, and percentile extraction that walks 256 counters.
 // Bucket resolution is ~6.7% relative, plenty for live charts; the
 // authoritative LevelResult still computes exact percentiles from the
@@ -31,7 +31,13 @@ const (
 
 var latHistLnGrowth = math.Log(latHistMaxMs/latHistMinMs) / float64(latHistBuckets-2)
 
-type latHist [latHistBuckets]uint32
+// Buckets are uint64: demoAgg accumulates a WHOLE LEVEL into one histogram,
+// and the envelope's worst case (4096 agents at the 1ms demo latency floor
+// with spread=1, in a 6h level) concentrates ~4M increments per second on a
+// single bucket — uint32 would wrap in ~18 minutes and publish corrupted
+// percentiles for the rest of the level. The collector's per-second buckets
+// could never overflow, but they share the type; the histograms stay ~4KB.
+type latHist [latHistBuckets]uint64
 
 // latHistIdx maps a latency to its bucket. Kept separate from the increment
 // so OnSample can compute it (a math.Log) OUTSIDE the collector mutex,

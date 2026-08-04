@@ -115,9 +115,14 @@ func (d *demoRunner) nextOp(pushesLeft int) bench.OpKind {
 // produced, instead of retaining them for an end-of-level summarize: at the
 // supported envelope (4096 agents × the 1ms latency floor × a long level,
 // times up to 8 targets) retained samples reach millions per second and OOM
-// the server. Counters plus two fixed-size histograms (~2KB) carry everything
-// LevelResult needs; percentiles come out with the histogram's ~6.7% bucket
-// resolution, which is indistinguishable on a chart of synthetic data.
+// the server. Counters plus two fixed-size histograms (~4KB) carry everything
+// LevelResult needs.
+//
+// The resulting percentiles are approximate (~6.7% bucket resolution) where a
+// real target's are exact — deliberately so, not an oversight. The demo's
+// latencies are draws from a configured log-normal; there is no ground truth
+// an exact quantile would preserve, and a demo-vs-real "winner" was never a
+// measurement. Exact retention is the one thing this type exists to avoid.
 type demoAgg struct {
 	mu              sync.Mutex
 	warmup          time.Duration

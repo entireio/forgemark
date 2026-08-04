@@ -71,6 +71,15 @@ func staleRef(re *regexp.Regexp, ref string, cutoff time.Time) bool {
 // or machines that this lock can't see. Only exact forgemark-shaped refs
 // under this workload's branch prefix, from runs older than staleAfter, are
 // touched.
+//
+// The sweep deliberately runs for EVERY strategy, clone included, even though
+// a clone workload is otherwise read-only: stale forgemark refs inflate the
+// upload-pack advertisement and ride along in full clones, so skipping the
+// sweep for clone would make clone measurements depend on how many push
+// benchmarks ran before — the exact history-dependence this function exists
+// to remove. The write is conditional anyway (no matching stale refs → no
+// push), and a read-only credential degrades to the callers' best-effort
+// warning, not a failed run.
 func (r *Runner) CleanStaleBenchRefs(ctx context.Context) (int, error) {
 	// The sweep's ls-remote/push run over the same HTTP client the measured
 	// agents use, which would leave warm TCP/TLS keep-alives in the pool and

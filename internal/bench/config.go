@@ -38,6 +38,17 @@ type Target struct {
 // meaningful benchmark anywhere near them, and unbounded values from the
 // server API would otherwise reach make([]*agent, c), c goroutine spawns,
 // and per-sample retention for the whole window — panic/OOM territory.
+//
+// Known ceiling, deliberately NOT capped: within these limits, retained-sample
+// memory still scales with measured throughput (a 6h max-concurrency level
+// against a very fast target reaches 10⁸+ Samples). That is the cost of the
+// exact percentiles LevelResult promises for real runs — the bounded
+// alternative is approximation, which is exactly the trade the demo target
+// makes and real results must not. An aggregate agent-hours cap would reject
+// valid configs to protect operators from their own machine's RAM; the ops
+// have to actually happen for the memory to exist, so the operator is load
+// generator and victim at once. If this ever bites in practice, the fix is
+// compact retention (durations only, errors grouped online), not a cap here.
 const (
 	maxConcurrency = 4096          // agents per level
 	maxLevels      = 16            // levels per sweep
