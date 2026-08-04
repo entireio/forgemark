@@ -1,9 +1,8 @@
 {
-  "cli_version": "0.9.0",
-  "checkpoint_id": "593a76e2fecc",
-  "strategy": "manual-commit",
   "branch": "feat/web-demo",
-  "checkpoints_count": 9,
+  "checkpoint_id": "593a76e2fecc",
+  "checkpoints_count": 11,
+  "cli_version": "0.9.0",
   "files_touched": [
     "internal/bench/cleanup.go",
     "internal/bench/cleanup_test.go",
@@ -12,6 +11,7 @@
     "internal/server/static/js/views/dashboard.js",
     "internal/server/static/js/views/race.js"
   ],
+  "has_review": true,
   "sessions": [
     {
       "metadata": "/59/3a76e2fecc/0/metadata.json",
@@ -19,13 +19,20 @@
       "compact_transcript": "/59/3a76e2fecc/0/transcript.jsonl",
       "content_hash": "/59/3a76e2fecc/0/content_hash.txt",
       "prompt": "/59/3a76e2fecc/0/prompt.txt"
+    },
+    {
+      "content_hash": "/59/3a76e2fecc/1/content_hash.txt",
+      "metadata": "/59/3a76e2fecc/1/metadata.json",
+      "prompt": "/59/3a76e2fecc/1/prompt.txt",
+      "transcript": "/59/3a76e2fecc/1/full.jsonl"
     }
   ],
+  "strategy": "manual-commit",
   "token_usage": {
-    "input_tokens": 6970,
+    "input_tokens": 181693,
     "cache_creation_tokens": 325177,
-    "cache_read_tokens": 19415126,
-    "output_tokens": 65378,
-    "api_call_count": 88
+    "cache_read_tokens": 24531456,
+    "output_tokens": 84885,
+    "api_call_count": 145
   }
 }

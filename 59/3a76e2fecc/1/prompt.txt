@@ -1,0 +1,7 @@
+<environment_context>
+  <cwd>/home/user/repo</cwd>
+  <shell>bash</shell>
+  <current_date>2026-08-04</current_date>
+  <timezone>Etc/UTC</timezone>
+  <filesystem><workspace_roots><root>/home/user/repo</root></workspace_roots><permission_profile type="disabled"><file_system type="unrestricted" /></permission_profile></filesystem>
+</environment_context>
