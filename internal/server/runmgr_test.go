@@ -9,6 +9,29 @@ import (
 func f64(v float64) *float64 { return &v }
 func i(v int) *int           { return &v }
 
+// The `entire auth status` User line leads with the account's display name
+// when one is set, so naive first-field parsing yields a person's first name
+// — which then builds an invalid project name (forgemark-Karthik) in the
+// suggest payload. The handle is the @-prefixed field, wherever it sits.
+func TestStatusHandle(t *testing.T) {
+	withDisplayName := "Logged in to https://us.auth.entire.io\n" +
+		"  User:         Karthik Rameshkumar @karthik-rameshkumar <mail@example.com>\n" +
+		"  Jurisdiction: us\n"
+	if got := statusHandle(withDisplayName); got != "karthik-rameshkumar" {
+		t.Errorf("statusHandle(display-name line) = %q, want karthik-rameshkumar", got)
+	}
+	if got := statusHandle("User: @bare-handle\n"); got != "bare-handle" {
+		t.Errorf("statusHandle(@handle only) = %q, want bare-handle", got)
+	}
+	// Older/plain output without an @ field falls back to the first field.
+	if got := statusHandle("User: someuser\n"); got != "someuser" {
+		t.Errorf("statusHandle(no @ field) = %q, want someuser", got)
+	}
+	if got := statusHandle("Context: us.auth.entire.io\n"); got != "" {
+		t.Errorf("statusHandle(no User line) = %q, want empty", got)
+	}
+}
+
 // A client that vanishes during the POST (curl timeout, a script's Ctrl-C —
 // most plausibly during the up-to-15s CLI credential resolution) must not have
 // a run registered on its behalf: the sweep would write to remotes for hours

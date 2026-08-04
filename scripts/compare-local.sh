@@ -170,7 +170,10 @@ PY
   # state, so a rogue process squatting the port can't redirect us to a hostile
   # cluster or a repo we don't own.
   AUTH_STATUS="$(entire auth status 2>/dev/null || true)"
-  AUTH_HANDLE="$(awk '/User:/{sub(/^@/,"",$2); print $2; exit}' <<<"$AUTH_STATUS")"
+  # The handle is the @-prefixed field: the User line leads with the account's
+  # display name when one is set ("User: Karthik R @karthik-r <mail>"), so $2
+  # would be a first name, not an identifier.
+  AUTH_HANDLE="$(awk '/User:/{for(i=1;i<=NF;i++) if($i ~ /^@/){sub(/^@/,"",$i); print $i; exit}}' <<<"$AUTH_STATUS")"
   AUTH_JUR="$(awk '/Jurisdiction:/{print $2; exit}' <<<"$AUTH_STATUS")"
   AUTH_CTX="$(awk '/Context:/{print $2; exit}' <<<"$AUTH_STATUS")"
   # Registrable domain of the authenticated context host (in.auth.entire.io ->
@@ -222,9 +225,8 @@ PY
       ENTIRE_REPO_PATH="et/$ENTIRE_PROJECT/$ENTIRE_REPO_NAME"
     fi
     if ! entire repo list "$ENTIRE_PROJECT" >/dev/null 2>&1; then
-      ENTIRE_HANDLE="$(entire auth status | awk '/User:/{sub(/^@/, "", $2); print $2}')"
       echo "compare-local: creating project $ENTIRE_PROJECT (region $SUG_SLUG)"
-      entire project create "$ENTIRE_PROJECT" --owner "github:$ENTIRE_HANDLE" --owner-type account --region "$SUG_SLUG"
+      entire project create "$ENTIRE_PROJECT" --owner "github:$AUTH_HANDLE" --owner-type account --region "$SUG_SLUG"
     fi
     if ! entire repo get "$ENTIRE_REPO_NAME" --project "$ENTIRE_PROJECT" >/dev/null 2>&1; then
       echo "compare-local: creating native repo $ENTIRE_PROJECT/$ENTIRE_REPO_NAME on $ENTIRE_CLUSTER"

@@ -293,7 +293,7 @@ func suggestEntire(ctx context.Context) suggestEntry {
 
 	slug := statusField(status, "Jurisdiction:")
 	loginHost := statusField(status, "Context:")
-	handle := strings.TrimPrefix(statusField(status, "User:"), "@")
+	handle := statusHandle(status)
 	if slug == "" || loginHost == "" || handle == "" {
 		return suggestEntry{Error: "could not parse `entire auth status` output (need Jurisdiction, Context, and User lines)"}
 	}
@@ -344,6 +344,31 @@ func statusField(status, label string) string {
 			if fields := strings.Fields(rest); len(fields) > 0 {
 				return fields[0]
 			}
+		}
+	}
+	return ""
+}
+
+// statusHandle pulls the @handle from the "User:" line. The line leads with
+// the account's DISPLAY NAME when one is set — "User: Karthik Rameshkumar
+// @karthik-rameshkumar <mail>" — so the first field is a person's first name,
+// not an identifier; taking it builds an invalid (and wrong) project name
+// like forgemark-Karthik. The handle is the @-prefixed field wherever it
+// sits; fall back to the first field for a bare "User: handle" shape.
+func statusHandle(status string) string {
+	for _, line := range strings.Split(status, "\n") {
+		rest, ok := strings.CutPrefix(strings.TrimSpace(line), "User:")
+		if !ok {
+			continue
+		}
+		fields := strings.Fields(rest)
+		for _, f := range fields {
+			if h, ok := strings.CutPrefix(f, "@"); ok && h != "" {
+				return h
+			}
+		}
+		if len(fields) > 0 {
+			return fields[0]
 		}
 	}
 	return ""
