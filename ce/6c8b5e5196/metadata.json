@@ -1,9 +1,8 @@
 {
-  "cli_version": "0.8.42",
-  "checkpoint_id": "ce6c8b5e5196",
-  "strategy": "manual-commit",
   "branch": "feat/web-demo",
-  "checkpoints_count": 3,
+  "checkpoint_id": "ce6c8b5e5196",
+  "checkpoints_count": 5,
+  "cli_version": "0.8.42",
   "files_touched": [
     "internal/bench/cleanup.go",
     "internal/bench/config.go",
@@ -14,6 +13,7 @@
     "internal/server/runmgr_test.go",
     "internal/server/server.go"
   ],
+  "has_review": true,
   "sessions": [
     {
       "metadata": "/ce/6c8b5e5196/0/metadata.json",
@@ -21,13 +21,20 @@
       "compact_transcript": "/ce/6c8b5e5196/0/transcript.jsonl",
       "content_hash": "/ce/6c8b5e5196/0/content_hash.txt",
       "prompt": "/ce/6c8b5e5196/0/prompt.txt"
+    },
+    {
+      "content_hash": "/ce/6c8b5e5196/1/content_hash.txt",
+      "metadata": "/ce/6c8b5e5196/1/metadata.json",
+      "prompt": "/ce/6c8b5e5196/1/prompt.txt",
+      "transcript": "/ce/6c8b5e5196/1/full.jsonl"
     }
   ],
+  "strategy": "manual-commit",
   "token_usage": {
-    "input_tokens": 621,
+    "input_tokens": 140310,
     "cache_creation_tokens": 147233,
-    "cache_read_tokens": 4858515,
-    "output_tokens": 21686,
-    "api_call_count": 31
+    "cache_read_tokens": 8397420,
+    "output_tokens": 33891,
+    "api_call_count": 80
   }
 }
