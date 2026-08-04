@@ -1,0 +1,183 @@
+{
+  "cli_version": "0.9.0",
+  "checkpoint_id": "593a76e2fecc",
+  "session_id": "18d044b9-7418-44e8-8373-af53180ea9c4",
+  "strategy": "manual-commit",
+  "created_at": "2026-08-04T10:50:50.365167Z",
+  "branch": "feat/web-demo",
+  "checkpoints_count": 9,
+  "save_step_count": 6,
+  "files_touched": [
+    "internal/bench/cleanup.go",
+    "internal/bench/cleanup_test.go",
+    "internal/bench/endpoint.go",
+    "internal/server/runmgr.go",
+    "internal/server/static/js/views/dashboard.js",
+    "internal/server/static/js/views/race.js"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-fable-5",
+  "turn_id": "1d66100cdd75",
+  "checkpoint_transcript_start": 540,
+  "transcript_lines_at_start": 540,
+  "compact_transcript_start": 130,
+  "token_usage": {
+    "input_tokens": 6970,
+    "cache_creation_tokens": 325177,
+    "cache_read_tokens": 19415126,
+    "output_tokens": 65378,
+    "api_call_count": 88
+  },
+  "skill_events_version": 1,
+  "skill_events": [
+    {
+      "id": "claude-skill-toolu_01QF4sjAknq6e1zFCKYLr92M",
+      "event_type": "tool_invocation",
+      "skill": {
+        "name": "run"
+      },
+      "source": {
+        "agent": "claude-code",
+        "signal": "skill_tool_use",
+        "confidence": "explicit"
+      },
+      "turn_id": "1d66100cdd75",
+      "transcript_anchor": {
+        "unit": "line",
+        "start": 546,
+        "end": 547,
+        "entry_ids": [
+          "f505e9a2-0dda-4cf2-b038-1f6139134376"
+        ],
+        "tool_use_id": "toolu_01QF4sjAknq6e1zFCKYLr92M"
+      },
+      "native": {
+        "tool_name": "Skill",
+        "tool_use_id": "toolu_01QF4sjAknq6e1zFCKYLr92M"
+      },
+      "collapse": {
+        "target": "tool_pair",
+        "label": "Skill: run",
+        "default_collapsed": true
+      }
+    },
+    {
+      "id": "claude-skill-toolu_016htuAjDukP75sDXXqiMmhV",
+      "event_type": "tool_invocation",
+      "skill": {
+        "name": "code-review"
+      },
+      "source": {
+        "agent": "claude-code",
+        "signal": "skill_tool_use",
+        "confidence": "explicit"
+      },
+      "turn_id": "1d66100cdd75",
+      "transcript_anchor": {
+        "unit": "line",
+        "start": 779,
+        "end": 780,
+        "entry_ids": [
+          "f82e03f4-e074-4d66-b7d1-f2b17a71fc76"
+        ],
+        "tool_use_id": "toolu_016htuAjDukP75sDXXqiMmhV"
+      },
+      "native": {
+        "tool_name": "Skill",
+        "tool_use_id": "toolu_016htuAjDukP75sDXXqiMmhV"
+      },
+      "collapse": {
+        "target": "tool_pair",
+        "label": "Skill: code-review",
+        "default_collapsed": true
+      }
+    }
+  ],
+  "session_metrics": {
+    "turn_count": 17
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-08-04T10:50:50.209403Z",
+    "agent_lines": 38,
+    "agent_removed": 10,
+    "human_added": 57,
+    "human_modified": 88,
+    "human_removed": 0,
+    "total_committed": 183,
+    "total_lines_changed": 198,
+    "agent_percentage": 24.242424242424242,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 17,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".claude/settings.local.json": 17
+      }
+    },
+    {
+      "checkpoint_number": 2,
+      "user_lines_added": 17,
+      "user_lines_removed": 0,
+      "agent_lines_added": 12,
+      "agent_lines_removed": 1,
+      "user_added_per_file": {
+        ".claude/settings.local.json": 17
+      }
+    },
+    {
+      "checkpoint_number": 3,
+      "user_lines_added": 17,
+      "user_lines_removed": 0,
+      "agent_lines_added": 126,
+      "agent_lines_removed": 10,
+      "user_added_per_file": {
+        ".claude/settings.local.json": 17
+      }
+    },
+    {
+      "checkpoint_number": 4,
+      "user_lines_added": 17,
+      "user_lines_removed": 0,
+      "agent_lines_added": 126,
+      "agent_lines_removed": 10,
+      "user_added_per_file": {
+        ".claude/settings.local.json": 17
+      }
+    },
+    {
+      "checkpoint_number": 5,
+      "user_lines_added": 17,
+      "user_lines_removed": 0,
+      "agent_lines_added": 126,
+      "agent_lines_removed": 10,
+      "user_added_per_file": {
+        ".claude/settings.local.json": 17
+      }
+    },
+    {
+      "checkpoint_number": 6,
+      "user_lines_added": 17,
+      "user_lines_removed": 0,
+      "agent_lines_added": 126,
+      "agent_lines_removed": 10,
+      "user_added_per_file": {
+        ".claude/settings.local.json": 17
+      }
+    },
+    {
+      "checkpoint_number": 7,
+      "user_lines_added": 17,
+      "user_lines_removed": 0,
+      "agent_lines_added": 126,
+      "agent_lines_removed": 10,
+      "user_added_per_file": {
+        ".claude/settings.local.json": 17
+      }
+    }
+  ]
+}
