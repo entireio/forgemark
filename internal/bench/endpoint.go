@@ -85,7 +85,19 @@ func newEntireEndpoint(ctx context.Context, remote, objectFmt, repo string, cred
 		return nil, fmt.Errorf("read info/refs response: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("info/refs probe: HTTP %d: %s", resp.StatusCode, redactSecrets(strings.TrimSpace(string(body)), authForms(auth.Username, auth.Password)...))
+		// A 404 is the most common setup miss, so make it actionable — but
+		// diagnose, don't assert: forges also answer 404 for repos the
+		// credential simply can't see, so a "create it" order alone would
+		// misdirect an auth problem. forgemark deliberately never creates
+		// repos (a typo'd path must fail fast, not provision junk on a real
+		// jurisdiction); the server body is kept as evidence either way.
+		hint := ""
+		if resp.StatusCode == http.StatusNotFound {
+			hint = fmt.Sprintf(" — repo %s is missing on %s, or the credential can't see it. forgemark does not create repos: "+
+				"create it first (`entire repo create` / `entire repo mirror create`) or fix the repo path / token scope", repo, base)
+		}
+		return nil, fmt.Errorf("info/refs probe: HTTP %d: %s%s", resp.StatusCode,
+			redactSecrets(strings.TrimSpace(string(body)), authForms(auth.Username, auth.Password)...), hint)
 	}
 
 	if objectFmt == "auto" || objectFmt == "" {

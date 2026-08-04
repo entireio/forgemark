@@ -3,6 +3,7 @@
 // "results saved" banner must agree — they live here once.
 
 import { h } from '../dom.js';
+import { api } from '../api.js';
 
 // levelCountdown folds a level_start payload into clock state: total/elapsed
 // seconds, whole seconds remaining, and whether the level is still warming up.
@@ -16,6 +17,18 @@ export function levelCountdown(level) {
     remain: Math.max(0, Math.ceil(total - elapsed)),
     warming: elapsed < level.warmup_sec,
   };
+}
+
+// cancelRunButton is the run views' shared stop control: hidden until the
+// caller reveals it on hello, hidden again on run_done. Disable-on-click stops
+// double-fire; a failed cancel re-enables so the operator can retry. One
+// factory so a live load generator is stoppable the same way from every view.
+export function cancelRunButton(runId) {
+  const btn = h('button', { class: 'danger small', style: { display: 'none' }, onclick: async () => {
+    btn.disabled = true;
+    try { await api.cancelRun(runId); } catch { btn.disabled = false; }
+  } }, 'Cancel run');
+  return btn;
 }
 
 // resultsSavedBanner renders the run_done "Results saved to … compare in

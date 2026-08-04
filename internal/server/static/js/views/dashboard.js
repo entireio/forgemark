@@ -3,10 +3,9 @@
 // (server replays from Last-Event-ID).
 
 import { h } from '../dom.js';
-import { api } from '../api.js';
 import { openRunStream } from '../sse.js';
 import { timeChart, targetColor, fmtNum, fmtMs, bucketSecs } from '../charts.js';
-import { levelCountdown, resultsSavedBanner } from './shared.js';
+import { cancelRunButton, levelCountdown, resultsSavedBanner } from './shared.js';
 
 export function renderDashboard(app, runId) {
   const state = {
@@ -25,10 +24,7 @@ export function renderDashboard(app, runId) {
 
   // --- static skeleton ---
   const badge = h('span', { class: 'badge running' }, 'connecting…');
-  const cancelBtn = h('button', { class: 'danger small', style: { display: 'none' }, onclick: async () => {
-    cancelBtn.disabled = true;
-    try { await api.cancelRun(runId); } catch { cancelBtn.disabled = false; }
-  } }, 'Cancel run');
+  const cancelBtn = cancelRunButton(runId);
   const workloadNote = h('span', { class: 'progress-note' });
   const levelsStrip = h('div', { class: 'levels-strip' });
   const banners = h('div');

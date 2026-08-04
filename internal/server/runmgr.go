@@ -584,16 +584,18 @@ func (r *Run) coordinate(m *RunManager) {
 		cwg.Add(1)
 		go func(t *targetState) {
 			defer cwg.Done()
+			// The sweep is best-effort per ref and per repo, so a partial outcome
+			// is normal: report what WAS deleted alongside what was refused —
+			// error-then-return would hide successful deletions behind the warning.
 			n, err := c.CleanStaleBenchRefs(r.ctx)
+			if n > 0 {
+				r.log.emit("cleanup", map[string]any{"target": t.id, "deleted": n})
+			}
 			if err != nil && r.ctx.Err() == nil {
 				r.log.emit("target_error", map[string]any{
 					"target": t.id, "level_index": -1, "fatal": false,
-					"message": fmt.Sprintf("stale bench-ref sweep failed (advertisements may bias results): %v", err),
+					"message": fmt.Sprintf("stale bench-ref sweep incomplete (advertisements may bias results): %v", err),
 				})
-				return
-			}
-			if n > 0 {
-				r.log.emit("cleanup", map[string]any{"target": t.id, "deleted": n})
 			}
 		}(t)
 	}

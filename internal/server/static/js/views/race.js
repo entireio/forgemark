@@ -9,7 +9,7 @@
 import { h } from '../dom.js';
 import { openRunStream } from '../sse.js';
 import { targetColor, fmtMs, bucketSecs } from '../charts.js';
-import { levelCountdown, resultsSavedBanner } from './shared.js';
+import { cancelRunButton, levelCountdown, resultsSavedBanner } from './shared.js';
 
 const fmtInt = (n) => n.toLocaleString('en-US');
 
@@ -40,6 +40,10 @@ export function renderRace(app, arg) {
   const opsNoun = () => (state.isClone ? 'clones' : 'pushes');
 
   const badge = h('span', { class: 'badge running' }, 'connecting…');
+  // Same control as the dashboard: a race is a live load generator, and the
+  // demo view is where an audience watches it — it must be stoppable from
+  // here, not only after a hash-hop to the full dashboard.
+  const cancelBtn = cancelRunButton(runId);
   const clock = h('div', { class: 'race-clock' }, '–:––');
   const phase = h('div', { class: 'race-phase' }, '');
   const banners = h('div');
@@ -62,7 +66,8 @@ export function renderRace(app, arg) {
       badge,
       seg,
       h('span', { class: 'spacer' }),
-      h('a', { class: 'race-alt', href: `#run/${runId}` }, '📊 full dashboard')),
+      h('a', { class: 'race-alt', href: `#run/${runId}` }, '📊 full dashboard'),
+      cancelBtn),
     h('div', { class: 'race-timer' }, clock, phase),
     banners, lanesBox, finishBox, science);
 
@@ -323,6 +328,7 @@ export function renderRace(app, arg) {
       renderScience();
       badge.className = 'badge running';
       badge.textContent = 'running';
+      cancelBtn.style.display = '';
     },
     level_start(ev) {
       state.curLevel = ev;
@@ -414,6 +420,7 @@ export function renderRace(app, arg) {
       state.done = ev;
       badge.className = `badge ${ev.state}`;
       badge.textContent = ev.state;
+      cancelBtn.style.display = 'none';
       refinish();
       if (es) { es.close(); es = null; }
     },

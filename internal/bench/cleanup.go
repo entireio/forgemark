@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-git/go-git/v6"
 	"github.com/go-git/go-git/v6/config"
+	"github.com/go-git/go-git/v6/plumbing"
 	gitclient "github.com/go-git/go-git/v6/plumbing/client"
 	"github.com/go-git/go-git/v6/plumbing/transport"
 	"github.com/go-git/go-git/v6/storage/memory"
@@ -94,6 +96,7 @@ func (r *Runner) CleanStaleBenchRefs(ctx context.Context) (int, error) {
 	}()
 	re := staleBenchRefRe(r.w.BranchPrefix)
 	deleted := 0
+	var errs []error
 	seen := map[string]bool{}
 	for _, repoPath := range r.target.Repos {
 		if seen[repoPath] {
@@ -103,10 +106,46 @@ func (r *Runner) CleanStaleBenchRefs(ctx context.Context) (int, error) {
 		n, err := r.cleanRepoRefs(ctx, repoPath, re)
 		deleted += n
 		if err != nil {
-			return deleted, fmt.Errorf("clean stale bench refs in %s: %w", repoPath, err)
+			// One repo's refusal (protected ref, permissions) must not leave the
+			// REST of a multi-repo target unswept — their advertisements would
+			// keep growing behind a repeating warning. Collect and keep going;
+			// a dead context is different, every further repo would just add
+			// the same cancellation error.
+			errs = append(errs, fmt.Errorf("clean stale bench refs in %s: %w", repoPath, err))
+			if ctx.Err() != nil {
+				break
+			}
 		}
 	}
-	return deleted, nil
+	return deleted, errors.Join(errs...)
+}
+
+// sweepSpecs selects the deletion refspecs for one repo's advertisement:
+// every forgemark-shaped ref older than cutoff, EXCEPT the remote's default
+// branch. The default branch can itself be a stale bench ref — the FIRST push
+// to an empty repo promotes that branch to HEAD, and forges then refuse to
+// delete it (GitHub: "refusing to delete the current branch", GitLab: a
+// pre-receive decline) — so asking would fail on every run, forever; one
+// permanently pinned ref is a constant, not the unbounded growth this sweep
+// exists to bound. A symbolic HEAD is the only signal needed: go-git already
+// normalizes a bare-hash HEAD against the advertisement in every transport
+// path (transport.NewRemoteRefs → packp.ResolveHeadFromHashHeuristic), so a
+// hash HEAD reaching this code means detached-at-a-commit with no matching
+// branch — nothing to spare.
+func sweepSpecs(refs []*plumbing.Reference, re *regexp.Regexp, cutoff time.Time) []config.RefSpec {
+	defaultBranch := ""
+	for _, ref := range refs {
+		if ref.Name() == plumbing.HEAD && ref.Type() == plumbing.SymbolicReference {
+			defaultBranch = ref.Target().String()
+		}
+	}
+	var specs []config.RefSpec
+	for _, ref := range refs {
+		if name := ref.Name().String(); name != defaultBranch && staleRef(re, name, cutoff) {
+			specs = append(specs, config.RefSpec(":"+name))
+		}
+	}
+	return specs
 }
 
 func (r *Runner) cleanRepoRefs(ctx context.Context, repoPath string, re *regexp.Regexp) (int, error) {
@@ -127,21 +166,52 @@ func (r *Runner) cleanRepoRefs(ctx context.Context, repoPath string, re *regexp.
 	if err != nil {
 		return 0, fmt.Errorf("list refs: %w", err)
 	}
-	cutoff := time.Now().Add(-staleAfter)
-	var specs []config.RefSpec
-	for _, ref := range refs {
-		if name := ref.Name().String(); staleRef(re, name, cutoff) {
-			specs = append(specs, config.RefSpec(":"+name))
-		}
-	}
+	specs := sweepSpecs(refs, re, time.Now().Add(-staleAfter))
 	if len(specs) == 0 {
 		return 0, nil
 	}
 	// One push carries every deletion; an empty-source refspec needs no local
-	// objects, so a bare remote over an empty storer suffices.
-	err = remote.PushContext(ctx, &git.PushOptions{RemoteName: "origin", RefSpecs: specs, ClientOptions: opts})
-	if err != nil && !errors.Is(err, git.NoErrAlreadyUpToDate) {
-		return 0, fmt.Errorf("delete %d refs: %w", len(specs), err)
+	// objects, so a bare remote over an empty storer suffices. NoErrAlreadyUpToDate
+	// means nothing matching the spec(s) remained — already gone counts as done.
+	push := func(specs []config.RefSpec) error {
+		err := remote.PushContext(ctx, &git.PushOptions{RemoteName: "origin", RefSpecs: specs, ClientOptions: opts})
+		if errors.Is(err, git.NoErrAlreadyUpToDate) {
+			return nil
+		}
+		return err
 	}
-	return len(specs), nil
+	if err := push(specs); err == nil {
+		return len(specs), nil
+	} else if ctx.Err() != nil {
+		return 0, err
+	}
+	// The batch was refused. receive-pack applies each deletion independently,
+	// but go-git reports ONE error for the whole push — a single protected ref
+	// (a rule this sweep can't predict) would otherwise read as "0 deleted,
+	// sweep failed" on every run while the other deletions had in fact
+	// happened. Retry per ref: each push re-lists the advertisement, so refs
+	// the batch DID delete resolve to already-up-to-date successes, and the
+	// error confines itself to the refs the forge actually refused. A run of
+	// consecutive refusals means a blanket rule (every retry would fail the
+	// same way) — stop burning a round-trip per ref on it.
+	deleted := 0
+	var errs []error
+	consecutive := 0
+	for i, spec := range specs {
+		if err := ctx.Err(); err != nil {
+			errs = append(errs, err)
+			break
+		}
+		if err := push([]config.RefSpec{spec}); err != nil {
+			errs = append(errs, fmt.Errorf("delete %s: %w", strings.TrimPrefix(string(spec), ":"), err))
+			if consecutive++; consecutive >= 8 {
+				errs = append(errs, fmt.Errorf("%d refusals in a row looks like a blanket rule; %d refs left untried", consecutive, len(specs)-i-1))
+				break
+			}
+			continue
+		}
+		consecutive = 0
+		deleted++
+	}
+	return deleted, errors.Join(errs...)
 }
