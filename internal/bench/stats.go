@@ -45,18 +45,6 @@ type Sink interface {
 	OnSample(s Sample)
 }
 
-// SummarizeSamples folds samples into a LevelResult exactly the way the
-// engine folds its own (warm-up dropped, exact percentiles over OK samples).
-// It exists for alternative sample sources — the server's demo target, tests
-// — so their results are directly comparable to real ones.
-func SummarizeSamples(samples []Sample, concurrency int, strategy string, repos, nodes int,
-	warmup, window time.Duration, commitFiles string) LevelResult {
-	return summarize(samples, concurrency, strategy, repos, nodes, warmup, window, commitFiles)
-}
-
-// Percentile returns the nearest-rank percentile of an already-sorted slice.
-func Percentile(sorted []float64, p float64) float64 { return percentile(sorted, p) }
-
 // errMsg returns the message to retain on a sample. Only genuine errors carry
 // text; OK and CAS outcomes stay message-free.
 func errMsg(res Outcome, err error) string {

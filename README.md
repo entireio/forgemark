@@ -24,6 +24,101 @@ inferred from `-remote` (and, for Entire, from the auth flags you supply).
 go install github.com/entireio/forgemark/cmd/forgemark@latest
 ```
 
+## Web GUI
+
+`forgemark serve` starts a local dashboard over the same engine: configure a
+run in the browser, watch live per-second throughput / latency-percentile /
+error charts while it executes, and benchmark **multiple forges side by side**
+— every concurrency level starts simultaneously on all targets, so the overlay
+is a fair comparison.
+
+```bash
+forgemark serve            # http://127.0.0.1:8377
+```
+
+- **Try it with no forge**: add a `demo://` target (e.g.
+  `demo://fast?p50=60ms&spread=3&err=0.01&cap=400`) — a synthetic latency
+  generator that exercises the whole pipeline offline. Add two with different
+  profiles to see the comparison view.
+- **Targets** take the same parameters as the CLI flags (remote, repos, object
+  format, and the Entire fields). The credential is never typed into the
+  browser: each target names a **source** — `gh CLI login` / `glab CLI login` /
+  `entire CLI login` — and the server reads the token from that
+  already-authenticated CLI at run start, so it never enters the page or the
+  request body. (For GitLab the server uses glab's git-credential helper, which
+  returns a repository-scoped token even when glab's stored API token isn't.)
+  **Add from CLI logins** prefills complete GitHub / GitLab / Entire targets
+  (endpoints, repos, credential source) from whichever CLIs you're logged into,
+  and the **⚡ Push race preset** fills the race workload and opens the race
+  view. A forge without a supported CLI login is benchmarked from the command
+  line (`forgemark -token-file …`), not the web form.
+- **History** lists every result doc in `results/` — CLI runs included — and
+  overlays any selection as ops/s-vs-concurrency and p95-vs-concurrency curves.
+  Server runs also store their 1-second live series, so finished runs replay.
+- The server binds to loopback by default and refuses cross-origin requests.
+  It is a load-generation control panel: the same authorization warning as the
+  CLI applies, and starting a run requires confirming it in the form.
+
+`-addr` changes the listen address (a warning prints if it isn't loopback);
+`-results` points at a different results directory.
+
+### Local comparison without pasting tokens
+
+Two scripts make the GitHub-vs-Entire comparison fully local — nobody shares or
+pastes a token, ever:
+
+```bash
+scripts/login.sh           # one-time: authenticate the gh and entire CLIs
+scripts/compare-local.sh   # start (or reuse) the server and kick off a run
+scripts/pushrace.sh        # demo mode: a 60s live head-to-head push race
+```
+
+`pushrace.sh` presets a race-shaped workload — one flight of 16 agents pushing
+checkpoint-sized commits (1-3 files × 1KB) at every target simultaneously for
+one minute — and opens the GUI's **race view** (`#race/<run-id>`): a countdown,
+one lane per forge, and a podium with the verdict when the flag drops. Three
+metrics to race on (switchable live, or deep-linkable as
+`#race/<run-id>/<metric>`):
+
+- **Throughput** — cumulative successful pushes; the leader fills the track.
+- **Latency** — rolling 10s p50, lower wins; bar length is relative speed, so
+  lower latency literally looks faster.
+- **Reliability** — successful pushes ÷ attempts (errors and CAS rejections
+  count as failures).
+
+Every number is measured, an exact tie is called a dead heat, and a caption
+under the lanes — generated from the run's actual workload — states precisely
+what is being watched: the commit shape, the loop, what the counters and
+windows mean, and that client-side network round-trip is included. Any run can
+be watched either way; the dashboard and race views link to each other.
+
+Mind what the Entire target measures: **mirror mode** (compare-local's
+default) pushes through a GitHub mirror, which write-throughs to GitHub on
+every push — that benchmarks the sync flow and can never beat GitHub itself.
+**Native mode** (`FM_ENTIRE_NATIVE=1`, the pushrace default) auto-creates a
+plain EntireDB repo (`et/forgemark-<you>/forgemark-target`) and benchmarks the
+forge directly.
+
+[`scripts/compare-local.sh`](scripts/compare-local.sh) posts its targets with
+a credential **source** (`secret_source: gh | entire`) instead of a token: the
+server pulls each credential from your already-authenticated CLI at run start,
+so no token ever passes through the script, the request body, or the browser.
+Everything else is provisioned on first use:
+
+- a private throwaway GitHub repo (`<you>/forgemark-target`, seeded with an
+  initial commit),
+- its EntireDB mirror on your jurisdiction's default cluster
+  (`entire repo mirror create` is idempotent, so re-runs are free),
+- and `forgemark serve` itself, if nothing is listening.
+
+The Entire endpoints (token URL, jurisdiction audience, cluster) come from the
+server's own discovery endpoint (`GET /api/local/suggest`, derived from your
+active `entire auth` login context) — the same source the GUI's "Add from CLI
+logins" button uses, so that logic exists once. Every repo, endpoint, and
+workload knob is an `FM_*` environment variable — see the header comment in
+the script; `FM_GITHUB_ONLY=1` skips the Entire target. Defaults keep
+concurrency at `1,4` because of github.com's abuse limits (see below).
+
 ## What it measures
 
 Per concurrency level it reports successful operations/sec,
@@ -64,9 +159,22 @@ gh repo create you/forgemark-target --private
 # for clone/session runs, give it content:
 #   git clone … && git commit --allow-empty -m base && git push
 
-# GitLab / Gitea / self-hosted: create an empty repo in the UI or via the
-# forge's API, ensure your token/user can push, and (for clone/session) push a
-# base branch with at least one commit.
+# GitLab (needs the glab CLI): a throwaway private project
+glab repo create forgemark-target --private
+
+# Gitea / self-hosted: create an empty repo in the UI or via the forge's API,
+# ensure your token/user can push, and (for clone/session) push a base branch
+# with at least one commit.
+
+# Entire, native EntireDB repo (needs the entire CLI): repos live on ONE
+# cluster, so point the target's remote at that cluster's URL. Repo path:
+# et/forgemark-<you>/forgemark-target
+entire project create forgemark-<you> --owner github:<you> --owner-type account --region <region>
+entire repo create forgemark-target --project forgemark-<you> --cluster-host <cluster>
+
+# Entire, GitHub mirror (write-throughs to GitHub on every push — benchmarks
+# the sync flow, not the forge alone). Repo path: gh/<you>/forgemark-target
+entire repo mirror create https://github.com/<you>/forgemark-target <cluster>
 ```
 
 ### 2. Run
@@ -142,6 +250,26 @@ will get throttled or blocked, and high-volume automated load testing of
 github.com isn't sanctioned by their acceptable-use policy. ForgeMark detects a
 `github.com` remote and warns above concurrency 16. For a higher-volume
 comparison, point `-remote` at a **GitHub Enterprise Server** you control.
+
+## GitLab
+
+GitLab is also a generic remote. The push path wants a **repository-scoped**
+credential, which is not always what `glab auth token` returns — so pull the
+credential from glab's git-credential helper (username `oauth2`, password a
+repo-scoped token):
+
+```bash
+glab repo create forgemark-target --private
+CRED=$(printf 'protocol=https\nhost=gitlab.com\n\n' | glab auth git-credential get)
+printf '%s' "$CRED" | sed -n 's/^password=//p' \
+  | forgemark -remote https://gitlab.com -token-file - -user oauth2 \
+      -repos you/forgemark-target.git -concurrency 1,8 -duration 1m
+```
+
+The web GUI does this for you: pick **glab CLI login** as the credential source
+(or **Add from CLI logins**) and the server runs the helper at run start. As
+with github.com, gitlab.com rate-limits high-volume writes — keep concurrency
+modest, or point `-remote` at a self-managed GitLab you control.
 
 ## Key flags
 

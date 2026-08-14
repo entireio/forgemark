@@ -2,9 +2,83 @@ package bench
 
 import (
 	"testing"
+	"time"
 
 	"github.com/go-git/go-git/v6/plumbing"
 )
+
+// Concurrency is bounded on both sides: a non-positive level is meaningless,
+// and an unbounded one (the API accepts arbitrary ints) would reach
+// make([]*agent, c) and c goroutine spawns — a remotely triggerable
+// panic/OOM on an exposed bind with a demo:// target.
+func TestValidateBoundsConcurrency(t *testing.T) {
+	w := Workload{
+		Strategy: "branch", Duration: time.Second,
+		Commit: CommitConfig{FilesMin: 1, FilesMax: 1, FileSize: 1},
+	}
+	for _, levels := range [][]int{{1}, {maxConcurrency}, {1, 4, 128}} {
+		w.Concurrency = levels
+		if err := w.Validate(); err != nil {
+			t.Errorf("Validate(concurrency=%v) = %v, want nil", levels, err)
+		}
+	}
+	for _, levels := range [][]int{{0}, {-1}, {maxConcurrency + 1}, {1<<63 - 1}, {1, 1 << 40}} {
+		w.Concurrency = levels
+		if err := w.Validate(); err == nil {
+			t.Errorf("Validate(concurrency=%v) = nil, want error", levels)
+		}
+	}
+	// Sweep length and window durations are bounded too: many levels × long
+	// windows is the other axis of the same unauthenticated-work problem.
+	w.Concurrency = make([]int, maxLevels+1)
+	for i := range w.Concurrency {
+		w.Concurrency[i] = 1
+	}
+	if err := w.Validate(); err == nil {
+		t.Errorf("Validate(%d levels) = nil, want error", maxLevels+1)
+	}
+	w.Concurrency = []int{1}
+	w.Duration = maxDuration + time.Second
+	if err := w.Validate(); err == nil {
+		t.Error("Validate(over-long duration) = nil, want error")
+	}
+	w.Duration = time.Second
+	w.Warmup = maxWarmup + time.Second
+	if err := w.Validate(); err == nil {
+		t.Error("Validate(over-long warmup) = nil, want error")
+	}
+}
+
+// Commit-content fields arrive from the server API just as unbounded as
+// concurrency does, and an unchecked FileSize flows into make([]byte, FileSize)
+// in every agent — near MaxInt that's a runtime panic ("len out of range")
+// that kills the whole server process, not just the run. FilesMax × FileSize
+// is bounded too: it's the working set every agent keeps in its worktree.
+func TestValidateBoundsCommitContent(t *testing.T) {
+	check := func(c CommitConfig, wantOK bool) {
+		t.Helper()
+		w := Workload{Strategy: "branch", Concurrency: []int{1}, Duration: time.Second, Commit: c}
+		if err := w.Validate(); (err == nil) != wantOK {
+			t.Errorf("Validate(%+v) = %v, want ok=%v", c, err, wantOK)
+		}
+	}
+	check(CommitConfig{FilesMin: 1, FilesMax: maxFilesMax, FileSize: 1}, true)
+	check(CommitConfig{FilesMin: 1, FilesMax: 1, FileSize: maxFileSize}, true)
+	check(CommitConfig{FilesMin: 1, FilesMax: maxFilesMax + 1, FileSize: 1}, false)
+	check(CommitConfig{FilesMin: 1, FilesMax: 1, FileSize: maxFileSize + 1}, false)
+	check(CommitConfig{FilesMin: 1, FilesMax: 1, FileSize: 1<<63 - 1}, false)
+	// Each factor within its own cap can still multiply past the per-commit
+	// aggregate.
+	check(CommitConfig{FilesMin: 1, FilesMax: maxFilesMax, FileSize: maxFileSize}, false)
+
+	// clone never commits, so its commit config is inert and stays unvalidated
+	// — a huge FileSize on a clone run must not start failing.
+	w := Workload{Strategy: "clone", Concurrency: []int{1}, Duration: time.Second,
+		Commit: CommitConfig{FileSize: 1 << 40}}
+	if err := w.Validate(); err != nil {
+		t.Errorf("Validate(clone, huge inert FileSize) = %v, want nil", err)
+	}
+}
 
 func TestDestRef(t *testing.T) {
 	// The prefix is prepended verbatim before the run ID; the assembled ref is what

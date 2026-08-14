@@ -1,0 +1,536 @@
+package server
+
+import (
+	"bufio"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+)
+
+const testSecret = "s3cr3t-token-must-never-leak"
+
+func newTestServer(t *testing.T) (*Server, *httptest.Server, string) {
+	t.Helper()
+	dir := t.TempDir()
+	s := New("127.0.0.1:0", dir)
+	ts := httptest.NewServer(s.Handler())
+	t.Cleanup(ts.Close)
+	return s, ts, dir
+}
+
+func startDemoRun(t *testing.T, ts *httptest.Server, body string) string {
+	t.Helper()
+	res, err := http.Post(ts.URL+"/api/runs", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = res.Body.Close() }()
+	var out struct {
+		ID    string `json:"id"`
+		Error string `json:"error"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode != http.StatusCreated {
+		t.Fatalf("start run: HTTP %d: %s", res.StatusCode, out.Error)
+	}
+	return out.ID
+}
+
+// demoBody runs one short level against a demo target carrying a secret that
+// the demo path never needs — perfect bait for redaction checks.
+func demoBody(durationSec float64, levels string) string {
+	return fmt.Sprintf(`{
+		"confirm_authorized": true,
+		"workload": {"strategy":"branch","concurrency":[%s],"duration_sec":%g,"warmup_sec":0.2},
+		"targets": [{"name":"d1","remote":"demo://one?p50=10ms","secret":%q}]
+	}`, levels, durationSec, testSecret)
+}
+
+// collectSSE reads the run's event stream until run_done (or the deadline),
+// returning the ordered event names and the full raw text.
+func collectSSE(t *testing.T, ts *httptest.Server, runID, lastEventID string) ([]string, string) {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/runs/"+runID+"/events", nil)
+	if lastEventID != "" {
+		req.Header.Set("Last-Event-ID", lastEventID)
+	}
+	client := &http.Client{Timeout: 30 * time.Second}
+	res, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = res.Body.Close() }()
+
+	var names []string
+	var raw strings.Builder
+	done := false
+	sc := bufio.NewScanner(res.Body)
+	sc.Buffer(make([]byte, 1<<20), 1<<20)
+	for sc.Scan() {
+		line := sc.Text()
+		raw.WriteString(line + "\n")
+		if name, ok := strings.CutPrefix(line, "event: "); ok {
+			names = append(names, name)
+			done = name == "run_done"
+		} else if done && strings.HasPrefix(line, "data: ") {
+			break // run_done's payload read; the stream is complete
+		}
+	}
+	return names, raw.String()
+}
+
+func TestStartRunValidation(t *testing.T) {
+	_, ts, _ := newTestServer(t)
+
+	post := func(body string) (int, string) {
+		res, err := http.Post(ts.URL+"/api/runs", "application/json", strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = res.Body.Close() }()
+		var out map[string]any
+		_ = json.NewDecoder(res.Body).Decode(&out)
+		msg, _ := out["error"].(string)
+		return res.StatusCode, msg
+	}
+
+	if code, msg := post(`{"targets":[{"remote":"demo://x"}]}`); code != http.StatusBadRequest || !strings.Contains(msg, "confirm_authorized") {
+		t.Fatalf("unconfirmed POST = %d %q, want 400 confirm_authorized", code, msg)
+	}
+	if code, msg := post(`{"confirm_authorized":true,"targets":[]}`); code != http.StatusBadRequest || !strings.Contains(msg, "target") {
+		t.Fatalf("no-targets POST = %d %q, want 400", code, msg)
+	}
+	if code, msg := post(`{"confirm_authorized":true,"workload":{"strategy":"bogus"},"targets":[{"remote":"demo://x"}]}`); code != http.StatusBadRequest || !strings.Contains(msg, "strategy") {
+		t.Fatalf("bad-strategy POST = %d %q, want 400", code, msg)
+	}
+	// An absurd concurrency must be rejected at validation, not allowed through
+	// to make([]*agent, c) / goroutine spawning (panic/OOM on an exposed bind).
+	if code, msg := post(`{"confirm_authorized":true,"workload":{"concurrency":[9223372036854775807]},"targets":[{"remote":"demo://x"}]}`); code != http.StatusBadRequest || !strings.Contains(msg, "concurrency") {
+		t.Fatalf("huge-concurrency POST = %d %q, want 400 concurrency", code, msg)
+	}
+	// Same class: an unbounded file_size reaches make([]byte, FileSize) in every
+	// agent — a runtime panic that kills the process, not just the run.
+	if code, msg := post(`{"confirm_authorized":true,"workload":{"file_size":9223372036854775807},"targets":[{"remote":"demo://x"}]}`); code != http.StatusBadRequest || !strings.Contains(msg, "file-size") {
+		t.Fatalf("huge-file-size POST = %d %q, want 400 file-size", code, msg)
+	}
+	if code, msg := post(`{"confirm_authorized":true,"targets":[{"remote":"demo://x","secret":"tok","secret_source":"gh"}]}`); code != http.StatusBadRequest || !strings.Contains(msg, "not both") {
+		t.Fatalf("secret+source POST = %d %q, want 400 not-both", code, msg)
+	}
+	if code, msg := post(`{"confirm_authorized":true,"targets":[{"remote":"demo://x","secret_source":"bogus"}]}`); code != http.StatusBadRequest || !strings.Contains(msg, "secret_source") {
+		t.Fatalf("unknown-source POST = %d %q, want 400 secret_source", code, msg)
+	}
+	// Real (non-demo) targets are fast-failed at the request, not left to die
+	// mid-run inside NewRunner. demo:// targets skip these checks.
+	if code, msg := post(`{"confirm_authorized":true,"targets":[{"remote":"https://git.example","secret":"tok"}]}`); code != http.StatusBadRequest || !strings.Contains(msg, "no repos") {
+		t.Fatalf("no-repos target = %d %q, want 400 no repos", code, msg)
+	}
+	if code, msg := post(`{"confirm_authorized":true,"targets":[{"remote":"https://git.example","repos":["a/b"]}]}`); code != http.StatusBadRequest || !strings.Contains(msg, "no credential") {
+		t.Fatalf("no-credential target = %d %q, want 400 no credential", code, msg)
+	}
+	if code, msg := post(`{"confirm_authorized":true,"workload":{"strategy":"repo"},"targets":[{"remote":"https://git.example","repos":["a/b"],"secret":"t"}]}`); code != http.StatusBadRequest || !strings.Contains(msg, ">= 2 repos") {
+		t.Fatalf("repo-strategy one-repo target = %d %q, want 400 >= 2 repos", code, msg)
+	}
+	// A remote must not embed credentials in the URL — it's echoed in status and
+	// results, so userinfo would leak the secret there.
+	if code, msg := post(`{"confirm_authorized":true,"targets":[{"remote":"https://user:tok@git.example","repos":["a/b"],"secret":"t"}]}`); code != http.StatusBadRequest || !strings.Contains(msg, "embed credentials") {
+		t.Fatalf("userinfo remote = %d %q, want 400 embed-credentials", code, msg)
+	}
+	// A real target must be an absolute http(s) URL with a host — a file:// (or
+	// scheme-relative) remote would drive go-git's local transport.
+	if code, msg := post(`{"confirm_authorized":true,"targets":[{"remote":"file:///tmp/repo","repos":["a/b"],"secret":"t"}]}`); code != http.StatusBadRequest || !strings.Contains(msg, "absolute http") {
+		t.Fatalf("file:// remote = %d %q, want 400 absolute-http", code, msg)
+	}
+	// A remote must carry no query/fragment — Remote is echoed in status/results,
+	// so ?access_token=… would serialize a credential there. The rejection
+	// itself must not echo the query either: the error lands in the JSON
+	// response and in callers' logs (compare-local.sh prints it verbatim).
+	if code, msg := post(`{"confirm_authorized":true,"targets":[{"remote":"https://host/p?access_token=sekret","repos":["a/b"],"secret":"t"}]}`); code != http.StatusBadRequest || !strings.Contains(msg, "query or fragment") || strings.Contains(msg, "sekret") {
+		t.Fatalf("query remote = %d %q, want 400 query/fragment without the query echoed", code, msg)
+	}
+	// A malformed remote can carry credentials too, and url.Error embeds the
+	// full URL in its message — the parse-failure rejection must not echo
+	// either rendition of it.
+	if code, msg := post(`{"confirm_authorized":true,"targets":[{"remote":"https://user:sekret@host/%zz","repos":["a/b"],"secret":"t"}]}`); code != http.StatusBadRequest || !strings.Contains(msg, "invalid remote URL") || strings.Contains(msg, "sekret") {
+		t.Fatalf("malformed credentialed remote = %d %q, want 400 invalid-URL without the credential echoed", code, msg)
+	}
+	// A CLI-sourced credential must not be materialized for a foreign audience.
+	if code, msg := post(`{"confirm_authorized":true,"targets":[{"remote":"https://evil.example","repos":["a/b"],"secret_source":"gh"}]}`); code != http.StatusBadRequest || !strings.Contains(msg, "github.com") {
+		t.Fatalf("gh source with non-github remote = %d %q, want 400 github.com", code, msg)
+	}
+	if code, msg := post(`{"confirm_authorized":true,"targets":[{"remote":"https://evil.example","repos":["r"],"secret_source":"entire","token_url":"https://evil.example/oauth/token","jurisdiction":"https://evil.example"}]}`); code != http.StatusBadRequest || !strings.Contains(msg, "entire.io") {
+		t.Fatalf("entire source with non-entire token_url = %d %q, want 400 entire.io", code, msg)
+	}
+	// insecure disables TLS verification, which is the only thing binding the
+	// audience-validated hostname to the endpoint that actually answers — a
+	// CLI-sourced credential must never ride on an unverified connection.
+	if code, msg := post(`{"confirm_authorized":true,"targets":[{"remote":"https://github.com","repos":["a/b"],"secret_source":"gh","insecure":true}]}`); code != http.StatusBadRequest || !strings.Contains(msg, "insecure") {
+		t.Fatalf("insecure + secret_source = %d %q, want 400 insecure", code, msg)
+	}
+}
+
+func TestStartRejectedDuringShutdown(t *testing.T) {
+	s, ts, _ := newTestServer(t)
+	s.mgr.beginShutdown() // simulate a shutdown already in progress
+
+	res, err := http.Post(ts.URL+"/api/runs", "application/json", strings.NewReader(demoBody(1, "1")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = res.Body.Close() }()
+	if res.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("start during shutdown = HTTP %d, want 503", res.StatusCode)
+	}
+}
+
+func TestOriginGuard(t *testing.T) {
+	_, ts, _ := newTestServer(t)
+	u, _ := url.Parse(ts.URL)
+	do := func(origin string) int {
+		req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/runs", strings.NewReader("{}"))
+		if origin != "" {
+			req.Header.Set("Origin", origin)
+		}
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = res.Body.Close()
+		return res.StatusCode
+	}
+	if code := do("http://evil.example"); code != http.StatusForbidden {
+		t.Errorf("cross-origin POST = %d, want 403", code)
+	}
+	if code := do("http://" + u.Hostname() + ":1"); code != http.StatusForbidden {
+		t.Errorf("cross-port POST = %d, want 403 (a different port is still cross-origin)", code)
+	}
+	if code := do("http://" + u.Host); code == http.StatusForbidden {
+		t.Errorf("same-origin POST wrongly rejected as forbidden origin")
+	}
+	if code := do(""); code == http.StatusForbidden {
+		t.Errorf("no-Origin POST (curl) wrongly rejected")
+	}
+	// DNS rebinding: the attacker's domain arrives as Host even after it
+	// rebinds to loopback, so a non-loopback Host is refused on a loopback bind.
+	rebind, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/runs", strings.NewReader("{}"))
+	rebind.Host = "evil.example:1234"
+	res, err := http.DefaultClient.Do(rebind)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+	if res.StatusCode != http.StatusForbidden {
+		t.Errorf("rebinding Host = %d, want 403", res.StatusCode)
+	}
+	// The same rebinding guard covers the read API, or a rebound page could read
+	// run status, live events, and history through a spoofed Host.
+	for _, path := range []string{"/api/runs", "/api/history"} {
+		rb, _ := http.NewRequest(http.MethodGet, ts.URL+path, nil)
+		rb.Host = "evil.example:1234"
+		rres, err := http.DefaultClient.Do(rb)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = rres.Body.Close()
+		if rres.StatusCode != http.StatusForbidden {
+			t.Errorf("rebinding GET %s = %d, want 403", path, rres.StatusCode)
+		}
+	}
+}
+
+func TestCredentialsRejectedOnNonLoopback(t *testing.T) {
+	dir := t.TempDir()
+	s := New("0.0.0.0:8377", dir) // wildcard bind = exposed
+	ts := httptest.NewServer(s.Handler())
+	t.Cleanup(ts.Close)
+
+	// Both a pasted secret and a CLI secret_source are refused on an exposed
+	// bind: the first would cross the wire in cleartext, the second would spend
+	// the operator's CLI credential for any reachable client.
+	for name, body := range map[string]string{
+		"pasted secret": `{"confirm_authorized":true,"targets":[{"name":"x","remote":"demo://x","secret":"paste-me"}]}`,
+		"secret_source": `{"confirm_authorized":true,"targets":[{"name":"x","remote":"https://github.com","repos":["a/b"],"secret_source":"gh"}]}`,
+	} {
+		res, err := http.Post(ts.URL+"/api/runs", "application/json", strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = res.Body.Close()
+		if res.StatusCode != http.StatusBadRequest {
+			t.Fatalf("%s on non-loopback bind = %d, want 400", name, res.StatusCode)
+		}
+	}
+
+	// CLI discovery execs local credentials and is disabled outright on an
+	// exposed bind, regardless of Origin.
+	res, err := http.Get(ts.URL + "/api/local/suggest")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+	if res.StatusCode != http.StatusForbidden {
+		t.Fatalf("GET /api/local/suggest on non-loopback bind = %d, want 403", res.StatusCode)
+	}
+}
+
+// Run start/cancel require the TCP peer to be loopback: on an exposed bind a
+// remote client must get a read-only viewer, never the ability to start
+// demo:// runs (uncredentialed, but they burn this machine's CPU and retain
+// samples in memory) or cancel the operator's run. Reads stay available.
+func TestRunControlRequiresLoopbackPeer(t *testing.T) {
+	s := New("127.0.0.1:0", t.TempDir())
+	do := func(method, path, remote, host string) int {
+		req := httptest.NewRequest(method, path, strings.NewReader(demoBody(1, "1")))
+		req.Host = host
+		req.RemoteAddr = remote
+		rec := httptest.NewRecorder()
+		s.Handler().ServeHTTP(rec, req)
+		return rec.Code
+	}
+	if code := do("POST", "/api/runs", "203.0.113.9:44321", "127.0.0.1:8377"); code != http.StatusForbidden {
+		t.Fatalf("remote-peer start = %d, want 403", code)
+	}
+	if code := do("POST", "/api/runs/x/cancel", "203.0.113.9:44321", "127.0.0.1:8377"); code != http.StatusForbidden {
+		t.Fatalf("remote-peer cancel = %d, want 403", code)
+	}
+	if code := do("GET", "/api/runs", "203.0.113.9:44321", "127.0.0.1:8377"); code != http.StatusOK {
+		t.Fatalf("remote-peer list = %d, want 200 (reads stay open)", code)
+	}
+	// DNS rebinding: a page at evil.example rebinds its hostname to 127.0.0.1;
+	// the victim browser on this machine gives a loopback peer and a
+	// same-origin request, but the Host header still names the evil origin —
+	// run control must reject it even when the bind-level Host guard is off.
+	if code := do("POST", "/api/runs", "127.0.0.1:50000", "evil.example:8377"); code != http.StatusForbidden {
+		t.Fatalf("rebound-host start = %d, want 403", code)
+	}
+	// The operator's own loopback connection still drives runs (any non-403
+	// outcome proves the gate passed; this one succeeds outright).
+	if code := do("POST", "/api/runs", "127.0.0.1:50000", "127.0.0.1:8377"); code != http.StatusCreated {
+		t.Fatalf("loopback-peer start = %d, want 201", code)
+	}
+	s.mgr.beginShutdown()
+	s.mgr.stopActive(5 * time.Second)
+}
+
+func TestValidateSecretAudience(t *testing.T) {
+	ok := func(src, remote, tok, jur string) {
+		if err := validateSecretAudience(src, remote, tok, jur); err != nil {
+			t.Errorf("validateSecretAudience(%s,%s,...) = %v, want nil", src, remote, err)
+		}
+	}
+	bad := func(src, remote, tok, jur string) {
+		if err := validateSecretAudience(src, remote, tok, jur); err == nil {
+			t.Errorf("validateSecretAudience(%s,%s,...) = nil, want error", src, remote)
+		}
+	}
+	ok("gh", "https://github.com", "", "")
+	bad("gh", "https://github.example.com", "", "") // lookalike host must not pass
+	ok("glab", "https://gitlab.com", "", "")
+	bad("glab", "https://evil.com", "", "")
+	ok("entire", "https://aws-ap-south-1.entire.io", "https://in.auth.entire.io/oauth/token", "https://in.entire.io")
+	bad("entire", "https://aws-ap-south-1.entire.io", "https://evil.com/oauth/token", "https://in.entire.io")    // bad token_url
+	bad("entire", "https://entire.io.evil.com", "https://in.auth.entire.io/oauth/token", "https://in.entire.io") // suffix-spoof remote
+	// A CLI token must never be sent over cleartext or to a userinfo-spoofed URL,
+	// even when the host itself is in-audience.
+	bad("gh", "http://github.com", "", "")                                                                // http would leak the token on the wire
+	bad("gh", "https://x:y@github.com", "", "")                                                           // embedded userinfo overrides the pinned credential
+	bad("entire", "http://in.entire.io", "https://in.auth.entire.io/oauth/token", "https://in.entire.io") // http remote
+	// token_url/jurisdiction select the Entire exchange path; a gh/glab source
+	// carrying them would POST the resolved CLI token to that token_url.
+	bad("gh", "https://github.com", "https://in.auth.entire.io/oauth/token", "")
+	bad("glab", "https://gitlab.com", "", "https://in.entire.io")
+	// The audience is an origin: a non-default port on an accepted hostname is a
+	// different service and must not receive the CLI token. Explicit 443 is the
+	// same origin and stays valid.
+	bad("gh", "https://github.com:8443", "", "")
+	bad("entire", "https://in.entire.io:9443", "https://in.auth.entire.io/oauth/token", "https://in.entire.io")
+	bad("entire", "https://in.entire.io", "https://in.auth.entire.io:8080/oauth/token", "https://in.entire.io")
+	ok("gh", "https://github.com:443", "", "")
+}
+
+func TestRunLifecycleSSEAndRedaction(t *testing.T) {
+	_, ts, dir := newTestServer(t)
+	runID := startDemoRun(t, ts, demoBody(1.2, "1,2"))
+
+	// A second run while one is active is a conflict.
+	res, err := http.Post(ts.URL+"/api/runs", "application/json", strings.NewReader(demoBody(1, "1")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+	if res.StatusCode != http.StatusConflict {
+		t.Fatalf("concurrent start = HTTP %d, want 409", res.StatusCode)
+	}
+
+	names, raw := collectSSE(t, ts, runID, "")
+	if len(names) == 0 || names[0] != "hello" {
+		t.Fatalf("first event = %v, want hello", names)
+	}
+	if names[len(names)-1] != "run_done" {
+		t.Fatalf("last event = %s, want run_done", names[len(names)-1])
+	}
+	count := func(name string) int {
+		n := 0
+		for _, x := range names {
+			if x == name {
+				n++
+			}
+		}
+		return n
+	}
+	if count("level_start") != 2 || count("level_result") != 2 {
+		t.Fatalf("level events = %v, want 2 level_start + 2 level_result", names)
+	}
+	if count("bucket") == 0 {
+		t.Fatalf("no bucket events in %v", names)
+	}
+	if strings.Contains(raw, testSecret) {
+		t.Fatal("secret leaked into the SSE stream")
+	}
+
+	// Redaction is structural: no API response may carry the secret.
+	for _, path := range []string{"/api/runs", "/api/runs/" + runID, "/api/history"} {
+		res, err := http.Get(ts.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b := make([]byte, 1<<20)
+		n, _ := res.Body.Read(b)
+		_ = res.Body.Close()
+		if strings.Contains(string(b[:n]), testSecret) {
+			t.Fatalf("secret leaked via GET %s", path)
+		}
+	}
+
+	// The run persisted a format-2 doc into the results dir.
+	files, _ := filepath.Glob(filepath.Join(dir, "forgemark-*.json"))
+	if len(files) != 1 {
+		t.Fatalf("results dir has %d docs, want 1", len(files))
+	}
+	b, _ := os.ReadFile(files[0])
+	if strings.Contains(string(b), testSecret) {
+		t.Fatal("secret leaked into the persisted result doc")
+	}
+	// Bucket invariant: every persisted series point carries dt_ms >= 1.
+	// Consumers read 0/absent as a legacy ~1s bucket, so a zero here (a
+	// warm-up tick, or a truncated sub-millisecond overlap) would silently
+	// corrupt replayed rates. p50=10ms demo with warmup_sec 0.2 exercises
+	// both warm-up ticks and a fractional first/tail bucket.
+	var doc struct {
+		Targets []struct {
+			Series []struct {
+				T    int64 `json:"t"`
+				DtMs int64 `json:"dt_ms"`
+			} `json:"series"`
+		} `json:"targets"`
+	}
+	if err := json.Unmarshal(b, &doc); err != nil {
+		t.Fatalf("decode result doc: %v", err)
+	}
+	points := 0
+	for _, tg := range doc.Targets {
+		for _, p := range tg.Series {
+			points++
+			if p.DtMs < 1 {
+				t.Fatalf("series point t=%d has dt_ms %d; every emitted bucket must carry >= 1", p.T, p.DtMs)
+			}
+		}
+	}
+	if points == 0 {
+		t.Fatal("result doc stored no series points; the invariant check checked nothing")
+	}
+
+	// Replay: with Last-Event-ID at the end, nothing but nothing comes back;
+	// from 0 the whole history replays instantly (run is finished).
+	replayNames, _ := collectSSE(t, ts, runID, "0")
+	if len(replayNames) != len(names) {
+		t.Fatalf("full replay = %d events, want %d", len(replayNames), len(names))
+	}
+}
+
+func TestCancelRun(t *testing.T) {
+	_, ts, _ := newTestServer(t)
+	runID := startDemoRun(t, ts, demoBody(30, "1")) // would run 30s if not cancelled
+
+	time.Sleep(300 * time.Millisecond)
+	res, err := http.Post(ts.URL+"/api/runs/"+runID+"/cancel", "application/json", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+
+	names, raw := collectSSE(t, ts, runID, "")
+	if names[len(names)-1] != "run_done" {
+		t.Fatalf("cancelled run events = %v, want trailing run_done", names)
+	}
+	if !strings.Contains(raw, `"state":"cancelled"`) {
+		t.Fatal("run_done should carry state=cancelled")
+	}
+}
+
+func TestForbiddenOrigin(t *testing.T) {
+	_, ts, _ := newTestServer(t)
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/runs", strings.NewReader(demoBody(1, "1")))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", "https://evil.example")
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+	if res.StatusCode != http.StatusForbidden {
+		t.Fatalf("cross-origin POST = HTTP %d, want 403", res.StatusCode)
+	}
+}
+
+func TestHistoryServesLegacyDocs(t *testing.T) {
+	_, ts, dir := newTestServer(t)
+	legacy := `{
+		"run_id": "fmlegacy", "target": "https://git.example", "strategy": "branch",
+		"duration": "1m0s", "warmup": "10s", "repo_count": 1, "commit": "1-10 x 2048B",
+		"levels": [{"concurrency": 4, "ok": 100, "ops_per_sec": 25.0, "p95_ms": 80}]
+	}`
+	if err := os.WriteFile(filepath.Join(dir, "forgemark-fmlegacy.json"), []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := http.Get(ts.URL + "/api/history/forgemark-fmlegacy.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = res.Body.Close() }()
+	var doc struct {
+		Targets []struct {
+			Name   string `json:"name"`
+			Levels []struct {
+				Concurrency int `json:"concurrency"`
+			} `json:"levels"`
+		} `json:"targets"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&doc); err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.Targets) != 1 || doc.Targets[0].Name != "https://git.example" || len(doc.Targets[0].Levels) != 1 {
+		t.Fatalf("legacy doc not normalized: %+v", doc)
+	}
+
+	// Path traversal shapes are rejected before touching the filesystem.
+	for _, bad := range []string{"..%2Fsecrets.json", "notforgemark.json"} {
+		res, err := http.Get(ts.URL + "/api/history/" + bad)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = res.Body.Close()
+		if res.StatusCode == http.StatusOK {
+			t.Fatalf("GET history/%s succeeded, want rejection", bad)
+		}
+	}
+}

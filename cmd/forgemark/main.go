@@ -22,7 +22,8 @@
 // (clone+push loop per agent).
 //
 // The benchmark engine itself lives in internal/bench; this package is the
-// flag-driven CLI over it.
+// flag-driven CLI over it, and `forgemark serve` is the web demo GUI over the
+// same engine.
 //
 // Only ever run this against infrastructure you own or are explicitly
 // authorized to load-test.
@@ -47,6 +48,15 @@ import (
 )
 
 func main() {
+	// `forgemark serve` starts the web demo GUI; anything else is the classic
+	// flag-driven CLI (which takes no positional args, so this can't collide).
+	if len(os.Args) > 1 && os.Args[1] == "serve" {
+		if err := runServe(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "forgemark: "+err.Error())
+			os.Exit(1)
+		}
+		return
+	}
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, "forgemark: "+err.Error())
 		os.Exit(1)
@@ -97,12 +107,25 @@ func run() error {
 	fmt.Printf("           sweep=%v duration=%s warmup=%s\n", cfg.workload.Concurrency, cfg.workload.Duration, cfg.workload.Warmup)
 	fmt.Println()
 
+	// Sweep refs left by earlier runs so this run's receive-pack advertisement
+	// isn't inflated by their leftovers (which would make results depend on
+	// how many benchmarks ran before). Best-effort per ref and per repo: report
+	// what WAS deleted alongside any refusals, and measure anyway.
+	if n, err := r.CleanStaleBenchRefs(ctx); err != nil || n > 0 {
+		if n > 0 {
+			fmt.Printf("forgemark: deleted %d stale bench refs from previous runs\n\n", n)
+		}
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "forgemark: warning: stale bench-ref sweep incomplete (advertisements may bias results): %v\n", err)
+		}
+	}
+
 	var results []bench.LevelResult
 	for _, c := range cfg.workload.Concurrency {
 		if ctx.Err() != nil {
 			break
 		}
-		res, err := r.RunLevel(ctx, c)
+		res, err := r.RunLevel(ctx, c, nil) // single target: no start barrier
 		if err != nil {
 			return fmt.Errorf("concurrency=%d: %w", c, err)
 		}

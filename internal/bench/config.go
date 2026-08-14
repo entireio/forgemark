@@ -34,6 +34,37 @@ type Target struct {
 	ClientID     string // public OAuth client id; empty defaults to entire-cli
 }
 
+// Hard safety caps, not tuning suggestions: a single host can't generate a
+// meaningful benchmark anywhere near them, and unbounded values from the
+// server API would otherwise reach make([]*agent, c), c goroutine spawns,
+// and per-sample retention for the whole window — panic/OOM territory.
+//
+// Known ceiling, deliberately NOT capped: within these limits, retained-sample
+// memory still scales with measured throughput (a 6h max-concurrency level
+// against a very fast target reaches 10⁸+ Samples). That is the cost of the
+// exact percentiles LevelResult promises for real runs — the bounded
+// alternative is approximation, which is exactly the trade the demo target
+// makes and real results must not. An aggregate agent-hours cap would reject
+// valid configs to protect operators from their own machine's RAM; the ops
+// have to actually happen for the memory to exist, so the operator is load
+// generator and victim at once. If this ever bites in practice, the fix is
+// compact retention (durations only, errors grouped online), not a cap here.
+const (
+	maxConcurrency = 4096          // agents per level
+	maxLevels      = 16            // levels per sweep
+	maxDuration    = 6 * time.Hour // measured window per level
+	maxWarmup      = time.Hour     // warm-up per level
+
+	// Commit content is the same class of API-reachable allocation: FileSize
+	// goes straight into make([]byte, FileSize) in every agent (a near-MaxInt
+	// value is a runtime panic that kills the whole process, not just the
+	// run), and FilesMax × FileSize is the working set every agent keeps in
+	// its in-memory worktree.
+	maxFilesMax    = 1024     // files per commit
+	maxFileSize    = 16 << 20 // bytes per file
+	maxCommitBytes = 64 << 20 // files-max × file-size, one commit's payload
+)
+
 // Workload is the target-independent shape of a run: strategy, sweep, and
 // commit content. One Workload is shared by every target of a comparison run.
 type Workload struct {
@@ -68,16 +99,19 @@ func (w Workload) Validate() error {
 	if len(w.Concurrency) == 0 {
 		return errors.New("no concurrency levels")
 	}
+	if len(w.Concurrency) > maxLevels {
+		return fmt.Errorf("too many concurrency levels: %d (max %d)", len(w.Concurrency), maxLevels)
+	}
 	for _, n := range w.Concurrency {
-		if n < 1 {
-			return fmt.Errorf("invalid concurrency %d", n)
+		if n < 1 || n > maxConcurrency {
+			return fmt.Errorf("invalid concurrency %d (must be 1..%d)", n, maxConcurrency)
 		}
 	}
-	if w.Duration <= 0 {
-		return errors.New("-duration must be > 0")
+	if w.Duration <= 0 || w.Duration > maxDuration {
+		return fmt.Errorf("-duration must be > 0 and <= %s", maxDuration)
 	}
-	if w.Warmup < 0 {
-		return errors.New("-warmup must be >= 0")
+	if w.Warmup < 0 || w.Warmup > maxWarmup {
+		return fmt.Errorf("-warmup must be >= 0 and <= %s", maxWarmup)
 	}
 	if w.Strategy != "clone" {
 		if w.Commit.FilesMin < 1 {
@@ -86,8 +120,19 @@ func (w Workload) Validate() error {
 		if w.Commit.FilesMax < w.Commit.FilesMin {
 			return errors.New("-files-max < -files-min")
 		}
+		if w.Commit.FilesMax > maxFilesMax {
+			return fmt.Errorf("-files-max must be <= %d", maxFilesMax)
+		}
 		if w.Commit.FileSize < 1 {
 			return errors.New("-file-size must be >= 1 (empty blobs reproduce → ErrEmptyCommit)")
+		}
+		if w.Commit.FileSize > maxFileSize {
+			return fmt.Errorf("-file-size must be <= %d (%dMiB)", maxFileSize, maxFileSize>>20)
+		}
+		// Both factors already fit comfortably in int64, so the product can't
+		// overflow this aggregate check.
+		if int64(w.Commit.FilesMax)*int64(w.Commit.FileSize) > maxCommitBytes {
+			return fmt.Errorf("-files-max × -file-size must be <= %dMiB per commit", maxCommitBytes>>20)
 		}
 	}
 	// Validate the assembled ref, not the prefix alone: validity is context-dependent

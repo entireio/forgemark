@@ -51,6 +51,9 @@ type TargetResult struct {
 	Error  string              `json:"error,omitempty"` // fatal target error, if it died
 	Levels []bench.LevelResult `json:"levels"`
 	Series []SeriesPoint       `json:"series,omitempty"` // 1s live buckets, for re-rendering
+	// SeriesTruncated marks a Series that hit the server's retention cap: the
+	// run kept measuring (Levels is complete) but the stored timeline is not.
+	SeriesTruncated bool `json:"series_truncated,omitempty"`
 }
 
 // SeriesPoint is one second of one target's live stats. Push and clone ops
@@ -58,6 +61,7 @@ type TargetResult struct {
 // replay from history with the same fidelity they streamed with.
 type SeriesPoint struct {
 	T     int64   `json:"t"`
+	DtMs  int64   `json:"dt_ms,omitempty"` // measured duration; writers emit >= 1 (zero-overlap ticks are skipped), so 0/absent occurs only in legacy docs → treat as ~1s
 	Level int     `json:"level"`
 	OK    int     `json:"ok"`
 	CAS   int     `json:"cas"`

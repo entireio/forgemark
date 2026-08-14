@@ -3,6 +3,7 @@ package bench
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -56,6 +57,10 @@ type jurisdictionCreds struct {
 	subject  string // exchangeable subject JWT (must carry entire:session)
 	username string // basic-auth username; Entire ignores it
 
+	ctx    context.Context    // provider-owned; close() cancels it to stop refreshes
+	cancel context.CancelFunc // cancels ctx
+	wg     sync.WaitGroup     // tracks the detached ahead-of-expiry refresh goroutine
+
 	mu         sync.Mutex
 	tok        tokenEntry
 	refreshing bool               // a background ahead-of-expiry refresh is in flight
@@ -72,14 +77,35 @@ type tokenEntry struct {
 const singleflightKey = "jurisdiction"
 
 func newJurisdictionCreds(httpc *http.Client, tokenURL, audience, clientID, subject, username string) *jurisdictionCreds {
+	// The exchange must never follow a redirect: the POST body carries the
+	// subject token, and Go's default client replays the body on 307/308 — so a
+	// redirect served by the (audience-validated) token host could bounce the
+	// token to an arbitrary origin, silently bypassing the host pinning. Copy
+	// the client (sharing its transport/pool) with redirects refused outright.
+	noRedirect := *httpc
+	noRedirect.CheckRedirect = func(*http.Request, []*http.Request) error {
+		return errors.New("token endpoint attempted a redirect; refusing to forward the subject token")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
 	return &jurisdictionCreds{
-		httpc:    httpc,
+		httpc:    &noRedirect,
 		tokenURL: tokenURL,
 		audience: strings.TrimRight(audience, "/"),
 		clientID: clientID,
 		subject:  subject,
 		username: username,
+		ctx:      ctx,
+		cancel:   cancel,
 	}
+}
+
+// close stops the provider: it cancels any in-flight token exchange (including
+// a detached ahead-of-expiry refresh) and waits for the refresh goroutine to
+// return, so no exchange keeps running — or holding the subject/access token —
+// after the run that owns this provider has finished.
+func (j *jurisdictionCreds) close() {
+	j.cancel()
+	j.wg.Wait()
 }
 
 func (j *jurisdictionCreds) basicAuth(ctx context.Context, _ string) (*githttp.BasicAuth, error) {
@@ -117,7 +143,9 @@ func (j *jurisdictionCreds) get(ctx context.Context) (string, error) {
 
 	if valid {
 		if startAhead {
+			j.wg.Add(1) // so close() can wait for this detached refresh to return
 			go func() {
+				defer j.wg.Done()
 				defer func() {
 					j.mu.Lock()
 					j.refreshing = false
@@ -142,7 +170,10 @@ func (j *jurisdictionCreds) get(ctx context.Context) (string, error) {
 // fail a refresh other agents are waiting on.
 func (j *jurisdictionCreds) refreshNow() (string, error) {
 	v, err, _ := j.sf.Do(singleflightKey, func() (any, error) {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		// Derive from the provider's context, not context.Background(), so
+		// close() cancels an in-flight exchange instead of letting it run its
+		// full 30s after the run is over.
+		ctx, cancel := context.WithTimeout(j.ctx, 30*time.Second)
 		defer cancel()
 		e, err := j.exchange(ctx)
 		if err != nil {
@@ -189,7 +220,9 @@ func (j *jurisdictionCreds) exchange(ctx context.Context) (tokenEntry, error) {
 		return tokenEntry{}, fmt.Errorf("read token response: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return tokenEntry{}, fmt.Errorf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		// The subject token traveled URL-encoded in the form body, so scrub that
+		// rendition too if the endpoint echoes the request back.
+		return tokenEntry{}, fmt.Errorf("HTTP %d: %s", resp.StatusCode, redactSecrets(strings.TrimSpace(string(body)), j.subject, url.QueryEscape(j.subject)))
 	}
 	var jr struct {
 		AccessToken string `json:"access_token"`
