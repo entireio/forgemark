@@ -291,17 +291,30 @@ func newHTTPClient(insecure bool, maxConns int) *http.Client {
 
 // uaToken identifies forgemark in User-Agent headers. Binaries built from a
 // git checkout carry the commit via Go's embedded VCS info, so server logs can
-// tie traffic to an exact revision; otherwise (go test, -buildvcs=off) it's
-// the bare name.
+// tie traffic to an exact revision — with "-dirty" when the tree had
+// uncommitted changes; otherwise (go test, -buildvcs=off) it's the bare name.
 var uaToken = func() string {
-	if bi, ok := debug.ReadBuildInfo(); ok {
-		for _, s := range bi.Settings {
-			if s.Key == "vcs.revision" && len(s.Value) >= 12 {
-				return "forgemark/" + s.Value[:12]
+	bi, ok := debug.ReadBuildInfo()
+	if !ok {
+		return "forgemark"
+	}
+	var revision, dirty string
+	for _, s := range bi.Settings {
+		switch s.Key {
+		case "vcs.revision":
+			if len(s.Value) >= 12 {
+				revision = s.Value[:12]
+			}
+		case "vcs.modified":
+			if s.Value == "true" {
+				dirty = "-dirty"
 			}
 		}
 	}
-	return "forgemark"
+	if revision == "" {
+		return "forgemark"
+	}
+	return "forgemark/" + revision + dirty
 }()
 
 // uaTransport appends uaToken to every request's User-Agent so server logs
