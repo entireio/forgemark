@@ -1,0 +1,26 @@
+{
+  "cli_version": "0.10.1",
+  "checkpoint_id": "37cd2a88d035",
+  "strategy": "manual-commit",
+  "branch": "feat/forgemark-user-agent",
+  "checkpoints_count": 5,
+  "files_touched": [
+    "internal/bench/runner_test.go"
+  ],
+  "sessions": [
+    {
+      "metadata": "/37/cd2a88d035/0/metadata.json",
+      "transcript": "/37/cd2a88d035/0/full.jsonl",
+      "compact_transcript": "/37/cd2a88d035/0/transcript.jsonl",
+      "content_hash": "/37/cd2a88d035/0/content_hash.txt",
+      "prompt": "/37/cd2a88d035/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 72,
+    "cache_creation_tokens": 27659,
+    "cache_read_tokens": 2924772,
+    "output_tokens": 19952,
+    "api_call_count": 36
+  }
+}

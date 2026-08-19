@@ -1,0 +1,25 @@
+mmmh trail link is a 404
+
+---
+
+trail does not show up in the entire ui for me
+
+---
+
+i see trail 3 and older merged ones but not trail 4 so its that i can't see the project
+
+---
+
+use entire.io context
+
+---
+
+entire project list
+
+---
+
+so i have to create the trail manually i guess until cli is fixed
+
+---
+
+trail created manually. it has a lint error
