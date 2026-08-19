@@ -1,0 +1,5 @@
+are forgemark requests identifying themselves as forgemark via http user agent?
+
+---
+
+do option 2
