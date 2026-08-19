@@ -1,0 +1,9 @@
+can you list findings against the trail?
+
+---
+
+the findings dont show up in the ui even when filtering by All
+
+---
+
+fix finding 1 and resolve finding 2
