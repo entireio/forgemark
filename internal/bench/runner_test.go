@@ -52,7 +52,7 @@ func TestNewHTTPClientTagsUserAgent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 
 	// Pre-set User-Agent (go-git's transport sets its own).
 	req, err = http.NewRequest(http.MethodGet, srv.URL, nil)
@@ -64,7 +64,7 @@ func TestNewHTTPClientTagsUserAgent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 
 	want := []string{"forgemark", "go-git/6.x forgemark"}
 	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
