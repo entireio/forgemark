@@ -1,0 +1,76 @@
+run an independent review agent
+
+---
+
+<task-notification>
+<task-id>a02ce9001cfcf472c</task-id>
+<output-file>/private/tmp/claude-501/-Users-kairamuenke-src-entireio-forgemark/372d50b0-e30f-4d5b-b420-32b0e28c7afa/tasks/a02ce9001cfcf472c.output</output-file>
+<status>completed</status>
+<summary>Agent "/code-review feat/forgemark-user-agent" finished</summary>
+<note>A task-notification fires each time this agent stops with no live background children of its own. The user can send it another message and resume it, so the same task-id may notify more than once.</note>
+<result>All verifications are complete. The capability-space claim is CONFIRMED with wire-level evidence. Final assembly: 6 confirmed + 2 plausible findings, ranked by severity; REFUTED (dumb-HTTP gap) and weak candidates dropped.
+
+```json
+[
+  {
+    "file": "internal/bench/runner.go",
+    "line": 308,
+    "summary": "Seeding GO_GIT_USER_AGENT_EXTRA makes go-git's agent string contain a space, which is written unsanitized into the SP-delimited git protocol v0/v1 capability list, producing a bogus extra capability token 'forgemark/&lt;rev&gt;' on every push and fetch negotiation.",
+    "failure_scenario": "go-git's DefaultAgent() returns 'go-git/6.x forgemark/&lt;rev&gt;' (fmt.Sprintf(\"%s %s\", ...), capability.go:302-307) and push.go:146-148 / negotiate.go:149 set that exact value as the protocol agent capability; updreq_encode.go writes it verbatim into the first-command pkt-line, so servers tokenizing on SP see 'agent=go-git/6.x' plus an unknown bare capability 'forgemark/abc123def456'. C git ignores unknown tokens, but a strict receive-pack/upload-pack (custom forges like the Entire forge under benchmark) can reject the request, failing every benchmarked push/clone that worked before this change."
+  },
+  {
+    "file": "internal/server/local.go",
+    "line": 180,
+    "summary": "The process-wide os.Setenv in internal/bench's init() leaks GO_GIT_USER_AGENT_EXTRA into every subprocess forgemark serve spawns (entire, gh, glab, credential helpers), since runCLI leaves cmd.Env nil.",
+    "failure_scenario": "internal/server imports internal/bench (runmgr.go, collector.go, demo.go), so merely starting the GUI sets the var; runCLI execs the entire CLI with the inherited environment, and if that tool (or any future child) is built on go-git v6 its own git traffic is tagged 'go-git/6.x forgemark/&lt;rev&gt;' in server logs — non-forgemark traffic misattributed to the load tester, inverting the attribution this feature exists to provide. Scope the var in cmd/forgemark's main() and/or strip it from child env in runCLI."
+  },
+  {
+    "file": "internal/bench/runner.go",
+    "line": 308,
+    "summary": "The init guard (os.Getenv(...) == \"\") mismatches go-git's semantics (os.LookupEnv + TrimSpace != \"\"): a whitespace-only operator value silently untags all git traffic, and an explicitly-empty opt-out is overwritten, contradicting the doc comment 'An operator's explicit value wins.'",
+    "failure_scenario": "An operator exports GO_GIT_USER_AGENT_EXTRA=\" \" (or a CI template does): init defers to the 'explicit' value, go-git's TrimSpace check then discards it, and every git request goes out as bare 'go-git/6.x' — git traffic untagged while token/probe requests are tagged. Conversely, exporting GO_GIT_USER_AGENT_EXTRA=\"\" to suppress tagging is silently overridden by init. Use os.LookupEnv to honor set-but-empty."
+  },
+  {
+    "file": "internal/bench/runner_test.go",
+    "line": 43,
+    "summary": "The t.Skipf guard fires whenever GO_GIT_USER_AGENT_EXTRA != uaToken — including when it is empty, which is exactly the case where init() failed to seed it — so the only test of this feature skips instead of failing on regression.",
+    "failure_scenario": "A refactor breaks the seeding (env-var typo, init deleted, guard condition changed): os.Getenv returns \"\" != uaToken, the test skips with the misleading message 'preset to \"\" by the environment', CI stays green, and all git traffic silently loses its forgemark tag. Fail on empty/unset (t.Fatal) and skip only on a genuine non-empty operator preset."
+  },
+  {
+    "file": "internal/bench/runner_test.go",
+    "line": 46,
+    "summary": "The test hardcodes go-git's unexported agent prefix 'go-git/6.x ' (private const userAgent in capability.go of a pinned v6 alpha pseudo-version), so any go-git bump that changes the version string breaks the test with no forgemark behavior change.",
+    "failure_scenario": "The next go get -u of go-git (e.g. the alpha-to-GA bump changing the const to 'go-git/6.0') fails TestUATokenSeedsGoGitAgentExtra during an unrelated dependency update, and the failure reads as a UA-tagging regression. Assert only the owned contract: strings.HasSuffix(capability.DefaultAgent(), \" \"+uaToken)."
+  },
+  {
+    "file": "internal/bench/runner.go",
+    "line": 336,
+    "summary": "The diff leaves a trailing blank line after the uaToken var block, so the file is unformatted — verified: gofmt -l internal/bench/ reports runner.go.",
+    "failure_scenario": "Any CI gofmt/golangci-lint formatting gate fails the branch; absent such a gate, the next contributor's format-on-save produces an unrelated one-line diff polluting blame and review."
+  },
+  {
+    "file": "internal/bench/runner.go",
+    "line": 322,
+    "summary": "The len(s.Value) &gt;= 12 guard silently discards any vcs.revision shorter than 12 chars instead of using it as-is, and because revision stays empty the '-dirty' marker is dropped too even when vcs.modified=true.",
+    "failure_scenario": "Go 1.26 stamps short decimal vcs.revision values for svn checkouts (svnStatus: 'svn info --show-item last-changed-revision', e.g. '12345'), so a -buildvcs build from a non-git checkout yields bare 'forgemark' with both the revision and dirty-tree evidence lost. Safe form: rev := s.Value; if len(rev) &gt; 12 { rev = rev[:12] }."
+  },
+  {
+    "file": "internal/bench/runner.go",
+    "line": 307,
+    "summary": "The feature is split across an init() and a separate anonymous-function var initializer, relying on Go's vars-before-init ordering for correctness, and the uaToken doc comment is attached to init() rather than the var it documents.",
+    "failure_scenario": "A reader must recall the vars-before-init rule to trust that uaToken is non-empty when Setenv runs; a future refactor to a plain 'var uaToken string' assigned elsewhere silently seeds an empty env value, and 'go doc bench.uaToken' shows no documentation. Simpler: compute the token and seed the env var in one init(), with the comment on the var declaration."
+  }
+]
+```
+
+**Review summary** — `feat/forgemark-user-agent` (65 added lines across `internal/bench/{creds,endpoint,runner}.go` + tests): the design rationale checked out (the `Client.Timeout` fast-path claim was verified accurate against Go 1.26.4's `net/http`; the env var is genuinely go-git v6's only agent hook; both direct HTTP call sites are covered; no init-ordering hazard since `DefaultAgent()` reads the env lazily). The two findings that matter most: the space go-git injects when joining the extra reaches the git protocol capability list unsanitized (confirmed at the wire-encoding level — a strict server can reject every push), and the process-global env var leaks into every CLI that `forgemark serve` spawns, misattributing third-party traffic. One candidate (untagged dumb-HTTP fallback) was refuted: forgemark's in-memory storage makes go-git error out before that path can emit requests.</result>
+<usage><subagent_tokens>72003</subagent_tokens><tool_uses>14</tool_uses><duration_ms>619347</duration_ms></usage>
+</task-notification>
+
+---
+
+what cli command are you using to look at a finding?
+
+---
+
+apply mechanical fixes. im ok with context deadline approach
