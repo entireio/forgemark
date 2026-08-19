@@ -74,7 +74,6 @@ func newEntireEndpoint(ctx context.Context, remote, objectFmt, repo string, cred
 	if err != nil {
 		return nil, fmt.Errorf("build info/refs request: %w", err)
 	}
-	req.Header.Set("User-Agent", uaToken)
 	req.SetBasicAuth(auth.Username, auth.Password)
 	resp, err := httpc.Do(req)
 	if err != nil {

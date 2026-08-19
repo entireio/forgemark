@@ -1,12 +1,13 @@
 package bench
 
 import (
+	"context"
+	"errors"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
-	"os"
 	"testing"
-
-	"github.com/go-git/go-git/v6/plumbing/protocol/capability"
+	"time"
 )
 
 func TestNewHTTPClientUsesHTTPSProxy(t *testing.T) {
@@ -17,12 +18,17 @@ func TestNewHTTPClientUsesHTTPSProxy(t *testing.T) {
 	t.Setenv("no_proxy", "")
 
 	client := newHTTPClient(false, 1)
-	tr, ok := client.Transport.(*http.Transport)
+	ua, ok := client.Transport.(*uaTransport)
 	if !ok {
-		// Must stay a bare *http.Transport: wrappers knock Client.Timeout off
-		// net/http's known-transport fast path (goroutine per request).
-		t.Fatalf("newHTTPClient transport = %T, want *http.Transport", client.Transport)
+		t.Fatalf("newHTTPClient transport = %T, want *uaTransport", client.Transport)
 	}
+	if client.Timeout != 0 {
+		// A nonzero Client.Timeout on a wrapped RoundTripper falls off
+		// net/http's known-transport fast path (goroutine per request);
+		// uaTransport owns the timeout instead.
+		t.Fatalf("Client.Timeout = %v, want 0 (uaTransport enforces the timeout)", client.Timeout)
+	}
+	tr := ua.base
 	if tr.Proxy == nil {
 		t.Fatal("newHTTPClient transport Proxy is nil")
 	}
@@ -37,13 +43,65 @@ func TestNewHTTPClientUsesHTTPSProxy(t *testing.T) {
 	}
 }
 
-func TestUATokenSeedsGoGitAgentExtra(t *testing.T) {
-	// package init seeds the env var go-git appends to its agent string,
-	// tagging all git traffic; an operator's pre-set value must win instead.
-	if got := os.Getenv("GO_GIT_USER_AGENT_EXTRA"); got != uaToken {
-		t.Skipf("GO_GIT_USER_AGENT_EXTRA preset to %q by the environment; init defers to it", got)
+func TestUATransportTagsUserAgent(t *testing.T) {
+	var got []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = append(got, r.Header.Get("User-Agent"))
+	}))
+	defer srv.Close()
+
+	client := newHTTPClient(false, 1)
+
+	// No User-Agent set (forgemark's direct token/probe requests).
+	req, err := http.NewRequest(http.MethodGet, srv.URL, nil)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if got := capability.DefaultAgent(); got != "go-git/6.x "+uaToken {
-		t.Fatalf("go-git DefaultAgent() = %q, want %q", got, "go-git/6.x "+uaToken)
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+
+	// Pre-set User-Agent (go-git's transport sets its own).
+	req, err = http.NewRequest(http.MethodGet, srv.URL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("User-Agent", "go-git/6.x")
+	resp, err = client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+
+	want := []string{uaToken, "go-git/6.x " + uaToken}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("User-Agent headers = %q, want %q", got, want)
+	}
+}
+
+func TestUATransportEnforcesTimeout(t *testing.T) {
+	blocked := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-blocked
+	}))
+	defer srv.Close()
+	defer close(blocked)
+
+	client := newHTTPClient(false, 1)
+	client.Transport.(*uaTransport).timeout = 50 * time.Millisecond
+
+	req, err := http.NewRequest(http.MethodGet, srv.URL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := client.Do(req)
+	if err == nil {
+		_ = resp.Body.Close()
+		t.Fatal("request against a stalled server succeeded, want deadline error")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("error = %v, want context.DeadlineExceeded", err)
 	}
 }
