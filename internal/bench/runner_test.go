@@ -66,7 +66,7 @@ func TestNewHTTPClientTagsUserAgent(t *testing.T) {
 	}
 	_ = resp.Body.Close()
 
-	want := []string{"forgemark", "go-git/6.x forgemark"}
+	want := []string{uaToken, "go-git/6.x " + uaToken}
 	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
 		t.Fatalf("User-Agent headers = %q, want %q", got, want)
 	}

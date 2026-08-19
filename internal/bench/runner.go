@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"runtime/debug"
 	"slices"
 	"strings"
 	"sync"
@@ -288,10 +289,25 @@ func newHTTPClient(insecure bool, maxConns int) *http.Client {
 	return &http.Client{Transport: &uaTransport{base: tr}, Timeout: 120 * time.Second}
 }
 
-// uaTransport appends "forgemark" to every request's User-Agent so server logs
+// uaToken identifies forgemark in User-Agent headers. Binaries built from a
+// git checkout carry the commit via Go's embedded VCS info, so server logs can
+// tie traffic to an exact revision; otherwise (go test, -buildvcs=off) it's
+// the bare name.
+var uaToken = func() string {
+	if bi, ok := debug.ReadBuildInfo(); ok {
+		for _, s := range bi.Settings {
+			if s.Key == "vcs.revision" && len(s.Value) >= 12 {
+				return "forgemark/" + s.Value[:12]
+			}
+		}
+	}
+	return "forgemark"
+}()
+
+// uaTransport appends uaToken to every request's User-Agent so server logs
 // can attribute load-test traffic. Appending keeps go-git's agent string first
 // (servers may key protocol behavior on it); requests with no User-Agent get
-// plain "forgemark" instead of Go's stdlib default.
+// the bare token instead of Go's stdlib default.
 type uaTransport struct {
 	base *http.Transport
 }
@@ -300,9 +316,9 @@ func (t *uaTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	// Per the RoundTripper contract, don't mutate the caller's request.
 	req = req.Clone(req.Context())
 	if ua := req.Header.Get("User-Agent"); ua != "" {
-		req.Header.Set("User-Agent", ua+" forgemark")
+		req.Header.Set("User-Agent", ua+" "+uaToken)
 	} else {
-		req.Header.Set("User-Agent", "forgemark")
+		req.Header.Set("User-Agent", uaToken)
 	}
 	return t.base.RoundTrip(req)
 }
