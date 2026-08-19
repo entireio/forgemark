@@ -1,0 +1,87 @@
+{
+  "cli_version": "0.10.1",
+  "checkpoint_id": "ffd024b83072",
+  "session_id": "372d50b0-e30f-4d5b-b420-32b0e28c7afa",
+  "strategy": "manual-commit",
+  "created_at": "2026-08-19T05:14:25.915933Z",
+  "branch": "feat/forgemark-user-agent",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "internal/bench/runner.go",
+    "internal/bench/runner_test.go"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-fable-5",
+  "turn_id": "0afc6430c890",
+  "checkpoint_transcript_start": 394,
+  "transcript_lines_at_start": 394,
+  "compact_transcript_start": 82,
+  "token_usage": {
+    "input_tokens": 6,
+    "cache_creation_tokens": 2376,
+    "cache_read_tokens": 291031,
+    "output_tokens": 2344,
+    "api_call_count": 3
+  },
+  "skill_events_version": 1,
+  "skill_events": [
+    {
+      "id": "claude-skill-toolu_01KoH9qKQqrbpoH58mNneGme",
+      "event_type": "tool_invocation",
+      "skill": {
+        "name": "claude-in-chrome"
+      },
+      "source": {
+        "agent": "claude-code",
+        "signal": "skill_tool_use",
+        "confidence": "explicit"
+      },
+      "turn_id": "0afc6430c890",
+      "transcript_anchor": {
+        "unit": "line",
+        "start": 198,
+        "end": 199,
+        "entry_ids": [
+          "2a5e51e7-faa4-4c29-81f9-5362f14b0567"
+        ],
+        "tool_use_id": "toolu_01KoH9qKQqrbpoH58mNneGme"
+      },
+      "native": {
+        "tool_name": "Skill",
+        "tool_use_id": "toolu_01KoH9qKQqrbpoH58mNneGme"
+      },
+      "collapse": {
+        "target": "tool_pair",
+        "label": "Skill: claude-in-chrome",
+        "default_collapsed": true
+      }
+    }
+  ],
+  "session_metrics": {
+    "turn_count": 8
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-08-19T05:14:25.897251Z",
+    "agent_lines": 21,
+    "agent_removed": 5,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 21,
+    "total_lines_changed": 26,
+    "agent_percentage": 100,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 7,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".claude/settings.local.json": 7
+      }
+    }
+  ]
+}
