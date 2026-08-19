@@ -1,0 +1,5 @@
+go debug package automagically reads it if binary is build from within a git managed folder?
+
+---
+
+add the -dirty suffix too
