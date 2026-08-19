@@ -5,7 +5,9 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"runtime/debug"
 	"slices"
 	"strings"
 	"sync"
@@ -285,5 +287,89 @@ func newHTTPClient(insecure bool, maxConns int) *http.Client {
 	if insecure {
 		tr.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} //nolint:gosec // load-test opt-in
 	}
-	return &http.Client{Transport: tr, Timeout: 120 * time.Second}
+	// Client.Timeout must stay zero: with a wrapped RoundTripper a nonzero
+	// value falls off net/http's known-transport fast path and spawns a
+	// cancellation goroutine per request, skewing the very operations
+	// forgemark measures. uaTransport enforces the timeout instead.
+	return &http.Client{Transport: &uaTransport{base: tr, timeout: 120 * time.Second}}
+}
+
+// uaToken identifies forgemark in User-Agent headers. Binaries built from a
+// git checkout carry the commit via Go's embedded VCS info, so server logs can
+// tie traffic to an exact revision — with "-dirty" when the tree had
+// uncommitted changes; otherwise (go test, -buildvcs=off) it's the bare name.
+var uaToken = func() string {
+	bi, ok := debug.ReadBuildInfo()
+	if !ok {
+		return "forgemark"
+	}
+	var revision, dirty string
+	for _, s := range bi.Settings {
+		switch s.Key {
+		case "vcs.revision":
+			revision = s.Value
+			if len(revision) > 12 {
+				revision = revision[:12]
+			}
+		case "vcs.modified":
+			if s.Value == "true" {
+				dirty = "-dirty"
+			}
+		}
+	}
+	if revision == "" {
+		return "forgemark"
+	}
+	return "forgemark/" + revision + dirty
+}()
+
+// uaTransport appends uaToken to every request's User-Agent so server logs can
+// attribute load-test traffic. Appending keeps go-git's agent string first
+// (servers may key protocol behavior on it), and tagging only the HTTP header
+// leaves the git protocol's agent capability untouched — go-git's
+// GO_GIT_USER_AGENT_EXTRA hook would land there too, where the embedded space
+// reads as a bogus extra capability, and would leak into subprocess
+// environments.
+//
+// It also imposes the request timeout as a context deadline (see
+// newHTTPClient). Unlike Client.Timeout the budget is per attempt, not per
+// redirect chain; forgemark's endpoints don't redirect, so that difference is
+// theoretical.
+type uaTransport struct {
+	base    *http.Transport
+	timeout time.Duration
+}
+
+func (t *uaTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	// Per the RoundTripper contract, don't mutate the caller's request.
+	ctx, cancel := context.WithTimeout(req.Context(), t.timeout)
+	req = req.Clone(ctx)
+	if ua := req.Header.Get("User-Agent"); ua != "" {
+		req.Header.Set("User-Agent", ua+" "+uaToken)
+	} else {
+		req.Header.Set("User-Agent", uaToken)
+	}
+	resp, err := t.base.RoundTrip(req)
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+	// Like Client.Timeout, the deadline covers reading the body; the timer is
+	// released when the caller closes it.
+	resp.Body = &cancelOnClose{ReadCloser: resp.Body, cancel: cancel}
+	return resp, nil
+}
+
+// CloseIdleConnections forwards to the underlying transport; without it,
+// http.Client.CloseIdleConnections (used by run cleanup) would be a no-op.
+func (t *uaTransport) CloseIdleConnections() { t.base.CloseIdleConnections() }
+
+type cancelOnClose struct {
+	io.ReadCloser
+	cancel context.CancelFunc
+}
+
+func (b *cancelOnClose) Close() error {
+	b.cancel()
+	return b.ReadCloser.Close()
 }
