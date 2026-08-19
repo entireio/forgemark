@@ -208,6 +208,7 @@ func (j *jurisdictionCreds) exchange(ctx context.Context) (tokenEntry, error) {
 		return tokenEntry{}, fmt.Errorf("build token request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("User-Agent", uaToken)
 	req.SetBasicAuth(j.clientID, "") // public client: empty secret is intentional
 
 	resp, err := j.httpc.Do(req)

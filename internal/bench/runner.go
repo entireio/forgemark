@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"runtime/debug"
 	"slices"
 	"strings"
@@ -286,13 +287,29 @@ func newHTTPClient(insecure bool, maxConns int) *http.Client {
 	if insecure {
 		tr.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} //nolint:gosec // load-test opt-in
 	}
-	return &http.Client{Transport: &uaTransport{base: tr}, Timeout: 120 * time.Second}
+	// The bare *http.Transport matters: with a wrapped RoundTripper, Client.Timeout
+	// falls off net/http's known-transport fast path and spawns a cancellation
+	// goroutine per request, skewing the very operations forgemark measures.
+	// User-Agent tagging therefore happens at request-build time instead — via
+	// GO_GIT_USER_AGENT_EXTRA (init below) for git traffic, and explicit headers
+	// on the direct token/probe requests.
+	return &http.Client{Transport: tr, Timeout: 120 * time.Second}
 }
 
 // uaToken identifies forgemark in User-Agent headers. Binaries built from a
 // git checkout carry the commit via Go's embedded VCS info, so server logs can
 // tie traffic to an exact revision — with "-dirty" when the tree had
 // uncommitted changes; otherwise (go test, -buildvcs=off) it's the bare name.
+//
+// Git traffic is tagged through go-git, which appends this env var to its
+// agent string ("go-git/6.x <extra>") in both the User-Agent header and the
+// protocol agent capability. An operator's explicit value wins.
+func init() {
+	if os.Getenv("GO_GIT_USER_AGENT_EXTRA") == "" {
+		_ = os.Setenv("GO_GIT_USER_AGENT_EXTRA", uaToken)
+	}
+}
+
 var uaToken = func() string {
 	bi, ok := debug.ReadBuildInfo()
 	if !ok {
@@ -317,25 +334,3 @@ var uaToken = func() string {
 	return "forgemark/" + revision + dirty
 }()
 
-// uaTransport appends uaToken to every request's User-Agent so server logs
-// can attribute load-test traffic. Appending keeps go-git's agent string first
-// (servers may key protocol behavior on it); requests with no User-Agent get
-// the bare token instead of Go's stdlib default.
-type uaTransport struct {
-	base *http.Transport
-}
-
-func (t *uaTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	// Per the RoundTripper contract, don't mutate the caller's request.
-	req = req.Clone(req.Context())
-	if ua := req.Header.Get("User-Agent"); ua != "" {
-		req.Header.Set("User-Agent", ua+" "+uaToken)
-	} else {
-		req.Header.Set("User-Agent", uaToken)
-	}
-	return t.base.RoundTrip(req)
-}
-
-// CloseIdleConnections forwards to the underlying transport; without it,
-// http.Client.CloseIdleConnections (used by run cleanup) would be a no-op.
-func (t *uaTransport) CloseIdleConnections() { t.base.CloseIdleConnections() }
