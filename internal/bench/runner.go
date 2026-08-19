@@ -285,5 +285,28 @@ func newHTTPClient(insecure bool, maxConns int) *http.Client {
 	if insecure {
 		tr.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} //nolint:gosec // load-test opt-in
 	}
-	return &http.Client{Transport: tr, Timeout: 120 * time.Second}
+	return &http.Client{Transport: &uaTransport{base: tr}, Timeout: 120 * time.Second}
 }
+
+// uaTransport appends "forgemark" to every request's User-Agent so server logs
+// can attribute load-test traffic. Appending keeps go-git's agent string first
+// (servers may key protocol behavior on it); requests with no User-Agent get
+// plain "forgemark" instead of Go's stdlib default.
+type uaTransport struct {
+	base *http.Transport
+}
+
+func (t *uaTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	// Per the RoundTripper contract, don't mutate the caller's request.
+	req = req.Clone(req.Context())
+	if ua := req.Header.Get("User-Agent"); ua != "" {
+		req.Header.Set("User-Agent", ua+" forgemark")
+	} else {
+		req.Header.Set("User-Agent", "forgemark")
+	}
+	return t.base.RoundTrip(req)
+}
+
+// CloseIdleConnections forwards to the underlying transport; without it,
+// http.Client.CloseIdleConnections (used by run cleanup) would be a no-op.
+func (t *uaTransport) CloseIdleConnections() { t.base.CloseIdleConnections() }
