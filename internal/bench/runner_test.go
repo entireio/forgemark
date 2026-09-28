@@ -2,13 +2,33 @@ package bench
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"testing"
 	"time"
 )
+
+func TestAssertTokenOutlivesRun(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	jwt := func(exp int64) string {
+		payload := base64.RawURLEncoding.EncodeToString([]byte(`{"exp":` + strconv.FormatInt(exp, 10) + `}`))
+		return "h." + payload + ".s"
+	}
+	w := Workload{Concurrency: []int{1, 4}, Warmup: time.Minute, Duration: 10 * time.Minute}
+	if err := assertTokenOutlivesRun(jwt(now.Add(time.Hour).Unix()), w, now); err != nil {
+		t.Fatalf("an hour covers 2×11m: %v", err)
+	}
+	if err := assertTokenOutlivesRun(jwt(now.Add(15*time.Minute).Unix()), w, now); err == nil {
+		t.Fatal("15m cannot cover 2×11m")
+	}
+	if err := assertTokenOutlivesRun("not-a-jwt", w, now); err != nil {
+		t.Fatalf("an opaque secret must pass: %v", err)
+	}
+}
 
 func TestNewHTTPClientUsesHTTPSProxy(t *testing.T) {
 	proxyURL := "http://proxy.example:8080"
