@@ -41,6 +41,7 @@ func TestPinReplicas(t *testing.T) {
 		"https://evil.example",
 		"https://entire.io.evil.example",
 		"http://node-1.aws-us-east-2.entire.io",
+		"https://node-1.aws-us-east-2.entire.io:8443",
 		"https://user:pw@node-1.aws-us-east-2.entire.io",
 		"not a url",
 	} {

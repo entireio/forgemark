@@ -118,10 +118,11 @@ func newEntireEndpoint(ctx context.Context, remote, objectFmt, repo string, cred
 }
 
 // pinReplicas admits an advertised replica only when it shares the entry
-// host's scheme and parent domain (aws-us-east-2.entire.io admits *.entire.io)
-// and carries no userinfo. The account access token is presented to every
-// node, so an unvalidated header could redirect it to an arbitrary host. Any
-// rejected replica fails the run.
+// host's scheme, parent domain (aws-us-east-2.entire.io admits *.entire.io)
+// and, over https, effective port, and carries no userinfo. The account
+// access token is presented to every node, so an unvalidated header could
+// redirect it to an arbitrary origin. Any rejected replica fails the run.
+// http (local dev) nodes may differ in port: each node listens on its own.
 func pinReplicas(base string, nodes []string) ([]string, error) {
 	bu, err := url.Parse(base)
 	if err != nil || bu.Hostname() == "" {
@@ -137,11 +138,23 @@ func pinReplicas(base string, nodes []string) ([]string, error) {
 			return nil, fmt.Errorf("X-Entire-Replicas entry %q is not a valid URL", n)
 		}
 		h := u.Hostname()
-		if u.Scheme != bu.Scheme || u.User != nil || (h != bu.Hostname() && !strings.HasSuffix(h, "."+parent)) {
+		sameHost := h == bu.Hostname() || strings.HasSuffix(h, "."+parent)
+		samePort := bu.Scheme != "https" || effectivePort(u) == effectivePort(bu)
+		if u.Scheme != bu.Scheme || u.User != nil || !sameHost || !samePort {
 			return nil, fmt.Errorf("X-Entire-Replicas entry %q is not under %s; refusing to send the credential there", n, base)
 		}
 	}
 	return nodes, nil
+}
+
+func effectivePort(u *url.URL) string {
+	if p := u.Port(); p != "" {
+		return p
+	}
+	if u.Scheme == "https" {
+		return "443"
+	}
+	return "80"
 }
 
 func SplitCSV(s string) []string {
