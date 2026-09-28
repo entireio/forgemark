@@ -93,8 +93,7 @@ func (r *Runner) Close() {
 }
 
 // credentialCloser is an optional credentialProvider capability: release any
-// background refresh machinery and the credentials it holds. staticCreds needs
-// nothing; jurisdictionCreds cancels and waits for its refresh goroutine.
+// background machinery and the credentials it holds.
 type credentialCloser interface{ close() }
 
 // StartBarrier synchronizes the start of one concurrency level across several
@@ -253,11 +252,10 @@ func setupEntiredb(ctx context.Context, t Target, httpc *http.Client) (credentia
 	if len(missing) > 0 {
 		return nil, nil, fmt.Errorf("entire target (selected by -token-url/-jurisdiction) also needs: %s", strings.Join(missing, ", "))
 	}
-	clientID := t.ClientID
-	if clientID == "" {
-		clientID = "entire-cli"
-	}
-	creds := newJurisdictionCreds(httpc, t.TokenURL, t.Jurisdiction, clientID, t.Secret, "token")
+	// The subject token is the account access token; entiredb authorizes each
+	// push live on its subject, so it is presented as-is (ADR 20260729).
+	// Entire ignores the username.
+	creds := staticCreds{username: "token", password: t.Secret}
 	ep, err := newEntireEndpoint(ctx, t.Remote, t.ObjectFmt, t.Repos[0], creds, httpc)
 	if err != nil {
 		return nil, nil, err
