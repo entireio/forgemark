@@ -52,6 +52,9 @@ func NewRunner(ctx context.Context, t Target, w Workload, sink Sink) (*Runner, e
 		err   error
 	)
 	if t.TokenURL != "" || t.Jurisdiction != "" {
+		// Go forwards Authorization on same-domain redirects, which would
+		// carry the account access token past pinReplicas on any request.
+		httpc = refuseRedirects(httpc)
 		creds, ep, err = setupEntiredb(ctx, t, httpc)
 	} else {
 		creds, ep, err = setupGeneric(t)
@@ -236,6 +239,16 @@ func setupGeneric(t Target) (credentialProvider, *endpoint, error) {
 		user = "x-access-token" // token forges ignore the username; the token is the password
 	}
 	return staticCreds{username: user, password: t.Secret}, newGenericEndpoint(t.Remote, objFmt), nil
+}
+
+// refuseRedirects returns a copy of c (same transport and pool) that fails
+// every redirect instead of following it.
+func refuseRedirects(c *http.Client) *http.Client {
+	out := *c
+	out.CheckRedirect = func(*http.Request, []*http.Request) error {
+		return errors.New("entiredb request attempted a redirect; refusing to forward the credential")
+	}
+	return &out
 }
 
 func setupEntiredb(ctx context.Context, t Target, httpc *http.Client) (credentialProvider, *endpoint, error) {

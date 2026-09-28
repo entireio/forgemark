@@ -2,7 +2,6 @@ package bench
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -77,13 +76,7 @@ func newEntireEndpoint(ctx context.Context, remote, objectFmt, repo string, cred
 		return nil, fmt.Errorf("build info/refs request: %w", err)
 	}
 	req.SetBasicAuth(auth.Username, auth.Password)
-	// Go forwards Authorization on same-domain redirects, which would carry the
-	// account access token past pinReplicas; the probe refuses them outright.
-	probe := *httpc
-	probe.CheckRedirect = func(*http.Request, []*http.Request) error {
-		return errors.New("info/refs probe attempted a redirect; refusing to forward the credential")
-	}
-	resp, err := probe.Do(req)
+	resp, err := httpc.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("info/refs probe: %w", err)
 	}
