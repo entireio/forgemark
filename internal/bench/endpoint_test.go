@@ -1,6 +1,24 @@
 package bench
 
-import "testing"
+import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+)
+
+func TestNewEntireEndpointRefusesProbeRedirect(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "http://127.0.0.1:1/x", http.StatusTemporaryRedirect)
+	}))
+	defer srv.Close()
+	_, err := newEntireEndpoint(context.Background(), srv.URL, "sha1", "o/r",
+		staticCreds{username: "token", password: "secret"}, srv.Client())
+	if err == nil || !strings.Contains(err.Error(), "redirect") {
+		t.Fatalf("probe must refuse redirects, got %v", err)
+	}
+}
 
 func TestVerbatimURLFor(t *testing.T) {
 	tests := []struct {
