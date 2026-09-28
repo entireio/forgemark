@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 
 	formatcfg "github.com/go-git/go-git/v6/plumbing/format/config"
@@ -106,11 +107,41 @@ func newEntireEndpoint(ctx context.Context, remote, objectFmt, repo string, cred
 		}
 	}
 
-	nodes := SplitCSV(resp.Header.Get("X-Entire-Replicas"))
+	nodes, err := pinReplicas(base, SplitCSV(resp.Header.Get("X-Entire-Replicas")))
+	if err != nil {
+		return nil, err
+	}
 	if len(nodes) == 0 {
 		nodes = []string{base} // single-node / dev: talk to the entry host
 	}
 	return &endpoint{nodes: nodes, objFmt: objFmt, label: base}, nil
+}
+
+// pinReplicas admits an advertised replica only when it shares the entry
+// host's scheme and parent domain (aws-us-east-2.entire.io admits *.entire.io)
+// and carries no userinfo. The account access token is presented to every
+// node, so an unvalidated header could redirect it to an arbitrary host. Any
+// rejected replica fails the run.
+func pinReplicas(base string, nodes []string) ([]string, error) {
+	bu, err := url.Parse(base)
+	if err != nil || bu.Hostname() == "" {
+		return nil, fmt.Errorf("remote %q is not a valid URL", base)
+	}
+	parent := bu.Hostname()
+	if i := strings.Index(parent, "."); i >= 0 && strings.Contains(parent[i+1:], ".") {
+		parent = parent[i+1:]
+	}
+	for _, n := range nodes {
+		u, err := url.Parse(n)
+		if err != nil || u.Hostname() == "" {
+			return nil, fmt.Errorf("X-Entire-Replicas entry %q is not a valid URL", n)
+		}
+		h := u.Hostname()
+		if u.Scheme != bu.Scheme || u.User != nil || (h != bu.Hostname() && !strings.HasSuffix(h, "."+parent)) {
+			return nil, fmt.Errorf("X-Entire-Replicas entry %q is not under %s; refusing to send the credential there", n, base)
+		}
+	}
+	return nodes, nil
 }
 
 func SplitCSV(s string) []string {
