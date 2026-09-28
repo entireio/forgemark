@@ -128,7 +128,8 @@ func pinReplicas(base string, nodes []string) ([]string, error) {
 	if err != nil || bu.Hostname() == "" {
 		return nil, fmt.Errorf("remote %q is not a valid URL", base)
 	}
-	parent := bu.Hostname()
+	baseHost := strings.ToLower(bu.Hostname())
+	parent := baseHost
 	if i := strings.Index(parent, "."); i >= 0 && strings.Contains(parent[i+1:], ".") {
 		parent = parent[i+1:]
 	}
@@ -137,8 +138,8 @@ func pinReplicas(base string, nodes []string) ([]string, error) {
 		if err != nil || u.Hostname() == "" {
 			return nil, fmt.Errorf("X-Entire-Replicas entry %q is not a valid URL", n)
 		}
-		h := u.Hostname()
-		sameHost := h == bu.Hostname() || strings.HasSuffix(h, "."+parent)
+		h := strings.ToLower(u.Hostname())
+		sameHost := h == baseHost || strings.HasSuffix(h, "."+parent)
 		samePort := bu.Scheme != "https" || effectivePort(u) == effectivePort(bu)
 		if u.Scheme != bu.Scheme || u.User != nil || !sameHost || !samePort {
 			return nil, fmt.Errorf("X-Entire-Replicas entry %q is not under %s; refusing to send the credential there", n, base)

@@ -29,6 +29,7 @@ func TestPinReplicas(t *testing.T) {
 		"https://aws-us-east-2.entire.io",
 		"https://node-1.aws-us-east-2.entire.io",
 		"https://aws-us-east-2-node-1.entire.io:443",
+		"https://NODE-2.AWS-US-EAST-2.ENTIRE.IO",
 	}
 	got, err := pinReplicas(base, ok)
 	if err != nil {
