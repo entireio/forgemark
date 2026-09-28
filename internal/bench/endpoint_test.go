@@ -62,6 +62,9 @@ func TestPinReplicas(t *testing.T) {
 		"http://node-1.aws-us-east-2.entire.io",
 		"https://node-1.aws-us-east-2.entire.io:8443",
 		"https://user:pw@node-1.aws-us-east-2.entire.io",
+		"https://node-1.aws-us-east-2.entire.io/other",
+		"https://node-1.aws-us-east-2.entire.io/?x=1",
+		"https://node-1.aws-us-east-2.entire.io/#f",
 		"not a url",
 	} {
 		if _, err := pinReplicas(base, []string{bad}); err == nil {

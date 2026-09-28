@@ -148,7 +148,8 @@ func pinReplicas(base string, nodes []string) ([]string, error) {
 		h := strings.ToLower(u.Hostname())
 		sameHost := h == baseHost || strings.HasSuffix(h, "."+parent)
 		samePort := bu.Scheme != "https" || effectivePort(u) == effectivePort(bu)
-		if u.Scheme != bu.Scheme || u.User != nil || !sameHost || !samePort {
+		bareOrigin := (u.Path == "" || u.Path == "/") && u.RawQuery == "" && u.Fragment == ""
+		if u.Scheme != bu.Scheme || u.User != nil || !sameHost || !samePort || !bareOrigin {
 			return nil, fmt.Errorf("X-Entire-Replicas entry %q is not under %s; refusing to send the credential there", n, base)
 		}
 	}
