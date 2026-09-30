@@ -18,6 +18,65 @@ func TestRefuseRedirects(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "redirect") {
 		t.Fatalf("probe must refuse redirects, got %v", err)
 	}
+	// Pushes and cleanup share the client and must refuse outright.
+	resp, err := refuseRedirects(srv.Client()).Get(srv.URL)
+	if err == nil {
+		_ = resp.Body.Close()
+		t.Fatal("client must refuse redirects")
+	}
+}
+
+func TestDiscoveryFollowsReplicaRedirect(t *testing.T) {
+	var gotUser, gotPass string
+	replica := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotUser, gotPass, _ = r.BasicAuth()
+		w.Header().Set("X-Entire-Replicas", "http://"+r.Host)
+		_, _ = w.Write([]byte("0000 object-format=sha256"))
+	}))
+	defer replica.Close()
+	// Mirror HandleInfoRefsDiscovery via the ALB: 307 to a hosting replica,
+	// with the caller's token embedded in Location.
+	entry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Entire-Replicas", replica.URL)
+		loc := strings.Replace(replica.URL, "http://", "http://x-token:secret@", 1) + r.URL.RequestURI()
+		http.Redirect(w, r, loc, http.StatusTemporaryRedirect)
+	}))
+	defer entry.Close()
+
+	ep, err := newEntireEndpoint(context.Background(), entry.URL, "auto", "o/r",
+		staticCreds{username: "token", password: "secret"}, refuseRedirects(entry.Client()))
+	if err != nil {
+		t.Fatalf("ALB-style discovery must succeed: %v", err)
+	}
+	if len(ep.nodes) != 1 || ep.nodes[0] != replica.URL {
+		t.Fatalf("nodes = %v, want [%s]", ep.nodes, replica.URL)
+	}
+	if ep.objFmt != "sha256" {
+		t.Fatalf("object format = %s, want the replica's sha256", ep.objFmt)
+	}
+	if gotUser != "token" || gotPass != "secret" {
+		t.Fatalf("replica got %q:%q, want the probe's own credential", gotUser, gotPass)
+	}
+}
+
+func TestDiscoveryRefusesUnadvertisedRedirect(t *testing.T) {
+	hit := false
+	other := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { hit = true }))
+	defer other.Close()
+	entry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Entire-Replicas", "http://"+r.Host)
+		http.Redirect(w, r, other.URL+r.URL.RequestURI(), http.StatusTemporaryRedirect)
+	}))
+	defer entry.Close()
+
+	_, err := newEntireEndpoint(context.Background(), entry.URL, "sha1", "o/r",
+		staticCreds{username: "token", password: "secret"}, refuseRedirects(entry.Client()))
+	if err == nil || !strings.Contains(err.Error(), "not an advertised replica") {
+		t.Fatalf("redirect off the replica set must be refused, got %v", err)
+	}
+	if hit {
+		t.Fatal("the credential reached an unadvertised host")
+	}
 }
 
 func TestVerbatimURLFor(t *testing.T) {

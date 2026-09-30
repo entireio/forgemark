@@ -2,6 +2,7 @@ package bench
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -9,6 +10,7 @@ import (
 	"strings"
 
 	formatcfg "github.com/go-git/go-git/v6/plumbing/format/config"
+	githttp "github.com/go-git/go-git/v6/plumbing/transport/http"
 )
 
 // endpoint is a fully-resolved push destination: the node base URLs to fan out
@@ -70,35 +72,35 @@ func newEntireEndpoint(ctx context.Context, remote, objectFmt, repo string, cred
 	if err != nil {
 		return nil, err
 	}
-	url := verbatimURLFor(base, repo) + "/info/refs?service=git-receive-pack"
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	// Hand redirects back instead of following them: Go would forward the
+	// token to wherever Location points.
+	probe := *httpc
+	probe.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	hdr, body, err := probeInfoRefs(ctx, &probe, base, repo, auth)
 	if err != nil {
-		return nil, fmt.Errorf("build info/refs request: %w", err)
+		return nil, err
 	}
-	req.SetBasicAuth(auth.Username, auth.Password)
-	resp, err := httpc.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("info/refs probe: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if err != nil {
-		return nil, fmt.Errorf("read info/refs response: %w", err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		// A 404 is the most common setup miss, so make it actionable — but
-		// diagnose, don't assert: forges also answer 404 for repos the
-		// credential simply can't see, so a "create it" order alone would
-		// misdirect an auth problem. forgemark deliberately never creates
-		// repos (a typo'd path must fail fast, not provision junk on a real
-		// jurisdiction); the server body is kept as evidence either way.
-		hint := ""
-		if resp.StatusCode == http.StatusNotFound {
-			hint = fmt.Sprintf(" — repo %s is missing on %s, or the credential can't see it. forgemark does not create repos: "+
-				"create it first (`entire repo create` / `entire repo mirror create`) or fix the repo path / token scope", repo, base)
+	advertised := hdr.Get("X-Entire-Replicas")
+	if loc := hdr.Get("Location"); loc != "" {
+		// Entire redirects discovery to a hosting replica, always so via
+		// the ALB. Follow one hop, only to an advertised, pinned node.
+		nodes, err := pinReplicas(base, SplitCSV(advertised))
+		if err != nil {
+			return nil, err
 		}
-		return nil, fmt.Errorf("info/refs probe: HTTP %d: %s%s", resp.StatusCode,
-			redactSecrets(strings.TrimSpace(string(body)), authForms(auth.Username, auth.Password)...), hint)
+		node, err := redirectNode(base, loc, nodes)
+		if err != nil {
+			return nil, err
+		}
+		if hdr, body, err = probeInfoRefs(ctx, &probe, node, repo, auth); err != nil {
+			return nil, err
+		}
+		if hdr.Get("Location") != "" {
+			return nil, fmt.Errorf("info/refs probe: replica %s redirected again; refusing to follow", node)
+		}
+		if h := hdr.Get("X-Entire-Replicas"); h != "" {
+			advertised = h
+		}
 	}
 
 	if objectFmt == "auto" || objectFmt == "" {
@@ -107,7 +109,7 @@ func newEntireEndpoint(ctx context.Context, remote, objectFmt, repo string, cred
 		}
 	}
 
-	nodes, err := pinReplicas(base, SplitCSV(resp.Header.Get("X-Entire-Replicas")))
+	nodes, err := pinReplicas(base, SplitCSV(advertised))
 	if err != nil {
 		return nil, err
 	}
@@ -147,6 +149,71 @@ func pinReplicas(base string, nodes []string) ([]string, error) {
 		}
 	}
 	return nodes, nil
+}
+
+// probeInfoRefs GETs node's receive-pack advertisement for repo. It returns
+// the headers and body of a 200, or the headers of a redirect (Location
+// set) for the caller to vet; any other status is an error.
+func probeInfoRefs(ctx context.Context, c *http.Client, node, repo string, auth *githttp.BasicAuth) (http.Header, []byte, error) {
+	url := verbatimURLFor(node, repo) + "/info/refs?service=git-receive-pack"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, nil, fmt.Errorf("build info/refs request: %w", err)
+	}
+	req.SetBasicAuth(auth.Username, auth.Password)
+	resp, err := c.Do(req)
+	if err != nil {
+		return nil, nil, fmt.Errorf("info/refs probe: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return nil, nil, fmt.Errorf("read info/refs response: %w", err)
+	}
+	switch resp.StatusCode {
+	case http.StatusOK:
+		return resp.Header, body, nil
+	case http.StatusMovedPermanently, http.StatusFound, http.StatusSeeOther,
+		http.StatusTemporaryRedirect, http.StatusPermanentRedirect:
+		if resp.Header.Get("Location") == "" {
+			return nil, nil, fmt.Errorf("info/refs probe: HTTP %d without Location", resp.StatusCode)
+		}
+		return resp.Header, nil, nil
+	}
+	// A 404 is the most common setup miss, so make it actionable — but
+	// diagnose, don't assert: forges also answer 404 for repos the
+	// credential simply can't see, so a "create it" order alone would
+	// misdirect an auth problem. forgemark deliberately never creates
+	// repos (a typo'd path must fail fast, not provision junk on a real
+	// jurisdiction); the server body is kept as evidence either way.
+	hint := ""
+	if resp.StatusCode == http.StatusNotFound {
+		hint = fmt.Sprintf(" — repo %s is missing on %s, or the credential can't see it. forgemark does not create repos: "+
+			"create it first (`entire repo create` / `entire repo mirror create`) or fix the repo path / token scope", repo, node)
+	}
+	return nil, nil, fmt.Errorf("info/refs probe: HTTP %d: %s%s", resp.StatusCode,
+		redactSecrets(strings.TrimSpace(string(body)), authForms(auth.Username, auth.Password)...), hint)
+}
+
+// redirectNode maps a discovery Location onto the pinned node it names.
+// Userinfo (Entire embeds the caller's token) and path are dropped: the
+// probe rebuilds the URL and presents its own credential.
+func redirectNode(base, loc string, nodes []string) (string, error) {
+	bu, err := url.Parse(base)
+	if err != nil {
+		return "", fmt.Errorf("remote %q is not a valid URL", base)
+	}
+	lu, err := bu.Parse(loc)
+	if err != nil {
+		return "", errors.New("info/refs probe: redirect Location is not a valid URL")
+	}
+	for _, n := range nodes {
+		nu, err := url.Parse(n)
+		if err == nil && strings.EqualFold(nu.Scheme, lu.Scheme) && strings.EqualFold(nu.Host, lu.Host) {
+			return strings.TrimRight(n, "/"), nil
+		}
+	}
+	return "", fmt.Errorf("info/refs probe: redirect to %s://%s is not an advertised replica; refusing to follow", lu.Scheme, lu.Host)
 }
 
 func effectivePort(u *url.URL) string {
