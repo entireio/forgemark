@@ -265,19 +265,27 @@ func setupGeneric(t Target) (credentialProvider, *endpoint, error) {
 // tokenCovers refuses to start work the account access token cannot
 // cover: nothing refreshes it, so a level that outlives it would report
 // authentication failures as throughput. It needs every level not yet
-// started, measured from now. A secret that is not a JWT with exp passes.
+// started, plus session ref cleanup after each window and clock skew,
+// measured from now. A secret that is not a JWT with exp passes.
 func (r *Runner) tokenCovers(now time.Time) error {
 	if r.tokenExp.IsZero() {
 		return nil
 	}
 	levels := max(r.levelsLeft, 1)
-	need := time.Duration(levels) * (r.w.Warmup + r.w.Duration)
+	var cleanup time.Duration
+	if r.w.Strategy == "session" {
+		cleanup = sessionCleanupTimeout
+	}
+	need := time.Duration(levels)*(r.w.Warmup+r.w.Duration+cleanup) + tokenSkew
 	if left := r.tokenExp.Sub(now); left < need {
-		return fmt.Errorf("token expires in %s but %d remaining levels need %s (warmup %s + duration %s each); mint a fresher token or shorten the run",
-			max(left, 0).Round(time.Second), levels, need, r.w.Warmup, r.w.Duration)
+		return fmt.Errorf("token expires in %s but %d remaining levels need %s (warmup %s + duration %s + cleanup %s each, + %s skew); mint a fresher token or shorten the run",
+			max(left, 0).Round(time.Second), levels, need, r.w.Warmup, r.w.Duration, cleanup, tokenSkew)
 	}
 	return nil
 }
+
+// tokenSkew absorbs clock drift against the issuer.
+const tokenSkew = 30 * time.Second
 
 // jwtExpiry reads exp from an unverified JWT payload.
 func jwtExpiry(token string) (time.Time, bool) {

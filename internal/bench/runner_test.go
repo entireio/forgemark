@@ -34,6 +34,16 @@ func TestTokenCovers(t *testing.T) {
 	if err := r.tokenCovers(now.Add(5 * time.Minute)); err == nil {
 		t.Fatal("10m left cannot cover an 11m level")
 	}
+	// 11m45s covers an 11m level plus skew, but not a session
+	// level's post-window ref cleanup on top.
+	r.tokenExp = now.Add(11*time.Minute + 45*time.Second)
+	if err := r.tokenCovers(now); err != nil {
+		t.Fatalf("11m45s covers a branch level plus skew: %v", err)
+	}
+	r.w.Strategy = "session"
+	if err := r.tokenCovers(now); err == nil {
+		t.Fatal("11m45s cannot also cover session cleanup")
+	}
 	r.tokenExp = time.Time{}
 	if err := r.tokenCovers(now); err != nil {
 		t.Fatalf("an opaque secret must pass: %v", err)
@@ -41,11 +51,11 @@ func TestTokenCovers(t *testing.T) {
 }
 
 // Discovery spends token lifetime: a token that covers the sweep at
-// startup but expires during the probe must fail NewRunner.
+// startup but runs out during the probe must fail NewRunner.
 func TestNewRunnerChecksTokenAfterDiscovery(t *testing.T) {
-	exp := time.Now().Unix() + 1
+	exp := time.Now().Unix() + 1 + int64(tokenSkew/time.Second)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		time.Sleep(time.Until(time.Unix(exp, 0).Add(50 * time.Millisecond)))
+		time.Sleep(time.Until(time.Unix(exp, 0).Add(-tokenSkew + 50*time.Millisecond)))
 		_, _ = w.Write([]byte("0000"))
 	}))
 	defer srv.Close()
