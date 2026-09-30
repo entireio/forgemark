@@ -137,4 +137,16 @@ func TestPinReplicas(t *testing.T) {
 	if _, err := pinReplicas("http://localhost:8080", []string{"http://other:8080"}); err == nil {
 		t.Error("a different dev host must be refused")
 	}
+	// An IP has no parent domain: 127.0.0.1 must not admit *.0.0.1.
+	if _, err := pinReplicas("http://127.0.0.1:8080", []string{"http://10.0.0.1:8080"}); err == nil {
+		t.Error("a different IP must be refused")
+	}
+	// A private public suffix separates tenants.
+	if _, err := pinReplicas("https://tenant.github.io", []string{"https://other.github.io"}); err == nil {
+		t.Error("another github.io tenant must be refused")
+	}
+	// A deeper entry host still admits its whole registrable domain.
+	if _, err := pinReplicas("https://node-1.aws-us-east-2.entire.io", []string{"https://aws-us-east-2-node-2.entire.io"}); err != nil {
+		t.Errorf("same registrable domain must be admitted: %v", err)
+	}
 }
