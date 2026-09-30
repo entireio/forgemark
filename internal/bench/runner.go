@@ -66,6 +66,7 @@ func NewRunner(ctx context.Context, t Target, w Workload, sink Sink) (*Runner, e
 		creds, ep, err = setupGeneric(t)
 	}
 	if err != nil {
+		httpc.CloseIdleConnections() // drop the discovery probe's pool
 		return nil, err
 	}
 	r := &Runner{target: t, w: w, creds: creds, ep: ep, httpc: httpc, sink: sink, levelsLeft: len(w.Concurrency)}
@@ -74,6 +75,7 @@ func NewRunner(ctx context.Context, t Target, w Workload, sink Sink) (*Runner, e
 		// its time counts against the token.
 		r.tokenExp, _ = jwtExpiry(t.Secret)
 		if err := r.tokenCovers(time.Now()); err != nil {
+			r.Close()
 			return nil, err
 		}
 	}
