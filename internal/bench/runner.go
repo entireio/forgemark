@@ -69,8 +69,10 @@ func NewRunner(ctx context.Context, t Target, w Workload, sink Sink) (*Runner, e
 		return nil, err
 	}
 	r := &Runner{target: t, w: w, creds: creds, ep: ep, httpc: httpc, sink: sink, levelsLeft: len(w.Concurrency)}
-	if r.tokenExp, _ = jwtExpiry(t.Secret); !r.tokenExp.IsZero() {
-		// After discovery, so its time counts against the token.
+	if t.TokenURL != "" || t.Jurisdiction != "" {
+		// Only Entire's account token bounds the run. After discovery, so
+		// its time counts against the token.
+		r.tokenExp, _ = jwtExpiry(t.Secret)
 		if err := r.tokenCovers(time.Now()); err != nil {
 			return nil, err
 		}
