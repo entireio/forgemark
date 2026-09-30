@@ -79,6 +79,38 @@ func TestDiscoveryRefusesUnadvertisedRedirect(t *testing.T) {
 	}
 }
 
+func TestRedirectNodeDefaultPort(t *testing.T) {
+	const node = "https://node-1.aws-us-east-2.entire.io"
+	for _, loc := range []string{node + ":443/o/r/info/refs", "https://NODE-1.aws-us-east-2.entire.io/o/r"} {
+		got, err := redirectNode("https://aws-us-east-2.entire.io", loc, []string{node})
+		if err != nil || got != node {
+			t.Errorf("redirectNode(%q) = %q, %v; want %s", loc, got, err, node)
+		}
+	}
+	if _, err := redirectNode("https://aws-us-east-2.entire.io", node+":8443/o/r", []string{node}); err == nil {
+		t.Error("a different port must be refused")
+	}
+}
+
+// A server that reflects the credential into the replica header must
+// not get it into the error, which reaches the GUI and saved results.
+func TestDiscoveryErrorRedactsReflectedToken(t *testing.T) {
+	entry := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, pass, _ := r.BasicAuth()
+		w.Header().Set("X-Entire-Replicas", "https://evil.example/?t="+pass)
+		_, _ = w.Write([]byte("0000"))
+	}))
+	defer entry.Close()
+	_, err := newEntireEndpoint(context.Background(), entry.URL, "sha1", "o/r",
+		staticCreds{username: "token", password: "s3cret-token"}, refuseRedirects(entry.Client()))
+	if err == nil {
+		t.Fatal("an off-domain replica must be refused")
+	}
+	if strings.Contains(err.Error(), "s3cret-token") {
+		t.Fatalf("error leaks the token: %v", err)
+	}
+}
+
 func TestVerbatimURLFor(t *testing.T) {
 	tests := []struct {
 		name string
