@@ -1,0 +1,50 @@
+{
+  "cli_version": "0.11.3-nightly.202609230619.4e2e839c2",
+  "checkpoint_id": "d4029c3b2c49",
+  "session_id": "410402e0-d258-4a84-9e0e-9c2340363b68",
+  "strategy": "manual-commit",
+  "created_at": "2026-09-30T01:27:07.513753Z",
+  "branch": "paul/trail-5-findings",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "internal/bench/endpoint.go",
+    "internal/bench/endpoint_test.go"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-opus-5-5",
+  "turn_id": "713f7ad06d9d",
+  "checkpoint_transcript_start": 487,
+  "transcript_lines_at_start": 487,
+  "compact_transcript_start": 65,
+  "token_usage": {
+    "input_tokens": 12,
+    "cache_creation_tokens": 6316,
+    "cache_read_tokens": 862145,
+    "output_tokens": 4292,
+    "api_call_count": 6
+  },
+  "session_metrics": {
+    "turn_count": 3
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-09-30T01:27:07.477109Z",
+    "agent_lines": 44,
+    "agent_removed": 2,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 44,
+    "total_lines_changed": 46,
+    "agent_percentage": 100,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0
+    }
+  ]
+}
