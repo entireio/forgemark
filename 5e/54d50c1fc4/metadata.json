@@ -1,0 +1,26 @@
+{
+  "cli_version": "0.11.3-nightly.202609230619.4e2e839c2",
+  "checkpoint_id": "5e54d50c1fc4",
+  "strategy": "manual-commit",
+  "branch": "paul/trail-5-findings",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "internal/bench/endpoint_test.go"
+  ],
+  "sessions": [
+    {
+      "metadata": "/5e/54d50c1fc4/0/metadata.json",
+      "transcript": "/5e/54d50c1fc4/0/full.jsonl",
+      "compact_transcript": "/5e/54d50c1fc4/0/transcript.jsonl",
+      "content_hash": "/5e/54d50c1fc4/0/content_hash.txt",
+      "prompt": "/5e/54d50c1fc4/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 52,
+    "cache_creation_tokens": 80188,
+    "cache_read_tokens": 1876079,
+    "output_tokens": 21350,
+    "api_call_count": 26
+  }
+}
