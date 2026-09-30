@@ -29,6 +29,9 @@ type Runner struct {
 	ep     *endpoint
 	httpc  *http.Client
 	sink   Sink
+
+	tokenExp   time.Time // zero: not a JWT, the server decides
+	levelsLeft int       // levels not yet started
 }
 
 // NewRunner resolves a target (credentials + endpoint; for entiredb this
@@ -56,10 +59,8 @@ func NewRunner(ctx context.Context, t Target, w Workload, sink Sink) (*Runner, e
 	if t.TokenURL != "" || t.Jurisdiction != "" {
 		// Go forwards Authorization on same-domain redirects, which would
 		// carry the account access token past pinReplicas on any request.
+		// The discovery probe vets its own redirect.
 		httpc = refuseRedirects(httpc)
-		if err := assertTokenOutlivesRun(t.Secret, w, time.Now()); err != nil {
-			return nil, err
-		}
 		creds, ep, err = setupEntiredb(ctx, t, httpc)
 	} else {
 		creds, ep, err = setupGeneric(t)
@@ -67,7 +68,14 @@ func NewRunner(ctx context.Context, t Target, w Workload, sink Sink) (*Runner, e
 	if err != nil {
 		return nil, err
 	}
-	return &Runner{target: t, w: w, creds: creds, ep: ep, httpc: httpc, sink: sink}, nil
+	r := &Runner{target: t, w: w, creds: creds, ep: ep, httpc: httpc, sink: sink, levelsLeft: len(w.Concurrency)}
+	if r.tokenExp, _ = jwtExpiry(t.Secret); !r.tokenExp.IsZero() {
+		// After discovery, so its time counts against the token.
+		if err := r.tokenCovers(time.Now()); err != nil {
+			return nil, err
+		}
+	}
+	return r, nil
 }
 
 // Label is the resolved endpoint label (the remote base URL), for banners and
@@ -205,6 +213,12 @@ func (r *Runner) RunLevel(ctx context.Context, c int, barrier *StartBarrier) (Le
 	if barrier != nil {
 		start = barrier.FiredAt()
 	}
+	// Recheck at the window: discovery, agent setup, the barrier and the
+	// previous level's cleanup all spent token lifetime.
+	if err := r.tokenCovers(start); err != nil {
+		return LevelResult{}, err
+	}
+	r.levelsLeft = max(r.levelsLeft-1, 0)
 	lvlCtx, cancel := context.WithDeadline(ctx, start.Add(total))
 	defer cancel()
 	var wg sync.WaitGroup
@@ -246,19 +260,19 @@ func setupGeneric(t Target) (credentialProvider, *endpoint, error) {
 	return staticCreds{username: user, password: t.Secret}, newGenericEndpoint(t.Remote, objFmt), nil
 }
 
-// assertTokenOutlivesRun refuses a sweep the account access token cannot
+// tokenCovers refuses to start work the account access token cannot
 // cover: nothing refreshes it, so a level that outlives it would report
-// authentication failures as throughput. A secret that is not a JWT with
-// exp passes; the server decides.
-func assertTokenOutlivesRun(secret string, w Workload, now time.Time) error {
-	exp, ok := jwtExpiry(secret)
-	if !ok {
+// authentication failures as throughput. It needs every level not yet
+// started, measured from now. A secret that is not a JWT with exp passes.
+func (r *Runner) tokenCovers(now time.Time) error {
+	if r.tokenExp.IsZero() {
 		return nil
 	}
-	planned := time.Duration(len(w.Concurrency)) * (w.Warmup + w.Duration)
-	if left := exp.Sub(now); left < planned {
-		return fmt.Errorf("token expires in %s but the sweep needs %s (%d levels × (warmup %s + duration %s)); mint a fresher token or shorten the run",
-			left.Round(time.Second), planned, len(w.Concurrency), w.Warmup, w.Duration)
+	levels := max(r.levelsLeft, 1)
+	need := time.Duration(levels) * (r.w.Warmup + r.w.Duration)
+	if left := r.tokenExp.Sub(now); left < need {
+		return fmt.Errorf("token expires in %s but %d remaining levels need %s (warmup %s + duration %s each); mint a fresher token or shorten the run",
+			max(left, 0).Round(time.Second), levels, need, r.w.Warmup, r.w.Duration)
 	}
 	return nil
 }

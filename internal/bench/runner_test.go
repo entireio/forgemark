@@ -8,25 +8,71 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
+
+	formatcfg "github.com/go-git/go-git/v6/plumbing/format/config"
 )
 
-func TestAssertTokenOutlivesRun(t *testing.T) {
+func testJWT(exp int64) string {
+	payload := base64.RawURLEncoding.EncodeToString([]byte(`{"exp":` + strconv.FormatInt(exp, 10) + `}`))
+	return "h." + payload + ".s"
+}
+
+func TestTokenCovers(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
-	jwt := func(exp int64) string {
-		payload := base64.RawURLEncoding.EncodeToString([]byte(`{"exp":` + strconv.FormatInt(exp, 10) + `}`))
-		return "h." + payload + ".s"
-	}
 	w := Workload{Concurrency: []int{1, 4}, Warmup: time.Minute, Duration: 10 * time.Minute}
-	if err := assertTokenOutlivesRun(jwt(now.Add(time.Hour).Unix()), w, now); err != nil {
-		t.Fatalf("an hour covers 2×11m: %v", err)
-	}
-	if err := assertTokenOutlivesRun(jwt(now.Add(15*time.Minute).Unix()), w, now); err == nil {
+	r := &Runner{w: w, levelsLeft: 2, tokenExp: now.Add(15 * time.Minute)}
+	if err := r.tokenCovers(now); err == nil {
 		t.Fatal("15m cannot cover 2×11m")
 	}
-	if err := assertTokenOutlivesRun("not-a-jwt", w, now); err != nil {
+	r.levelsLeft = 1
+	if err := r.tokenCovers(now); err != nil {
+		t.Fatalf("15m covers the last 11m level: %v", err)
+	}
+	if err := r.tokenCovers(now.Add(5 * time.Minute)); err == nil {
+		t.Fatal("10m left cannot cover an 11m level")
+	}
+	r.tokenExp = time.Time{}
+	if err := r.tokenCovers(now); err != nil {
 		t.Fatalf("an opaque secret must pass: %v", err)
+	}
+}
+
+// Discovery spends token lifetime: a token that covers the sweep at
+// startup but expires during the probe must fail NewRunner.
+func TestNewRunnerChecksTokenAfterDiscovery(t *testing.T) {
+	exp := time.Now().Unix() + 1
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(time.Until(time.Unix(exp, 0).Add(50 * time.Millisecond)))
+		_, _ = w.Write([]byte("0000"))
+	}))
+	defer srv.Close()
+	tgt := Target{Remote: srv.URL, TokenURL: "x", Jurisdiction: "j", Repos: []string{"o/r"}, Secret: testJWT(exp)}
+	w := Workload{Strategy: "branch", Concurrency: []int{1}, Duration: time.Millisecond,
+		Commit: CommitConfig{FilesMin: 1, FilesMax: 1, FileSize: 1}}
+	_, err := NewRunner(context.Background(), tgt, w, nil)
+	if err == nil || !strings.Contains(err.Error(), "token expires") {
+		t.Fatalf("a token expired during discovery must fail setup, got %v", err)
+	}
+}
+
+// Setup, the barrier and the last level's cleanup spend token lifetime
+// too: RunLevel rechecks before opening its window.
+func TestRunLevelRechecksToken(t *testing.T) {
+	r := &Runner{
+		target:     Target{Repos: []string{"o/r"}},
+		w:          Workload{Strategy: "branch", Concurrency: []int{1}, Duration: time.Minute, Commit: CommitConfig{FilesMin: 1, FilesMax: 1, FileSize: 1}},
+		creds:      staticCreds{username: "token", password: "secret"},
+		ep:         &endpoint{nodes: []string{"http://127.0.0.1:1"}, objFmt: formatcfg.SHA1},
+		httpc:      http.DefaultClient,
+		tokenExp:   time.Now().Add(30 * time.Second),
+		levelsLeft: 1,
+	}
+	_, err := r.RunLevel(context.Background(), 1, nil)
+	if err == nil || !strings.Contains(err.Error(), "token expires") {
+		t.Fatalf("a level the token cannot cover must not start, got %v", err)
 	}
 }
 
