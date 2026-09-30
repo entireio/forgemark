@@ -1,0 +1,7 @@
+<task-notification>
+<task-id>bea1q9706</task-id>
+<tool-use-id>toolu_016cWjEec64iiYd21D1ip5Ws</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-paul-src-entireio-forgemark/410402e0-d258-4a84-9e0e-9c2340363b68/tasks/bea1q9706.output</output-file>
+<status>completed</status>
+<summary>Background command "Wait for both CI runs and report results" completed (exit code 0)</summary>
+</task-notification>
