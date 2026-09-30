@@ -129,8 +129,9 @@ func newEntireEndpoint(ctx context.Context, remote, objectFmt, repo string, cred
 }
 
 // pinReplicas admits an advertised replica only when it shares the entry
-// host's scheme, registrable domain (aws-us-east-2.entire.io admits
-// *.entire.io) and, over https, effective port, and carries no userinfo.
+// host's scheme, parent domain within its registrable domain
+// (aws-us-east-2.entire.io admits *.entire.io; see replicaDomain) and,
+// over https, effective port, and carries no userinfo.
 // The account access token is presented to every node, so an unvalidated
 // header could redirect it to an arbitrary origin. Any rejected replica
 // fails the run. http (local dev) nodes may differ in port: each node
@@ -141,7 +142,7 @@ func pinReplicas(base string, nodes []string) ([]string, error) {
 		return nil, fmt.Errorf("remote %q is not a valid URL", base)
 	}
 	baseHost := strings.ToLower(bu.Hostname())
-	site := registrableDomain(baseHost)
+	site := replicaDomain(baseHost)
 	for _, n := range nodes {
 		u, err := url.Parse(n)
 		if err != nil || u.Hostname() == "" {
@@ -226,18 +227,23 @@ func redirectNode(base, loc string, nodes []string) (string, error) {
 	return "", fmt.Errorf("info/refs probe: redirect to %s://%s is not an advertised replica; refusing to follow", lu.Scheme, lu.Host)
 }
 
-// registrableDomain is host's eTLD+1 per the public suffix list, so
-// tenant.github.io stays apart from other.github.io. IPs and bare
-// names like localhost have none: only the exact host matches.
-func registrableDomain(host string) string {
+// replicaDomain is the domain replicas may share with host: its parent,
+// but never wider than its registrable domain (eTLD+1), so
+// tenant.github.io stays apart from other.github.io and a deep custom
+// host doesn't open its whole company domain. IPs and bare names like
+// localhost have none: only the exact host matches.
+func replicaDomain(host string) string {
 	if net.ParseIP(host) != nil {
 		return ""
 	}
-	d, err := publicsuffix.EffectiveTLDPlusOne(host)
+	site, err := publicsuffix.EffectiveTLDPlusOne(host)
 	if err != nil {
 		return ""
 	}
-	return d
+	if _, parent, ok := strings.Cut(host, "."); ok && (parent == site || strings.HasSuffix(parent, "."+site)) {
+		return parent
+	}
+	return site
 }
 
 func effectivePort(u *url.URL) string {

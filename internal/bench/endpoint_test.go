@@ -177,8 +177,16 @@ func TestPinReplicas(t *testing.T) {
 	if _, err := pinReplicas("https://tenant.github.io", []string{"https://other.github.io"}); err == nil {
 		t.Error("another github.io tenant must be refused")
 	}
-	// A deeper entry host still admits its whole registrable domain.
-	if _, err := pinReplicas("https://node-1.aws-us-east-2.entire.io", []string{"https://aws-us-east-2-node-2.entire.io"}); err != nil {
-		t.Errorf("same registrable domain must be admitted: %v", err)
+	// A deep entry host admits only its parent, not its whole
+	// registrable domain.
+	if _, err := pinReplicas("https://node.cluster.customer.example.com", []string{"https://other.cluster.customer.example.com"}); err != nil {
+		t.Errorf("a sibling under the parent must be admitted: %v", err)
+	}
+	if _, err := pinReplicas("https://node.cluster.customer.example.com", []string{"https://evil.example.com"}); err == nil {
+		t.Error("the wider company domain must be refused")
+	}
+	// An eTLD+1 entry host admits its own subdomains.
+	if _, err := pinReplicas("https://entire.io", []string{"https://node-1.entire.io"}); err != nil {
+		t.Errorf("a subdomain of an eTLD+1 entry must be admitted: %v", err)
 	}
 }
