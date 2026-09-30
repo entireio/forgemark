@@ -149,7 +149,8 @@ func pinReplicas(base string, nodes []string) ([]string, error) {
 			return nil, fmt.Errorf("X-Entire-Replicas entry %q is not a valid URL", n)
 		}
 		h := strings.ToLower(u.Hostname())
-		sameHost := h == baseHost || (site != "" && (h == site || strings.HasSuffix(h, "."+site)))
+		// Siblings under the parent, never the parent itself.
+		sameHost := h == baseHost || (site != "" && strings.HasSuffix(h, "."+site))
 		samePort := bu.Scheme != "https" || effectivePort(u) == effectivePort(bu)
 		bareOrigin := (u.Path == "" || u.Path == "/") && u.RawQuery == "" && u.Fragment == ""
 		if u.Scheme != bu.Scheme || u.User != nil || !sameHost || !samePort || !bareOrigin {

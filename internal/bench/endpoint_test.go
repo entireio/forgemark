@@ -185,6 +185,10 @@ func TestPinReplicas(t *testing.T) {
 	if _, err := pinReplicas("https://node.cluster.customer.example.com", []string{"https://evil.example.com"}); err == nil {
 		t.Error("the wider company domain must be refused")
 	}
+	// The parent itself is a different service, not a replica.
+	if _, err := pinReplicas("https://aws-us-east-2.entire.io", []string{"https://entire.io"}); err == nil {
+		t.Error("the apex must be refused")
+	}
 	// An eTLD+1 entry host admits its own subdomains.
 	if _, err := pinReplicas("https://entire.io", []string{"https://node-1.entire.io"}); err != nil {
 		t.Errorf("a subdomain of an eTLD+1 entry must be admitted: %v", err)
