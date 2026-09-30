@@ -1,0 +1,10 @@
+i'd like to ensure that forgemark works now that we've removed jurisdiction tokens from entire-core.  is it possible to stand it up and just test like 1 or 2 operations as a smoke test?
+
+---
+
+actually you know what, let's switch to the branch taht's removed the juri token exchange.  that should work.
+
+---
+
+- open a Linear ticket assigned to me for item 1
+- make the small bugfix on paul/present-account-access-token
