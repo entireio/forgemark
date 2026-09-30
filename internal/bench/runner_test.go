@@ -6,7 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -58,6 +58,19 @@ func TestNewRunnerChecksTokenAfterDiscovery(t *testing.T) {
 	}
 }
 
+// A generic forge's JWT-shaped secret is not Entire's account token:
+// its exp must not gate the run.
+func TestNewRunnerIgnoresGenericTokenExpiry(t *testing.T) {
+	tgt := Target{Remote: "https://git.example", Repos: []string{"o/r"}, Secret: testJWT(time.Now().Add(-time.Hour).Unix())}
+	w := Workload{Strategy: "branch", Concurrency: []int{1}, Duration: time.Minute,
+		Commit: CommitConfig{FilesMin: 1, FilesMax: 1, FileSize: 1}}
+	r, err := NewRunner(context.Background(), tgt, w, nil)
+	if err != nil {
+		t.Fatalf("a generic target must ignore JWT exp: %v", err)
+	}
+	r.Close()
+}
+
 // Setup, the barrier and the last level's cleanup spend token lifetime
 // too: RunLevel rechecks before opening its window.
 func TestRunLevelRechecksToken(t *testing.T) {
@@ -76,13 +89,9 @@ func TestRunLevelRechecksToken(t *testing.T) {
 	}
 }
 
+// net/http reads proxy env once per process (envProxyOnce), so any
+// earlier test request pins it; assert the policy, not the env.
 func TestNewHTTPClientUsesHTTPSProxy(t *testing.T) {
-	proxyURL := "http://proxy.example:8080"
-	t.Setenv("HTTPS_PROXY", proxyURL)
-	t.Setenv("https_proxy", "")
-	t.Setenv("NO_PROXY", "")
-	t.Setenv("no_proxy", "")
-
 	client := newHTTPClient(false, 1)
 	ua, ok := client.Transport.(*uaTransport)
 	if !ok {
@@ -95,17 +104,8 @@ func TestNewHTTPClientUsesHTTPSProxy(t *testing.T) {
 		t.Fatalf("Client.Timeout = %v, want 0 (uaTransport enforces the timeout)", client.Timeout)
 	}
 	tr := ua.base
-	if tr.Proxy == nil {
-		t.Fatal("newHTTPClient transport Proxy is nil")
-	}
-
-	req := &http.Request{URL: &url.URL{Scheme: "https", Host: "git.example"}}
-	got, err := tr.Proxy(req)
-	if err != nil {
-		t.Fatalf("Proxy returned error: %v", err)
-	}
-	if got == nil || got.String() != proxyURL {
-		t.Fatalf("Proxy returned %v, want %s", got, proxyURL)
+	if tr.Proxy == nil || reflect.ValueOf(tr.Proxy).Pointer() != reflect.ValueOf(http.ProxyFromEnvironment).Pointer() {
+		t.Fatal("newHTTPClient transport must use http.ProxyFromEnvironment")
 	}
 }
 

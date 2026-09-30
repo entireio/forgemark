@@ -56,7 +56,7 @@ func newGenericEndpoint(base string, objFmt formatcfg.ObjectFormat) *endpoint {
 // info/refs?service=git-receive-pack, which the load balancer does forward,
 // using the caller's credential. The repo path is appended verbatim (the caller
 // supplies the full path in -repos / -repo-pattern), same as a plain forge.
-func newEntireEndpoint(ctx context.Context, remote, objectFmt, repo string, creds credentialProvider, httpc *http.Client) (*endpoint, error) {
+func newEntireEndpoint(ctx context.Context, remote, objectFmt, repo string, creds credentialProvider, httpc *http.Client) (_ *endpoint, err error) {
 	base := strings.TrimRight(remote, "/")
 
 	// Object format: explicit flag wins; otherwise default sha1 (entiredb repos
@@ -74,6 +74,13 @@ func newEntireEndpoint(ctx context.Context, remote, objectFmt, repo string, cred
 	if err != nil {
 		return nil, err
 	}
+	// Errors quote server-controlled URLs and headers, which can reflect
+	// the token; they reach the GUI, SSE and saved results.
+	defer func() {
+		if err != nil {
+			err = errors.New(redactSecrets(err.Error(), authForms(auth.Username, auth.Password)...))
+		}
+	}()
 	// Hand redirects back instead of following them: Go would forward the
 	// token to wherever Location points.
 	probe := *httpc
@@ -207,9 +214,12 @@ func redirectNode(base, loc string, nodes []string) (string, error) {
 	if err != nil {
 		return "", errors.New("info/refs probe: redirect Location is not a valid URL")
 	}
+	// Compare hostname and effective port: :443 spelled out or not is
+	// the same origin.
 	for _, n := range nodes {
 		nu, err := url.Parse(n)
-		if err == nil && strings.EqualFold(nu.Scheme, lu.Scheme) && strings.EqualFold(nu.Host, lu.Host) {
+		if err == nil && strings.EqualFold(nu.Scheme, lu.Scheme) &&
+			strings.EqualFold(nu.Hostname(), lu.Hostname()) && effectivePort(nu) == effectivePort(lu) {
 			return strings.TrimRight(n, "/"), nil
 		}
 	}
