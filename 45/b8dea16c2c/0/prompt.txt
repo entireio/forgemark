@@ -1,0 +1,3 @@
+yeah it sounds like pinReplicas needs to use the golang /x/ registerableDomain helper... if so, new PR.
+
+why do pushes refuse redirects?  can we make them follow 307+registerableDomain check, too?
