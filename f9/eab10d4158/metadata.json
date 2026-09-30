@@ -1,0 +1,27 @@
+{
+  "cli_version": "0.11.3-nightly.202609230619.4e2e839c2",
+  "checkpoint_id": "f9eab10d4158",
+  "strategy": "manual-commit",
+  "branch": "paul/pin-registrable-domain",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "internal/bench/endpoint.go",
+    "internal/bench/endpoint_test.go"
+  ],
+  "sessions": [
+    {
+      "metadata": "/f9/eab10d4158/0/metadata.json",
+      "transcript": "/f9/eab10d4158/0/full.jsonl",
+      "compact_transcript": "/f9/eab10d4158/0/transcript.jsonl",
+      "content_hash": "/f9/eab10d4158/0/content_hash.txt",
+      "prompt": ""
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 8,
+    "cache_creation_tokens": 3264,
+    "cache_read_tokens": 697298,
+    "output_tokens": 3199,
+    "api_call_count": 4
+  }
+}
