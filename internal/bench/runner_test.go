@@ -6,7 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -89,13 +89,9 @@ func TestRunLevelRechecksToken(t *testing.T) {
 	}
 }
 
+// net/http reads proxy env once per process (envProxyOnce), so any
+// earlier test request pins it; assert the policy, not the env.
 func TestNewHTTPClientUsesHTTPSProxy(t *testing.T) {
-	proxyURL := "http://proxy.example:8080"
-	t.Setenv("HTTPS_PROXY", proxyURL)
-	t.Setenv("https_proxy", "")
-	t.Setenv("NO_PROXY", "")
-	t.Setenv("no_proxy", "")
-
 	client := newHTTPClient(false, 1)
 	ua, ok := client.Transport.(*uaTransport)
 	if !ok {
@@ -108,17 +104,8 @@ func TestNewHTTPClientUsesHTTPSProxy(t *testing.T) {
 		t.Fatalf("Client.Timeout = %v, want 0 (uaTransport enforces the timeout)", client.Timeout)
 	}
 	tr := ua.base
-	if tr.Proxy == nil {
-		t.Fatal("newHTTPClient transport Proxy is nil")
-	}
-
-	req := &http.Request{URL: &url.URL{Scheme: "https", Host: "git.example"}}
-	got, err := tr.Proxy(req)
-	if err != nil {
-		t.Fatalf("Proxy returned error: %v", err)
-	}
-	if got == nil || got.String() != proxyURL {
-		t.Fatalf("Proxy returned %v, want %s", got, proxyURL)
+	if tr.Proxy == nil || reflect.ValueOf(tr.Proxy).Pointer() != reflect.ValueOf(http.ProxyFromEnvironment).Pointer() {
+		t.Fatal("newHTTPClient transport must use http.ProxyFromEnvironment")
 	}
 }
 
