@@ -13,8 +13,8 @@
 //	    suffix in -repos if the forge needs it) with a static credential from the
 //	    environment. A github.com remote additionally gets the abuse-detection
 //	    warning above concurrency 16.
-//	entiredb — selected by supplying -token-url and -jurisdiction: one
-//	    jurisdiction identity token (RFC 8693 exchange, authorized live per push),
+//	entiredb — selected by supplying -token-url and -jurisdiction: the account
+//	    access token is presented directly (authorized live per push),
 //	    direct-to-node push, node discovery via X-Entire-Replicas.
 //
 // Strategies (-strategy): branch (default; per-agent branches on one repo),
@@ -194,9 +194,9 @@ func parseFlags() (*cliConfig, error) {
 	flag.StringVar(&cfg.workload.BaseRef, "base-ref", "", "clone/session strategy: branch to clone — bare name (main) or full ref (refs/heads/main); default: remote default branch")
 
 	// entiredb: presence of -token-url/-jurisdiction selects the entiredb path.
-	flag.StringVar(&cfg.target.TokenURL, "token-url", "", "entiredb: core /oauth/token endpoint, e.g. https://<region>.auth.example.com/oauth/token (selects entiredb)")
-	flag.StringVar(&cfg.target.Jurisdiction, "jurisdiction", "", "entiredb: jurisdiction audience host (bare origin), e.g. https://<region>.example.com (selects entiredb)")
-	flag.StringVar(&cfg.target.ClientID, "client-id", "entire-cli", "entiredb: public OAuth client id for the exchange")
+	flag.StringVar(&cfg.target.TokenURL, "token-url", "", "entiredb: core /oauth/token endpoint, e.g. https://<region>.auth.example.com/oauth/token (selects entiredb; not dialed)")
+	flag.StringVar(&cfg.target.Jurisdiction, "jurisdiction", "", "entiredb: jurisdiction host (bare origin), e.g. https://<region>.example.com (selects entiredb)")
+	flag.StringVar(&cfg.target.ClientID, "client-id", "entire-cli", "entiredb: accepted for compatibility; unused")
 	flag.Parse()
 
 	cfg.workload.Duration = durationFlag

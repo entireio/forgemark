@@ -2,12 +2,17 @@ package bench
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 
 	formatcfg "github.com/go-git/go-git/v6/plumbing/format/config"
+	githttp "github.com/go-git/go-git/v6/plumbing/transport/http"
+	"golang.org/x/net/publicsuffix"
 )
 
 // endpoint is a fully-resolved push destination: the node base URLs to fan out
@@ -51,7 +56,7 @@ func newGenericEndpoint(base string, objFmt formatcfg.ObjectFormat) *endpoint {
 // info/refs?service=git-receive-pack, which the load balancer does forward,
 // using the caller's credential. The repo path is appended verbatim (the caller
 // supplies the full path in -repos / -repo-pattern), same as a plain forge.
-func newEntireEndpoint(ctx context.Context, remote, objectFmt, repo string, creds credentialProvider, httpc *http.Client) (*endpoint, error) {
+func newEntireEndpoint(ctx context.Context, remote, objectFmt, repo string, creds credentialProvider, httpc *http.Client) (_ *endpoint, err error) {
 	base := strings.TrimRight(remote, "/")
 
 	// Object format: explicit flag wins; otherwise default sha1 (entiredb repos
@@ -69,35 +74,42 @@ func newEntireEndpoint(ctx context.Context, remote, objectFmt, repo string, cred
 	if err != nil {
 		return nil, err
 	}
-	url := verbatimURLFor(base, repo) + "/info/refs?service=git-receive-pack"
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("build info/refs request: %w", err)
-	}
-	req.SetBasicAuth(auth.Username, auth.Password)
-	resp, err := httpc.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("info/refs probe: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if err != nil {
-		return nil, fmt.Errorf("read info/refs response: %w", err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		// A 404 is the most common setup miss, so make it actionable — but
-		// diagnose, don't assert: forges also answer 404 for repos the
-		// credential simply can't see, so a "create it" order alone would
-		// misdirect an auth problem. forgemark deliberately never creates
-		// repos (a typo'd path must fail fast, not provision junk on a real
-		// jurisdiction); the server body is kept as evidence either way.
-		hint := ""
-		if resp.StatusCode == http.StatusNotFound {
-			hint = fmt.Sprintf(" — repo %s is missing on %s, or the credential can't see it. forgemark does not create repos: "+
-				"create it first (`entire repo create` / `entire repo mirror create`) or fix the repo path / token scope", repo, base)
+	// Errors quote server-controlled URLs and headers, which can reflect
+	// the token; they reach the GUI, SSE and saved results.
+	defer func() {
+		if err != nil {
+			err = errors.New(redactSecrets(err.Error(), authForms(auth.Username, auth.Password)...))
 		}
-		return nil, fmt.Errorf("info/refs probe: HTTP %d: %s%s", resp.StatusCode,
-			redactSecrets(strings.TrimSpace(string(body)), authForms(auth.Username, auth.Password)...), hint)
+	}()
+	// Hand redirects back instead of following them: Go would forward the
+	// token to wherever Location points.
+	probe := *httpc
+	probe.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	hdr, body, err := probeInfoRefs(ctx, &probe, base, repo, auth)
+	if err != nil {
+		return nil, err
+	}
+	advertised := hdr.Get("X-Entire-Replicas")
+	if loc := hdr.Get("Location"); loc != "" {
+		// Entire redirects discovery to a hosting replica, always so via
+		// the ALB. Follow one hop, only to an advertised, pinned node.
+		nodes, err := pinReplicas(base, SplitCSV(advertised))
+		if err != nil {
+			return nil, err
+		}
+		node, err := redirectNode(base, loc, nodes)
+		if err != nil {
+			return nil, err
+		}
+		if hdr, body, err = probeInfoRefs(ctx, &probe, node, repo, auth); err != nil {
+			return nil, err
+		}
+		if hdr.Get("Location") != "" {
+			return nil, fmt.Errorf("info/refs probe: replica %s redirected again; refusing to follow", node)
+		}
+		if h := hdr.Get("X-Entire-Replicas"); h != "" {
+			advertised = h
+		}
 	}
 
 	if objectFmt == "auto" || objectFmt == "" {
@@ -106,11 +118,143 @@ func newEntireEndpoint(ctx context.Context, remote, objectFmt, repo string, cred
 		}
 	}
 
-	nodes := SplitCSV(resp.Header.Get("X-Entire-Replicas"))
+	nodes, err := pinReplicas(base, SplitCSV(advertised))
+	if err != nil {
+		return nil, err
+	}
 	if len(nodes) == 0 {
 		nodes = []string{base} // single-node / dev: talk to the entry host
 	}
 	return &endpoint{nodes: nodes, objFmt: objFmt, label: base}, nil
+}
+
+// pinReplicas admits an advertised replica only when it shares the entry
+// host's scheme, parent domain within its registrable domain
+// (aws-us-east-2.entire.io admits *.entire.io; see replicaDomain) and,
+// over https, effective port, and carries no userinfo.
+// The account access token is presented to every node, so an unvalidated
+// header could redirect it to an arbitrary origin. Any rejected replica
+// fails the run. http (local dev) nodes may differ in port: each node
+// listens on its own.
+func pinReplicas(base string, nodes []string) ([]string, error) {
+	bu, err := url.Parse(base)
+	if err != nil || bu.Hostname() == "" {
+		return nil, fmt.Errorf("remote %q is not a valid URL", base)
+	}
+	baseHost := strings.ToLower(bu.Hostname())
+	site := replicaDomain(baseHost)
+	for _, n := range nodes {
+		u, err := url.Parse(n)
+		if err != nil || u.Hostname() == "" {
+			return nil, fmt.Errorf("X-Entire-Replicas entry %q is not a valid URL", n)
+		}
+		h := strings.ToLower(u.Hostname())
+		// Siblings under the parent, never the parent itself.
+		sameHost := h == baseHost || (site != "" && strings.HasSuffix(h, "."+site))
+		samePort := bu.Scheme != "https" || effectivePort(u) == effectivePort(bu)
+		bareOrigin := (u.Path == "" || u.Path == "/") && u.RawQuery == "" && u.Fragment == ""
+		if u.Scheme != bu.Scheme || u.User != nil || !sameHost || !samePort || !bareOrigin {
+			return nil, fmt.Errorf("X-Entire-Replicas entry %q is not under %s; refusing to send the credential there", n, base)
+		}
+	}
+	return nodes, nil
+}
+
+// probeInfoRefs GETs node's receive-pack advertisement for repo. It returns
+// the headers and body of a 200, or the headers of a redirect (Location
+// set) for the caller to vet; any other status is an error.
+func probeInfoRefs(ctx context.Context, c *http.Client, node, repo string, auth *githttp.BasicAuth) (http.Header, []byte, error) {
+	url := verbatimURLFor(node, repo) + "/info/refs?service=git-receive-pack"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, nil, fmt.Errorf("build info/refs request: %w", err)
+	}
+	req.SetBasicAuth(auth.Username, auth.Password)
+	resp, err := c.Do(req)
+	if err != nil {
+		return nil, nil, fmt.Errorf("info/refs probe: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return nil, nil, fmt.Errorf("read info/refs response: %w", err)
+	}
+	switch resp.StatusCode {
+	case http.StatusOK:
+		return resp.Header, body, nil
+	case http.StatusMovedPermanently, http.StatusFound, http.StatusSeeOther,
+		http.StatusTemporaryRedirect, http.StatusPermanentRedirect:
+		if resp.Header.Get("Location") == "" {
+			return nil, nil, fmt.Errorf("info/refs probe: HTTP %d without Location", resp.StatusCode)
+		}
+		return resp.Header, nil, nil
+	}
+	// A 404 is the most common setup miss, so make it actionable — but
+	// diagnose, don't assert: forges also answer 404 for repos the
+	// credential simply can't see, so a "create it" order alone would
+	// misdirect an auth problem. forgemark deliberately never creates
+	// repos (a typo'd path must fail fast, not provision junk on a real
+	// jurisdiction); the server body is kept as evidence either way.
+	hint := ""
+	if resp.StatusCode == http.StatusNotFound {
+		hint = fmt.Sprintf(" — repo %s is missing on %s, or the credential can't see it. forgemark does not create repos: "+
+			"create it first (`entire repo create` / `entire repo mirror create`) or fix the repo path / token scope", repo, node)
+	}
+	return nil, nil, fmt.Errorf("info/refs probe: HTTP %d: %s%s", resp.StatusCode,
+		redactSecrets(strings.TrimSpace(string(body)), authForms(auth.Username, auth.Password)...), hint)
+}
+
+// redirectNode maps a discovery Location onto the pinned node it names.
+// Userinfo (Entire embeds the caller's token) and path are dropped: the
+// probe rebuilds the URL and presents its own credential.
+func redirectNode(base, loc string, nodes []string) (string, error) {
+	bu, err := url.Parse(base)
+	if err != nil {
+		return "", fmt.Errorf("remote %q is not a valid URL", base)
+	}
+	lu, err := bu.Parse(loc)
+	if err != nil {
+		return "", errors.New("info/refs probe: redirect Location is not a valid URL")
+	}
+	// Compare hostname and effective port: :443 spelled out or not is
+	// the same origin.
+	for _, n := range nodes {
+		nu, err := url.Parse(n)
+		if err == nil && strings.EqualFold(nu.Scheme, lu.Scheme) &&
+			strings.EqualFold(nu.Hostname(), lu.Hostname()) && effectivePort(nu) == effectivePort(lu) {
+			return strings.TrimRight(n, "/"), nil
+		}
+	}
+	return "", fmt.Errorf("info/refs probe: redirect to %s://%s is not an advertised replica; refusing to follow", lu.Scheme, lu.Host)
+}
+
+// replicaDomain is the domain replicas may share with host: its parent,
+// but never wider than its registrable domain (eTLD+1), so
+// tenant.github.io stays apart from other.github.io and a deep custom
+// host doesn't open its whole company domain. IPs and bare names like
+// localhost have none: only the exact host matches.
+func replicaDomain(host string) string {
+	if net.ParseIP(host) != nil {
+		return ""
+	}
+	site, err := publicsuffix.EffectiveTLDPlusOne(host)
+	if err != nil {
+		return ""
+	}
+	if _, parent, ok := strings.Cut(host, "."); ok && (parent == site || strings.HasSuffix(parent, "."+site)) {
+		return parent
+	}
+	return site
+}
+
+func effectivePort(u *url.URL) string {
+	if p := u.Port(); p != "" {
+		return p
+	}
+	if u.Scheme == "https" {
+		return "443"
+	}
+	return "80"
 }
 
 func SplitCSV(s string) []string {

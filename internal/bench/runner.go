@@ -3,6 +3,8 @@ package bench
 import (
 	"context"
 	"crypto/tls"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -27,6 +29,9 @@ type Runner struct {
 	ep     *endpoint
 	httpc  *http.Client
 	sink   Sink
+
+	tokenExp   time.Time // zero: not a JWT, the server decides
+	levelsLeft int       // levels not yet started
 }
 
 // NewRunner resolves a target (credentials + endpoint; for entiredb this
@@ -52,14 +57,29 @@ func NewRunner(ctx context.Context, t Target, w Workload, sink Sink) (*Runner, e
 		err   error
 	)
 	if t.TokenURL != "" || t.Jurisdiction != "" {
+		// Go forwards Authorization on same-domain redirects, which would
+		// carry the account access token past pinReplicas on any request.
+		// The discovery probe vets its own redirect.
+		httpc = refuseRedirects(httpc)
 		creds, ep, err = setupEntiredb(ctx, t, httpc)
 	} else {
 		creds, ep, err = setupGeneric(t)
 	}
 	if err != nil {
+		httpc.CloseIdleConnections() // drop the discovery probe's pool
 		return nil, err
 	}
-	return &Runner{target: t, w: w, creds: creds, ep: ep, httpc: httpc, sink: sink}, nil
+	r := &Runner{target: t, w: w, creds: creds, ep: ep, httpc: httpc, sink: sink, levelsLeft: len(w.Concurrency)}
+	if t.TokenURL != "" || t.Jurisdiction != "" {
+		// Only Entire's account token bounds the run. After discovery, so
+		// its time counts against the token.
+		r.tokenExp, _ = jwtExpiry(t.Secret)
+		if err := r.tokenCovers(time.Now()); err != nil {
+			r.Close()
+			return nil, err
+		}
+	}
+	return r, nil
 }
 
 // Label is the resolved endpoint label (the remote base URL), for banners and
@@ -93,8 +113,7 @@ func (r *Runner) Close() {
 }
 
 // credentialCloser is an optional credentialProvider capability: release any
-// background refresh machinery and the credentials it holds. staticCreds needs
-// nothing; jurisdictionCreds cancels and waits for its refresh goroutine.
+// background machinery and the credentials it holds.
 type credentialCloser interface{ close() }
 
 // StartBarrier synchronizes the start of one concurrency level across several
@@ -198,6 +217,12 @@ func (r *Runner) RunLevel(ctx context.Context, c int, barrier *StartBarrier) (Le
 	if barrier != nil {
 		start = barrier.FiredAt()
 	}
+	// Recheck at the window: discovery, agent setup, the barrier and the
+	// previous level's cleanup all spent token lifetime.
+	if err := r.tokenCovers(start); err != nil {
+		return LevelResult{}, err
+	}
+	r.levelsLeft = max(r.levelsLeft-1, 0)
 	lvlCtx, cancel := context.WithDeadline(ctx, start.Add(total))
 	defer cancel()
 	var wg sync.WaitGroup
@@ -239,6 +264,60 @@ func setupGeneric(t Target) (credentialProvider, *endpoint, error) {
 	return staticCreds{username: user, password: t.Secret}, newGenericEndpoint(t.Remote, objFmt), nil
 }
 
+// tokenCovers refuses to start work the account access token cannot
+// cover: nothing refreshes it, so a level that outlives it would report
+// authentication failures as throughput. It needs every level not yet
+// started, plus session ref cleanup after each window and clock skew,
+// measured from now. A secret that is not a JWT with exp passes.
+func (r *Runner) tokenCovers(now time.Time) error {
+	if r.tokenExp.IsZero() {
+		return nil
+	}
+	levels := max(r.levelsLeft, 1)
+	var cleanup time.Duration
+	if r.w.Strategy == "session" {
+		cleanup = sessionCleanupTimeout
+	}
+	need := time.Duration(levels)*(r.w.Warmup+r.w.Duration+cleanup) + tokenSkew
+	if left := r.tokenExp.Sub(now); left < need {
+		return fmt.Errorf("token expires in %s but %d remaining levels need %s (warmup %s + duration %s + cleanup %s each, + %s skew); mint a fresher token or shorten the run",
+			max(left, 0).Round(time.Second), levels, need, r.w.Warmup, r.w.Duration, cleanup, tokenSkew)
+	}
+	return nil
+}
+
+// tokenSkew absorbs clock drift against the issuer.
+const tokenSkew = 30 * time.Second
+
+// jwtExpiry reads exp from an unverified JWT payload.
+func jwtExpiry(token string) (time.Time, bool) {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return time.Time{}, false
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return time.Time{}, false
+	}
+	var c struct {
+		Exp int64 `json:"exp"`
+	}
+	if json.Unmarshal(payload, &c) != nil || c.Exp == 0 {
+		return time.Time{}, false
+	}
+	return time.Unix(c.Exp, 0), true
+}
+
+// refuseRedirects returns a copy of c (same transport and pool) that fails
+// every redirect instead of following it.
+func refuseRedirects(c *http.Client) *http.Client {
+	out := *c
+	out.CheckRedirect = func(*http.Request, []*http.Request) error {
+		return errors.New("entiredb request attempted a redirect; refusing to forward the credential")
+	}
+	return &out
+}
+
 func setupEntiredb(ctx context.Context, t Target, httpc *http.Client) (credentialProvider, *endpoint, error) {
 	var missing []string
 	if t.Remote == "" {
@@ -253,11 +332,10 @@ func setupEntiredb(ctx context.Context, t Target, httpc *http.Client) (credentia
 	if len(missing) > 0 {
 		return nil, nil, fmt.Errorf("entire target (selected by -token-url/-jurisdiction) also needs: %s", strings.Join(missing, ", "))
 	}
-	clientID := t.ClientID
-	if clientID == "" {
-		clientID = "entire-cli"
-	}
-	creds := newJurisdictionCreds(httpc, t.TokenURL, t.Jurisdiction, clientID, t.Secret, "token")
+	// The subject token is the account access token; entiredb authorizes each
+	// push live on its subject, so it is presented as-is (ADR 20260729).
+	// Entire ignores the username.
+	creds := staticCreds{username: "token", password: t.Secret}
 	ep, err := newEntireEndpoint(ctx, t.Remote, t.ObjectFmt, t.Repos[0], creds, httpc)
 	if err != nil {
 		return nil, nil, err

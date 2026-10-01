@@ -16,22 +16,23 @@ import (
 )
 
 // Target is one forge to benchmark: where to connect and how to authenticate.
-// Supplying TokenURL or Jurisdiction selects the entiredb path (jurisdiction
-// token exchange + node discovery); they mean nothing to any other forge, so
-// their presence is the signal — no separate target-kind field.
+// Supplying TokenURL or Jurisdiction selects the entiredb path (node
+// discovery, account access token presented directly); they mean nothing to
+// any other forge, so their presence is the signal — no separate target-kind
+// field.
 type Target struct {
 	Name      string   // display label; empty defaults to the remote base URL
 	Remote    string   // base URL of the forge, e.g. https://gitlab.com
 	Repos     []string // repo paths appended to Remote verbatim
 	User      string   // basic-auth username (default x-access-token; token forges ignore it)
-	Secret    string   `json:"-"` // credential secret (forge token, or the entiredb subject token); json:"-" so no marshal path can ever leak it
+	Secret    string   `json:"-"` // credential secret (forge token, or the entiredb account access token); json:"-" so no marshal path can ever leak it
 	Insecure  bool     // skip TLS verification
 	ObjectFmt string   // "auto" | "sha1" | "sha256"
 
-	// entiredb
-	TokenURL     string // core /oauth/token endpoint (selects entiredb)
-	Jurisdiction string // jurisdiction audience host, bare origin (selects entiredb)
-	ClientID     string // public OAuth client id; empty defaults to entire-cli
+	// entiredb. Presence selects the path; none of the three is dialed.
+	TokenURL     string
+	Jurisdiction string
+	ClientID     string
 }
 
 // Hard safety caps, not tuning suggestions: a single host can't generate a

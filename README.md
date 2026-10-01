@@ -111,7 +111,7 @@ Everything else is provisioned on first use:
   (`entire repo mirror create` is idempotent, so re-runs are free),
 - and `forgemark serve` itself, if nothing is listening.
 
-The Entire endpoints (token URL, jurisdiction audience, cluster) come from the
+The Entire endpoints (token URL, jurisdiction host, cluster) come from the
 server's own discovery endpoint (`GET /api/local/suggest`, derived from your
 active `entire auth` login context) — the same source the GUI's "Add from CLI
 logins" button uses, so that logic exists once. Every repo, endpoint, and
@@ -213,10 +213,10 @@ below.
 
 ## Entire
 
-Entire needs two extra flags — `-token-url` and `-jurisdiction`. Auth is a
-single short-lived **jurisdiction identity token**: ForgeMark exchanges your
-subject token for it (RFC 8693) and refreshes it, so one token authorizes every
-repo you can reach. Pass the subject token as `-token-file`/`ACCESS_TOKEN`:
+Entire needs two extra flags — `-token-url` and `-jurisdiction`; their presence
+selects the Entire path. Auth is your **account access token**, presented
+directly: entiredb authorizes every push live, so one token covers every repo
+you can reach. Pass it as `-token-file`/`ACCESS_TOKEN`:
 
 ```bash
 forgemark -remote https://aws-us-east-2.entire.io \
@@ -294,11 +294,11 @@ modest, or point `-remote` at a self-managed GitLab you control.
 
 | flag | notes |
 |---|---|
-| `-token-url` | core `/oauth/token` endpoint (presence selects Entire) |
-| `-jurisdiction` | jurisdiction audience host, bare origin (presence selects Entire) |
-| `-client-id` | public OAuth client id (default `entire-cli`) |
+| `-token-url` | core `/oauth/token` endpoint (presence selects Entire; not dialed) |
+| `-jurisdiction` | jurisdiction host, bare origin (presence selects Entire) |
+| `-client-id` | accepted for compatibility; unused |
 
-In this mode `-token-file`/`ACCESS_TOKEN` carries the subject token to exchange,
+In this mode `-token-file`/`ACCESS_TOKEN` carries the account access token,
 not a forge PAT.
 
 ## Environment variables

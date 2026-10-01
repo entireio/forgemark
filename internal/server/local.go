@@ -74,10 +74,10 @@ func resolveSecretSource(ctx context.Context, source, remote string) (string, st
 
 // validateSecretAudience pins a CLI-sourced credential to its issuer so the
 // server won't materialize it for an unrelated target. A gh/glab token belongs
-// to its forge; the entire subject token is POSTed to token_url and the
-// resulting jurisdiction token is used across the cluster, so remote, token_url
-// and jurisdiction must all stay under entire.io. Self-hosted forges should
-// paste a token rather than name a CLI source.
+// to its forge; the entire account access token is presented to every node of
+// the cluster, so remote, token_url and jurisdiction must all stay under
+// entire.io. Self-hosted forges should paste a token rather than name a CLI
+// source.
 func validateSecretAudience(source, remote, tokenURL, jurisdiction string) error {
 	// secureHost parses a URL that a CLI-sourced credential will be sent to and
 	// returns its hostname only if the URL is safe to send a token over: it must
@@ -106,13 +106,10 @@ func validateSecretAudience(source, remote, tokenURL, jurisdiction string) error
 	}
 	underEntire := func(h string) bool { return h == "entire.io" || strings.HasSuffix(h, ".entire.io") }
 	// token_url/jurisdiction are Entire-only: their mere presence makes NewRunner
-	// select the Entire token-exchange path, which POSTs the resolved credential
-	// to token_url as the subject token. Paired with a gh/glab source that only
-	// validates the remote, a crafted request could resolve the GitHub/GitLab CLI
-	// token and exfiltrate it to an attacker's token_url. Bind the source to its
-	// runner mode: gh/glab must not carry these fields.
+	// select the Entire path. Bind the source to its runner mode: gh/glab must
+	// not carry these fields.
 	if (source == "gh" || source == "glab") && (tokenURL != "" || jurisdiction != "") {
-		return fmt.Errorf("secret_source %s does not use token_url/jurisdiction (those select the Entire exchange path and would send the resolved token there); omit them", source)
+		return fmt.Errorf("secret_source %s does not use token_url/jurisdiction (those select the Entire path); omit them", source)
 	}
 	switch source {
 	case "gh":

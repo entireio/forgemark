@@ -182,6 +182,9 @@ func (a *agent) pushRef(ctx context.Context, src plumbing.ReferenceName, dst str
 	return nil
 }
 
+// sessionCleanupTimeout bounds each post-window ref delete.
+const sessionCleanupTimeout = 30 * time.Second
+
 // deleteRef best-effort deletes an ephemeral session branch via an empty-source
 // refspec, so refs don't accumulate on the target repo across a sweep. It runs
 // on its OWN short-lived context, not the caller's per-level ctx: the final
@@ -189,7 +192,7 @@ func (a *agent) pushRef(ctx context.Context, src plumbing.ReferenceName, dst str
 // level ctx is already done — using that dead ctx would no-op the delete and
 // leak the ref. It is cleanup, not a measured operation.
 func (a *agent) deleteRef(dst string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), sessionCleanupTimeout)
 	defer cancel()
 	auth, err := a.creds.basicAuth(ctx, a.repoPath)
 	if err != nil {
