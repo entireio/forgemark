@@ -5,12 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
 
 	formatcfg "github.com/go-git/go-git/v6/plumbing/format/config"
 	githttp "github.com/go-git/go-git/v6/plumbing/transport/http"
+	"golang.org/x/net/publicsuffix"
 )
 
 // endpoint is a fully-resolved push destination: the node base URLs to fan out
@@ -127,28 +129,28 @@ func newEntireEndpoint(ctx context.Context, remote, objectFmt, repo string, cred
 }
 
 // pinReplicas admits an advertised replica only when it shares the entry
-// host's scheme, parent domain (aws-us-east-2.entire.io admits *.entire.io)
-// and, over https, effective port, and carries no userinfo. The account
-// access token is presented to every node, so an unvalidated header could
-// redirect it to an arbitrary origin. Any rejected replica fails the run.
-// http (local dev) nodes may differ in port: each node listens on its own.
+// host's scheme, parent domain within its registrable domain
+// (aws-us-east-2.entire.io admits *.entire.io; see replicaDomain) and,
+// over https, effective port, and carries no userinfo.
+// The account access token is presented to every node, so an unvalidated
+// header could redirect it to an arbitrary origin. Any rejected replica
+// fails the run. http (local dev) nodes may differ in port: each node
+// listens on its own.
 func pinReplicas(base string, nodes []string) ([]string, error) {
 	bu, err := url.Parse(base)
 	if err != nil || bu.Hostname() == "" {
 		return nil, fmt.Errorf("remote %q is not a valid URL", base)
 	}
 	baseHost := strings.ToLower(bu.Hostname())
-	parent := baseHost
-	if i := strings.Index(parent, "."); i >= 0 && strings.Contains(parent[i+1:], ".") {
-		parent = parent[i+1:]
-	}
+	site := replicaDomain(baseHost)
 	for _, n := range nodes {
 		u, err := url.Parse(n)
 		if err != nil || u.Hostname() == "" {
 			return nil, fmt.Errorf("X-Entire-Replicas entry %q is not a valid URL", n)
 		}
 		h := strings.ToLower(u.Hostname())
-		sameHost := h == baseHost || strings.HasSuffix(h, "."+parent)
+		// Siblings under the parent, never the parent itself.
+		sameHost := h == baseHost || (site != "" && strings.HasSuffix(h, "."+site))
 		samePort := bu.Scheme != "https" || effectivePort(u) == effectivePort(bu)
 		bareOrigin := (u.Path == "" || u.Path == "/") && u.RawQuery == "" && u.Fragment == ""
 		if u.Scheme != bu.Scheme || u.User != nil || !sameHost || !samePort || !bareOrigin {
@@ -224,6 +226,25 @@ func redirectNode(base, loc string, nodes []string) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("info/refs probe: redirect to %s://%s is not an advertised replica; refusing to follow", lu.Scheme, lu.Host)
+}
+
+// replicaDomain is the domain replicas may share with host: its parent,
+// but never wider than its registrable domain (eTLD+1), so
+// tenant.github.io stays apart from other.github.io and a deep custom
+// host doesn't open its whole company domain. IPs and bare names like
+// localhost have none: only the exact host matches.
+func replicaDomain(host string) string {
+	if net.ParseIP(host) != nil {
+		return ""
+	}
+	site, err := publicsuffix.EffectiveTLDPlusOne(host)
+	if err != nil {
+		return ""
+	}
+	if _, parent, ok := strings.Cut(host, "."); ok && (parent == site || strings.HasSuffix(parent, "."+site)) {
+		return parent
+	}
+	return site
 }
 
 func effectivePort(u *url.URL) string {

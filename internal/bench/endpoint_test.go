@@ -169,4 +169,28 @@ func TestPinReplicas(t *testing.T) {
 	if _, err := pinReplicas("http://localhost:8080", []string{"http://other:8080"}); err == nil {
 		t.Error("a different dev host must be refused")
 	}
+	// An IP has no parent domain: 127.0.0.1 must not admit *.0.0.1.
+	if _, err := pinReplicas("http://127.0.0.1:8080", []string{"http://10.0.0.1:8080"}); err == nil {
+		t.Error("a different IP must be refused")
+	}
+	// A private public suffix separates tenants.
+	if _, err := pinReplicas("https://tenant.github.io", []string{"https://other.github.io"}); err == nil {
+		t.Error("another github.io tenant must be refused")
+	}
+	// A deep entry host admits only its parent, not its whole
+	// registrable domain.
+	if _, err := pinReplicas("https://node.cluster.customer.example.com", []string{"https://other.cluster.customer.example.com"}); err != nil {
+		t.Errorf("a sibling under the parent must be admitted: %v", err)
+	}
+	if _, err := pinReplicas("https://node.cluster.customer.example.com", []string{"https://evil.example.com"}); err == nil {
+		t.Error("the wider company domain must be refused")
+	}
+	// The parent itself is a different service, not a replica.
+	if _, err := pinReplicas("https://aws-us-east-2.entire.io", []string{"https://entire.io"}); err == nil {
+		t.Error("the apex must be refused")
+	}
+	// An eTLD+1 entry host admits its own subdomains.
+	if _, err := pinReplicas("https://entire.io", []string{"https://node-1.entire.io"}); err != nil {
+		t.Errorf("a subdomain of an eTLD+1 entry must be admitted: %v", err)
+	}
 }
