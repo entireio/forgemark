@@ -100,6 +100,11 @@ func TestNormalizeErr(t *testing.T) {
 	if r1 != r2 || !strings.Contains(r1, "<ref>") {
 		t.Errorf("ref variance not collapsed: %q vs %q", r1, r2)
 	}
+	// ...whatever namespace they live under (refs/forgemark/ is the default).
+	r3 := normalizeErr("command error on refs/forgemark/run-a4: rejected")
+	if r3 != r1 {
+		t.Errorf("namespaced ref not collapsed like a branch: %q vs %q", r3, r1)
+	}
 
 	// Truncation runs AFTER normalization: a long URL must not push the status
 	// code past the cutoff.

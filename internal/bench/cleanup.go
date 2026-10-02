@@ -35,15 +35,18 @@ import (
 const staleAfter = 7 * 24 * time.Hour
 
 // staleBenchRefRe matches exactly the refs forgemark itself pushes under a
-// branch prefix, and nothing else: DestRef is
-// refs/heads/<prefix><runID>-c<level>-a<agent>, run IDs are "fm"+base36
+// namespace + branch prefix, and nothing else: DestRef is
+// <namespace><prefix><runID>-c<level>-a<agent>, run IDs are "fm"+base36
 // UnixNano (12+ chars — the {8,} floor keeps a human branch like
 // <prefix>fmt-c1-a1 out of range), the server inserts -t<target> into the run
 // ID, and the session strategy appends -s<n> to the agent ref. Anything that
-// doesn't match this shape is someone else's branch and must never be deleted.
-// The capture group is the run ID's base36 timestamp, for the age guard.
-func staleBenchRefRe(branchPrefix string) *regexp.Regexp {
-	return regexp.MustCompile(`^refs/heads/` + regexp.QuoteMeta(branchPrefix) +
+// doesn't match this shape is someone else's ref and must never be deleted.
+// The namespace is matched verbatim, so a run under refs/forgemark/ never
+// sweeps refs/heads/ leftovers from an earlier refs/heads/ run, and vice
+// versa — those are cleaned by a run with the same namespace. The capture
+// group is the run ID's base36 timestamp, for the age guard.
+func staleBenchRefRe(namespace, branchPrefix string) *regexp.Regexp {
+	return regexp.MustCompile(`^` + regexp.QuoteMeta(namespace) + regexp.QuoteMeta(branchPrefix) +
 		`fm([0-9a-z]{8,})(-t[0-9]+)?-c[0-9]+-a[0-9]+(-s[0-9]+)?$`)
 }
 
@@ -94,7 +97,7 @@ func (r *Runner) CleanStaleBenchRefs(ctx context.Context) (int, error) {
 			r.httpc.CloseIdleConnections()
 		}
 	}()
-	re := staleBenchRefRe(r.w.BranchPrefix)
+	re := staleBenchRefRe(r.w.Namespace(), r.w.BranchPrefix)
 	deleted := 0
 	var errs []error
 	seen := map[string]bool{}
@@ -122,12 +125,14 @@ func (r *Runner) CleanStaleBenchRefs(ctx context.Context) (int, error) {
 
 // sweepSpecs selects the deletion refspecs for one repo's advertisement:
 // every forgemark-shaped ref older than cutoff, EXCEPT the remote's default
-// branch. The default branch can itself be a stale bench ref — the FIRST push
-// to an empty repo promotes that branch to HEAD, and forges then refuse to
-// delete it (GitHub: "refusing to delete the current branch", GitLab: a
-// pre-receive decline) — so asking would fail on every run, forever; one
-// permanently pinned ref is a constant, not the unbounded growth this sweep
-// exists to bound. A symbolic HEAD is the only signal needed: go-git already
+// branch. The default branch can itself be a stale bench ref — under a
+// refs/heads/ namespace the FIRST push to an empty repo promotes that branch
+// to HEAD, and forges then refuse to delete it (GitHub: "refusing to delete
+// the current branch", GitLab: a pre-receive decline) — so asking would fail
+// on every run, forever; one permanently pinned ref is a constant, not the
+// unbounded growth this sweep exists to bound. (Under the default
+// refs/forgemark/ namespace no bench ref can become HEAD, and this check is
+// simply never hit.) A symbolic HEAD is the only signal needed: go-git already
 // normalizes a bare-hash HEAD against the advertisement in every transport
 // path (transport.NewRemoteRefs → packp.ResolveHeadFromHashHeuristic), so a
 // hash HEAD reaching this code means detached-at-a-commit with no matching

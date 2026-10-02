@@ -15,7 +15,7 @@ import (
 // server runs with -t<target>, session -s<n> refs) and NOTHING a human would
 // name — deleting a user's branch is permanent remote data loss.
 func TestStaleBenchRefRe(t *testing.T) {
-	re := staleBenchRefRe("bench/")
+	re := staleBenchRefRe("refs/heads/", "bench/")
 	for _, ref := range []string{
 		"refs/heads/bench/fmk3x9q2ab4z-c1-a0",        // CLI run
 		"refs/heads/bench/fmk3x9q2ab4z-t0-c16-a3",    // server run, target 0
@@ -39,12 +39,29 @@ func TestStaleBenchRefRe(t *testing.T) {
 			t.Errorf("non-forgemark ref %q matched; the sweep would delete user data", ref)
 		}
 	}
-	// An empty prefix (the CLI default) anchors directly under refs/heads/.
-	if !staleBenchRefRe("").MatchString("refs/heads/fmk3x9q2ab4z-c1-a0") {
+	// An empty prefix (the CLI default) anchors directly under the namespace.
+	if !staleBenchRefRe("refs/heads/", "").MatchString("refs/heads/fmk3x9q2ab4z-c1-a0") {
 		t.Error("empty-prefix forgemark ref not matched")
 	}
-	if staleBenchRefRe("").MatchString("refs/heads/bench/fmk3x9q2ab4z-c1-a0") {
+	if staleBenchRefRe("refs/heads/", "").MatchString("refs/heads/bench/fmk3x9q2ab4z-c1-a0") {
 		t.Error("empty-prefix regex must not reach into other prefixes")
+	}
+	// The namespace is part of the anchor: a run under the default
+	// refs/forgemark/ sweeps its own leftovers and nothing under refs/heads/,
+	// and a refs/heads/ run never reaches into refs/forgemark/. A namespace
+	// with regex metacharacters is matched literally.
+	fm := staleBenchRefRe(DefaultRefNamespace, "bench/")
+	if !fm.MatchString("refs/forgemark/bench/fmk3x9q2ab4z-t0-c16-a3-s2") {
+		t.Error("default-namespace forgemark ref not matched")
+	}
+	if fm.MatchString("refs/heads/bench/fmk3x9q2ab4z-c1-a0") {
+		t.Error("default-namespace regex reached into refs/heads/")
+	}
+	if staleBenchRefRe("refs/heads/", "bench/").MatchString("refs/forgemark/bench/fmk3x9q2ab4z-c1-a0") {
+		t.Error("refs/heads/ regex reached into refs/forgemark/")
+	}
+	if staleBenchRefRe("refs/a.b/", "").MatchString("refs/aXb/fmk3x9q2ab4z-c1-a0") {
+		t.Error("namespace metacharacter not quoted")
 	}
 }
 
@@ -52,7 +69,7 @@ func TestStaleBenchRefRe(t *testing.T) {
 // or machine sharing the repo): a ref is swept only when its embedded
 // run-start time is older than the cutoff. Shape alone must never suffice.
 func TestStaleRefAgeGuard(t *testing.T) {
-	re := staleBenchRefRe("bench/")
+	re := staleBenchRefRe("refs/heads/", "bench/")
 	cutoff := time.Now().Add(-staleAfter)
 	id := func(at time.Time) string { return strconv.FormatInt(at.UnixNano(), 36) }
 
@@ -82,7 +99,7 @@ func TestStaleRefAgeGuard(t *testing.T) {
 // path, so a hash HEAD reaching sweepSpecs is detached-at-a-commit and spares
 // nothing.
 func TestSweepSpecsSpareDefaultBranch(t *testing.T) {
-	re := staleBenchRefRe("bench/")
+	re := staleBenchRefRe("refs/heads/", "bench/")
 	cutoff := time.Now() // everything below is "old enough"
 	oldID := "fm" + strconv.FormatInt(time.Now().Add(-3*staleAfter).UnixNano(), 36)
 	pinned := plumbing.ReferenceName("refs/heads/bench/" + oldID + "-c1-a0")
