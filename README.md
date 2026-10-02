@@ -332,10 +332,13 @@ not a forge PAT.
   network path, not the forge. Watch the generator's CPU stays below 100% at the
   top concurrency level, or it — not the server — is your bottleneck.
 - `branch`/`repo` leave one per-agent ref each on the target (swept by the
-  next run once they're a week old); `session` deletes each ephemeral ref as
-  the agent abandons it; `clone` does not write refs. Use throwaway repos
-  regardless. Pass `-branch-prefix` (e.g. `bench/`) to group the refs so
-  they're easy to find and delete on the target afterwards.
+  next run once they're a week old — including leftovers under `refs/heads/`
+  from forgemark versions that predate `-ref-namespace`); `session` deletes
+  each ephemeral ref as the agent abandons it; `clone` does not write refs.
+  Use throwaway repos regardless. Pass `-branch-prefix` (e.g. `bench/`) to
+  group the refs so they're easy to find and delete on the target afterwards.
+- Result docs record `ref_namespace`; docs written before the field existed
+  load as `refs/heads/`, since that was the only place pushes could go.
 - Under the default namespace no bench push ever creates a branch, so an
   **empty repo stays empty**: `clone`/`session` against an unseeded repo find
   nothing to clone and degrade to push-only. Seed a `main` first if you want

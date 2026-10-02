@@ -771,13 +771,14 @@ func (r *Run) finish(m *RunManager, state string) {
 func (r *Run) persistResults(dir string) string {
 	r.mu.Lock()
 	doc := results.Doc{
-		Format:   2,
-		RunID:    r.ID,
-		Strategy: r.workload.Strategy,
-		Duration: r.bw.Duration.String(),
-		Warmup:   r.bw.Warmup.String(),
-		Commit:   r.bw.CommitDesc(),
-		State:    r.state,
+		Format:       2,
+		RunID:        r.ID,
+		Strategy:     r.workload.Strategy,
+		RefNamespace: r.bw.Namespace(),
+		Duration:     r.bw.Duration.String(),
+		Warmup:       r.bw.Warmup.String(),
+		Commit:       r.bw.CommitDesc(),
+		State:        r.state,
 	}
 	for _, t := range r.targets {
 		doc.Targets = append(doc.Targets, results.TargetResult{

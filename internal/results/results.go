@@ -30,9 +30,16 @@ type Doc struct {
 	Format   int    `json:"format,omitempty"` // 2; absent/0 = legacy CLI doc
 	RunID    string `json:"run_id"`
 	Strategy string `json:"strategy"`
-	Duration string `json:"duration"`
-	Warmup   string `json:"warmup"`
-	Commit   string `json:"commit"`
+	// RefNamespace is where the run's pushes landed (refs/forgemark/ by
+	// default, refs/heads/ for branch-shaped pushes). It changes what a
+	// forge does after receive-pack, so two runs with different namespaces
+	// are not the same measurement; Load fills it with LegacyRefNamespace
+	// for docs written before the field existed, when refs/heads/ was the
+	// only place pushes could go.
+	RefNamespace string `json:"ref_namespace,omitempty"`
+	Duration     string `json:"duration"`
+	Warmup       string `json:"warmup"`
+	Commit       string `json:"commit"`
 
 	// format 2
 	State   string         `json:"state,omitempty"` // done | cancelled | failed
@@ -77,15 +84,20 @@ type SeriesPoint struct {
 	CloneP99 float64 `json:"clone_p99_ms,omitempty"`
 }
 
+// LegacyRefNamespace is the namespace every result doc written before
+// Doc.RefNamespace existed pushed to — there was no other option.
+const LegacyRefNamespace = "refs/heads/"
+
 // Summary is one history listing entry.
 type Summary struct {
-	File     string    `json:"file"`
-	RunID    string    `json:"run_id"`
-	Strategy string    `json:"strategy"`
-	State    string    `json:"state,omitempty"`
-	Targets  []string  `json:"targets"`
-	Levels   int       `json:"levels"`
-	ModTime  time.Time `json:"mtime"`
+	File         string    `json:"file"`
+	RunID        string    `json:"run_id"`
+	Strategy     string    `json:"strategy"`
+	RefNamespace string    `json:"ref_namespace"`
+	State        string    `json:"state,omitempty"`
+	Targets      []string  `json:"targets"`
+	Levels       int       `json:"levels"`
+	ModTime      time.Time `json:"mtime"`
 }
 
 // ErrNotFound reports a missing result file.
@@ -147,7 +159,7 @@ func List(dir string) ([]Summary, error) {
 			continue
 		}
 		s := Summary{
-			File: e.Name(), RunID: doc.RunID, Strategy: doc.Strategy,
+			File: e.Name(), RunID: doc.RunID, Strategy: doc.Strategy, RefNamespace: doc.RefNamespace,
 			State: doc.State, ModTime: info.ModTime(),
 		}
 		for _, t := range doc.Targets {
@@ -181,6 +193,12 @@ func Load(dir, file string) (Doc, error) {
 		// Legacy CLI doc: present it as one pseudo-target named by its label.
 		doc.Targets = []TargetResult{{Name: doc.Target, Label: doc.Target, Levels: doc.Levels}}
 		doc.State = "done"
+	}
+	if doc.RefNamespace == "" {
+		// Written before the namespace was configurable (either format), so
+		// its pushes were branches. Say so, rather than letting it read as
+		// equivalent to a refs/forgemark/ run.
+		doc.RefNamespace = LegacyRefNamespace
 	}
 	doc.Target, doc.Levels = "", nil // consumers only see the normalized shape
 	return doc, nil

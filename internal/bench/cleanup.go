@@ -41,14 +41,28 @@ const staleAfter = 7 * 24 * time.Hour
 // <prefix>fmt-c1-a1 out of range), the server inserts -t<target> into the run
 // ID, and the session strategy appends -s<n> to the agent ref. Anything that
 // doesn't match this shape is someone else's ref and must never be deleted.
-// The namespace is matched verbatim, so a run under refs/forgemark/ never
-// sweeps refs/heads/ leftovers from an earlier refs/heads/ run, and vice
-// versa — those are cleaned by a run with the same namespace. The capture
-// group is the run ID's base36 timestamp, for the age guard.
+// The namespace is matched verbatim — plus legacyRefNamespace, always: every
+// forgemark before -ref-namespace existed pushed to refs/heads/, and those
+// leftovers inflate the advertisement exactly like this run's own would, so
+// a run under the new default must still sweep them or the history-dependence
+// this sweep exists to remove would persist until someone ran with
+// -ref-namespace refs/heads/ by hand. The shape and age guards apply to the
+// legacy namespace unchanged, and sweepSpecs still spares the default branch
+// a legacy run may have promoted. Any OTHER namespace's leftovers stay put;
+// they belong to a run that chose it on purpose. The capture group is the
+// run ID's base36 timestamp, for the age guard.
 func staleBenchRefRe(namespace, branchPrefix string) *regexp.Regexp {
-	return regexp.MustCompile(`^` + regexp.QuoteMeta(namespace) + regexp.QuoteMeta(branchPrefix) +
+	ns := regexp.QuoteMeta(namespace)
+	if namespace != legacyRefNamespace {
+		ns = `(?:` + ns + `|` + regexp.QuoteMeta(legacyRefNamespace) + `)`
+	}
+	return regexp.MustCompile(`^` + ns + regexp.QuoteMeta(branchPrefix) +
 		`fm([0-9a-z]{8,})(-t[0-9]+)?-c[0-9]+-a[0-9]+(-s[0-9]+)?$`)
 }
+
+// legacyRefNamespace is where every forgemark run pushed before the namespace
+// became configurable; the sweep keeps covering it (see staleBenchRefRe).
+const legacyRefNamespace = "refs/heads/"
 
 // staleRef reports whether ref is a forgemark bench ref whose owning run
 // started before cutoff. A ref that matches the shape but carries an

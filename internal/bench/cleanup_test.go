@@ -46,22 +46,41 @@ func TestStaleBenchRefRe(t *testing.T) {
 	if staleBenchRefRe("refs/heads/", "").MatchString("refs/heads/bench/fmk3x9q2ab4z-c1-a0") {
 		t.Error("empty-prefix regex must not reach into other prefixes")
 	}
-	// The namespace is part of the anchor: a run under the default
-	// refs/forgemark/ sweeps its own leftovers and nothing under refs/heads/,
-	// and a refs/heads/ run never reaches into refs/forgemark/. A namespace
-	// with regex metacharacters is matched literally.
+	// The namespace is part of the anchor, with one deliberate exception: a
+	// run under any namespace ALSO sweeps refs/heads/, where every forgemark
+	// pushed before the namespace was configurable, so upgrading doesn't
+	// strand those leftovers in the advertisement. Same strict shape, same
+	// prefix, same age guard. Other namespaces are never crossed into, and a
+	// namespace with regex metacharacters is matched literally.
 	fm := staleBenchRefRe(DefaultRefNamespace, "bench/")
-	if !fm.MatchString("refs/forgemark/bench/fmk3x9q2ab4z-t0-c16-a3-s2") {
-		t.Error("default-namespace forgemark ref not matched")
+	for _, ref := range []string{
+		"refs/forgemark/bench/fmk3x9q2ab4z-t0-c16-a3-s2", // its own
+		"refs/heads/bench/fmk3x9q2ab4z-c1-a0",            // legacy default
+	} {
+		if !fm.MatchString(ref) {
+			t.Errorf("default-namespace regex missed %q; stale refs would accumulate", ref)
+		}
 	}
-	if fm.MatchString("refs/heads/bench/fmk3x9q2ab4z-c1-a0") {
-		t.Error("default-namespace regex reached into refs/heads/")
+	for _, ref := range []string{
+		"refs/heads/bench/my-feature",             // legacy namespace, human ref
+		"refs/heads/other/fmk3x9q2ab4z-c1-a0",     // legacy namespace, other prefix
+		"refs/bench/bench/fmk3x9q2ab4z-c1-a0",     // some other namespace
+		"refs/heads/forgemark/fmk3x9q2ab4z-c1-a0", // alternation must bind tighter than the prefix
+	} {
+		if fm.MatchString(ref) {
+			t.Errorf("default-namespace regex matched %q; the sweep would delete someone else's ref", ref)
+		}
 	}
 	if staleBenchRefRe("refs/heads/", "bench/").MatchString("refs/forgemark/bench/fmk3x9q2ab4z-c1-a0") {
 		t.Error("refs/heads/ regex reached into refs/forgemark/")
 	}
 	if staleBenchRefRe("refs/a.b/", "").MatchString("refs/aXb/fmk3x9q2ab4z-c1-a0") {
 		t.Error("namespace metacharacter not quoted")
+	}
+	// The capture group stays the run-ID timestamp with the alternation in
+	// front of it, or the age guard would decode the wrong thing.
+	if m := fm.FindStringSubmatch("refs/heads/bench/fmk3x9q2ab4z-c1-a0"); m == nil || m[1] != "k3x9q2ab4z" {
+		t.Errorf("timestamp capture = %v, want k3x9q2ab4z", m)
 	}
 }
 

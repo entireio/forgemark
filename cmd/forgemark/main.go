@@ -108,8 +108,8 @@ func run() error {
 		return err
 	}
 
-	fmt.Printf("forgemark: target=%s strategy=%s repos=%d nodes=%d object-format=%s commit=%s\n",
-		r.Label(), cfg.workload.Strategy, len(cfg.target.Repos), r.Nodes(), r.ObjectFormat(), cfg.workload.CommitDesc())
+	fmt.Printf("forgemark: target=%s strategy=%s refs=%s repos=%d nodes=%d object-format=%s commit=%s\n",
+		r.Label(), cfg.workload.Strategy, cfg.workload.Namespace(), len(cfg.target.Repos), r.Nodes(), r.ObjectFormat(), cfg.workload.CommitDesc())
 	fmt.Printf("           sweep=%v duration=%s warmup=%s\n", cfg.workload.Concurrency, cfg.workload.Duration, cfg.workload.Warmup)
 	fmt.Println()
 
@@ -286,14 +286,15 @@ func writeResults(cfg *cliConfig, label string, levels []bench.LevelResult) erro
 		out = fmt.Sprintf("results/forgemark-%s.json", cfg.workload.RunID)
 	}
 	doc := results.Doc{
-		RunID:     cfg.workload.RunID,
-		Strategy:  cfg.workload.Strategy,
-		Duration:  cfg.workload.Duration.String(),
-		Warmup:    cfg.workload.Warmup.String(),
-		Commit:    cfg.workload.CommitDesc(),
-		Target:    label,
-		RepoCount: len(cfg.target.Repos),
-		Levels:    levels,
+		RunID:        cfg.workload.RunID,
+		Strategy:     cfg.workload.Strategy,
+		RefNamespace: cfg.workload.Namespace(),
+		Duration:     cfg.workload.Duration.String(),
+		Warmup:       cfg.workload.Warmup.String(),
+		Commit:       cfg.workload.CommitDesc(),
+		Target:       label,
+		RepoCount:    len(cfg.target.Repos),
+		Levels:       levels,
 	}
 	if err := results.Save(out, doc); err != nil {
 		return err
