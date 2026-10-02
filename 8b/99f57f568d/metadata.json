@@ -1,0 +1,37 @@
+{
+  "cli_version": "0.11.3",
+  "checkpoint_id": "8b99f57f568d",
+  "strategy": "manual-commit",
+  "branch": "feat/forgemark-ref-namespace",
+  "checkpoints_count": 6,
+  "files_touched": [
+    "README.md",
+    "cmd/forgemark/main.go",
+    "internal/bench/agent.go",
+    "internal/bench/cleanup.go",
+    "internal/bench/cleanup_test.go",
+    "internal/bench/config.go",
+    "internal/bench/config_test.go",
+    "internal/bench/runner.go",
+    "internal/bench/stats_test.go",
+    "internal/server/runmgr.go",
+    "internal/server/runmgr_test.go",
+    "internal/server/static/js/views/newrun.js"
+  ],
+  "sessions": [
+    {
+      "metadata": "/8b/99f57f568d/0/metadata.json",
+      "transcript": "/8b/99f57f568d/0/full.jsonl",
+      "compact_transcript": "/8b/99f57f568d/0/transcript.jsonl",
+      "content_hash": "/8b/99f57f568d/0/content_hash.txt",
+      "prompt": "/8b/99f57f568d/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 526,
+    "cache_creation_tokens": 91971,
+    "cache_read_tokens": 1826118,
+    "output_tokens": 26921,
+    "api_call_count": 23
+  }
+}

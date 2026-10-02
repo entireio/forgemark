@@ -1,0 +1,23 @@
+when we generate pushes via forgemark we ingest all of this rubbish into our searches. what could be a strategy to avoid that? using a ref that is not head?
+
+---
+
+for session strategy refs/forgemark is still a branch no?
+
+---
+
+yeah but in session it never pushes to the default right?
+
+---
+
+that one head branch is fine for session strategy. we are doing this to avoid rate limits and spending money on search ingestions
+
+---
+
+Keeping refs/heads/ as the default means GitHub and GitLab runs keep measuring the branch-shaped push a real agent does,
+
+not really true since they accept ref/*
+
+---
+
+Entire accepts it
