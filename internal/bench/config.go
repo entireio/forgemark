@@ -71,7 +71,8 @@ const (
 type Workload struct {
 	RunID        string
 	Strategy     string // branch | repo | clone | session
-	BranchPrefix string
+	RefNamespace string // ref namespace pushes land under; "" = DefaultRefNamespace
+	BranchPrefix string // prepended verbatim inside the namespace, before the run ID
 	Concurrency  []int
 	Duration     time.Duration
 	Warmup       time.Duration
@@ -136,17 +137,47 @@ func (w Workload) Validate() error {
 			return fmt.Errorf("-files-max × -file-size must be <= %dMiB per commit", maxCommitBytes>>20)
 		}
 	}
-	// Validate the assembled ref, not the prefix alone: validity is context-dependent
+	// Validate the assembled ref, not the parts alone: validity is context-dependent
 	// (a trailing "/" or bare word is fine mid-ref, invalid standalone). c/a are arbitrary —
-	// only the prefix can invalidate it — so this one parse-time check covers the whole sweep.
+	// only the namespace and prefix can invalidate it — so these parse-time checks cover
+	// the whole sweep. The namespace is checked first, on its own, so a bad namespace
+	// isn't reported as a bad prefix.
 	runID := w.RunID
 	if runID == "" {
 		runID = "fmX"
 	}
-	if err := plumbing.ReferenceName(DestRef(w.BranchPrefix, runID, 1, 0)).Validate(); err != nil {
+	ns := w.Namespace()
+	if !strings.HasPrefix(ns, "refs/") || ns == "refs/" {
+		return fmt.Errorf("invalid -ref-namespace %q: must be refs/<name>/", w.RefNamespace)
+	}
+	if err := plumbing.ReferenceName(DestRef(ns, "", runID, 1, 0)).Validate(); err != nil {
+		return fmt.Errorf("invalid -ref-namespace %q: %w", w.RefNamespace, err)
+	}
+	if err := plumbing.ReferenceName(DestRef(ns, w.BranchPrefix, runID, 1, 0)).Validate(); err != nil {
 		return fmt.Errorf("invalid -branch-prefix %q: %w", w.BranchPrefix, err)
 	}
 	return nil
+}
+
+// DefaultRefNamespace is where bench refs land unless -ref-namespace says
+// otherwise. It is deliberately NOT refs/heads/: receive-pack does the same
+// work for any ref (pack unpack, connectivity check, ref CAS), but a branch
+// additionally triggers whatever the forge runs post-receive — search
+// ingestion, CI, webhooks, branch UI — which costs money and rate-limit
+// budget on the target and is invisible to the push latency this tool
+// measures anyway. A private namespace keeps every forge's post-receive
+// pipeline out of the loop, and the comparison apples to apples. Override
+// with refs/heads/ to load that pipeline on purpose.
+const DefaultRefNamespace = "refs/forgemark/"
+
+// Namespace returns the effective ref namespace: DefaultRefNamespace when
+// unset, always with exactly one trailing slash so DestRef can concatenate.
+func (w Workload) Namespace() string {
+	ns := w.RefNamespace
+	if ns == "" {
+		return DefaultRefNamespace
+	}
+	return strings.TrimRight(ns, "/") + "/"
 }
 
 // CommitDesc describes the commit content shape, e.g. "1-10 x 2048B".
@@ -160,10 +191,12 @@ func NewRunID() string {
 	return "fm" + strconv.FormatInt(time.Now().UnixNano(), 36)
 }
 
-// DestRef builds an agent's destination branch ref, prepending branchPrefix
-// verbatim before the run ID. Empty prefix reproduces the default name.
-func DestRef(branchPrefix, runID string, c, i int) string {
-	return fmt.Sprintf("refs/heads/%s%s-c%d-a%d", branchPrefix, runID, c, i)
+// DestRef builds an agent's destination ref under namespace (already
+// normalized by Workload.Namespace, trailing slash included), prepending
+// branchPrefix verbatim before the run ID. Empty prefix reproduces the
+// default name.
+func DestRef(namespace, branchPrefix, runID string, c, i int) string {
+	return fmt.Sprintf("%s%s%s-c%d-a%d", namespace, branchPrefix, runID, c, i)
 }
 
 // IsGitHubDotCom reports whether remote points at github.com (so the abuse

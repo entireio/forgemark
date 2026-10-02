@@ -177,7 +177,7 @@ export function renderHistory(app, preselect) {
         cb,
         h('span', { class: 'file' }, it.run_id || it.file),
         it.state ? h('span', { class: `badge ${it.state}` }, it.state) : null,
-        h('span', { class: 'meta' }, `${it.strategy} · ${(it.targets || []).join(' vs ') || '—'} · ${it.levels} level${it.levels === 1 ? '' : 's'}`),
+        h('span', { class: 'meta' }, `${it.strategy} · ${it.ref_namespace || 'refs/heads/'} · ${(it.targets || []).join(' vs ') || '—'} · ${it.levels} level${it.levels === 1 ? '' : 's'}`),
         h('span', { class: 'spacer' }),
         h('span', { class: 'meta' }, new Date(it.mtime).toLocaleString())));
     }

@@ -46,6 +46,7 @@ type WorkloadSpec struct {
 	FilesMin       *int     `json:"files_min"`
 	FilesMax       *int     `json:"files_max"`
 	FileSize       *int     `json:"file_size"`
+	RefNamespace   string   `json:"ref_namespace"`
 	BranchPrefix   string   `json:"branch_prefix"`
 	SessionCommits *int     `json:"session_commits"`
 	CloneDepth     *int     `json:"clone_depth"`
@@ -69,6 +70,9 @@ func (ws WorkloadSpec) withDefaults() WorkloadSpec {
 	if ws.Strategy == "" {
 		ws.Strategy = "branch"
 	}
+	if ws.RefNamespace == "" {
+		ws.RefNamespace = bench.DefaultRefNamespace // recorded on the run, so result docs say where refs went
+	}
 	if ws.Concurrency == nil {
 		ws.Concurrency = []int{1, 8, 32, 128}
 	}
@@ -90,6 +94,7 @@ func (ws WorkloadSpec) toWorkload(runID string) bench.Workload {
 	return bench.Workload{
 		RunID:          runID,
 		Strategy:       ws.Strategy,
+		RefNamespace:   ws.RefNamespace,
 		BranchPrefix:   ws.BranchPrefix,
 		Concurrency:    ws.Concurrency,
 		Duration:       time.Duration(*ws.DurationSec * float64(time.Second)),
@@ -766,13 +771,14 @@ func (r *Run) finish(m *RunManager, state string) {
 func (r *Run) persistResults(dir string) string {
 	r.mu.Lock()
 	doc := results.Doc{
-		Format:   2,
-		RunID:    r.ID,
-		Strategy: r.workload.Strategy,
-		Duration: r.bw.Duration.String(),
-		Warmup:   r.bw.Warmup.String(),
-		Commit:   r.bw.CommitDesc(),
-		State:    r.state,
+		Format:       2,
+		RunID:        r.ID,
+		Strategy:     r.workload.Strategy,
+		RefNamespace: r.bw.Namespace(),
+		Duration:     r.bw.Duration.String(),
+		Warmup:       r.bw.Warmup.String(),
+		Commit:       r.bw.CommitDesc(),
+		State:        r.state,
 	}
 	for _, t := range r.targets {
 		doc.Targets = append(doc.Targets, results.TargetResult{

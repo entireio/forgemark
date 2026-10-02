@@ -12,7 +12,7 @@ import (
 func TestWriteLoadRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	doc := Doc{
-		Format: 2, RunID: "fmtest", Strategy: "branch",
+		Format: 2, RunID: "fmtest", Strategy: "branch", RefNamespace: "refs/forgemark/",
 		Duration: "10s", Warmup: "1s", Commit: "1-10 x 2048B", State: "done",
 		Targets: []TargetResult{{
 			Name: "a", Label: "https://a.example",
@@ -29,6 +29,9 @@ func TestWriteLoadRoundTrip(t *testing.T) {
 	}
 	if got.Format != 2 || len(got.Targets) != 1 || got.Targets[0].Series[0].P95 != 42.5 {
 		t.Fatalf("round trip mismatch: %+v", got)
+	}
+	if got.RefNamespace != "refs/forgemark/" {
+		t.Fatalf("ref namespace lost on round trip: %q", got.RefNamespace)
 	}
 }
 
@@ -75,6 +78,33 @@ func TestLoadNormalizesLegacyDoc(t *testing.T) {
 	}
 	if doc.Target != "" || doc.Levels != nil {
 		t.Fatal("legacy fields should be cleared after normalization")
+	}
+	// Written before the namespace was configurable, so its pushes were
+	// branches: it must say so, not read as equivalent to a refs/forgemark/
+	// run. The same holds for a format-2 doc from a server of that era.
+	if doc.RefNamespace != LegacyRefNamespace {
+		t.Fatalf("legacy doc namespace = %q, want %q", doc.RefNamespace, LegacyRefNamespace)
+	}
+	oldServer := `{"format":2,"run_id":"fmsrv","strategy":"branch","state":"done",
+		"targets":[{"name":"a","levels":[{"concurrency":1,"ok":1}]}]}`
+	if err := os.WriteFile(filepath.Join(dir, "forgemark-fmsrv.json"), []byte(oldServer), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if doc, err = Load(dir, "forgemark-fmsrv.json"); err != nil {
+		t.Fatal(err)
+	}
+	if doc.RefNamespace != LegacyRefNamespace {
+		t.Fatalf("pre-namespace server doc namespace = %q, want %q", doc.RefNamespace, LegacyRefNamespace)
+	}
+	// And List carries it, so the history row can show it.
+	list, err := List(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range list {
+		if s.RefNamespace != LegacyRefNamespace {
+			t.Fatalf("summary %s namespace = %q, want %q", s.File, s.RefNamespace, LegacyRefNamespace)
+		}
 	}
 }
 

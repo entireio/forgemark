@@ -186,7 +186,7 @@ func (r *Runner) RunLevel(ctx context.Context, c int, barrier *StartBarrier) (Le
 			repoPath = r.target.Repos[i%len(r.target.Repos)]
 		}
 		node := r.ep.nodes[i%len(r.ep.nodes)]
-		ref := DestRef(r.w.BranchPrefix, r.w.RunID, c, i)
+		ref := DestRef(r.w.Namespace(), r.w.BranchPrefix, r.w.RunID, c, i)
 		a, err := newAgent(i, repoPath, node, ref, r.ep.objFmt, &r.w.Commit, r.creds, r.httpc, clone, sess, r.sink)
 		if err != nil {
 			if barrier != nil {

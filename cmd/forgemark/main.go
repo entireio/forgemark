@@ -21,6 +21,12 @@
 // repo (spread across N repos), clone (clone-only read loop), session
 // (clone+push loop per agent).
 //
+// Pushed refs land under refs/forgemark/ by default (-ref-namespace), not
+// refs/heads/: receive-pack does identical work either way, but a branch also
+// triggers the forge's post-receive pipeline (search ingestion, CI, webhooks),
+// which is paid-for, rate-limited work on the target and invisible to the
+// measured push latency.
+//
 // The benchmark engine itself lives in internal/bench; this package is the
 // flag-driven CLI over it, and `forgemark serve` is the web demo GUI over the
 // same engine.
@@ -102,8 +108,8 @@ func run() error {
 		return err
 	}
 
-	fmt.Printf("forgemark: target=%s strategy=%s repos=%d nodes=%d object-format=%s commit=%s\n",
-		r.Label(), cfg.workload.Strategy, len(cfg.target.Repos), r.Nodes(), r.ObjectFormat(), cfg.workload.CommitDesc())
+	fmt.Printf("forgemark: target=%s strategy=%s refs=%s repos=%d nodes=%d object-format=%s commit=%s\n",
+		r.Label(), cfg.workload.Strategy, cfg.workload.Namespace(), len(cfg.target.Repos), r.Nodes(), r.ObjectFormat(), cfg.workload.CommitDesc())
 	fmt.Printf("           sweep=%v duration=%s warmup=%s\n", cfg.workload.Concurrency, cfg.workload.Duration, cfg.workload.Warmup)
 	fmt.Println()
 
@@ -179,7 +185,8 @@ func parseFlags() (*cliConfig, error) {
 	flag.StringVar(&pattern, "repo-pattern", "", "repo path template; {n} is replaced by the index (1..N), used with -repo-count (e.g. you/bench-{n})")
 	flag.IntVar(&repoCount, "repo-count", 0, "number of repos for -repo-pattern (expands {n} = 1..N)")
 	flag.StringVar(&cfg.workload.Strategy, "strategy", "branch", "branch (one repo, per-agent branches) | repo (spread across repos) | clone (clone-only read loop) | session (clone+push loop per agent)")
-	flag.StringVar(&cfg.workload.BranchPrefix, "branch-prefix", "", "prefix prepended verbatim to branch names, before the run ID (e.g. bench/ → refs/heads/bench/fm...-c1-a0); empty keeps the default")
+	flag.StringVar(&cfg.workload.RefNamespace, "ref-namespace", bench.DefaultRefNamespace, "ref namespace pushes land under; the default keeps bench refs off refs/heads/ so the forge's post-receive pipeline (search ingestion, CI, webhooks) never sees them; refs/heads/ pushes real branches")
+	flag.StringVar(&cfg.workload.BranchPrefix, "branch-prefix", "", "prefix prepended verbatim inside the namespace, before the run ID (e.g. bench/ → refs/forgemark/bench/fm...-c1-a0); empty keeps the default")
 	flag.StringVar(&concCSV, "concurrency", "1,8,32,128", "comma-separated writer counts to sweep")
 	flag.DurationVar(&durationFlag, "duration", 60*time.Second, "measured window per concurrency level")
 	flag.DurationVar(&warmupFlag, "warmup", 10*time.Second, "warm-up before measuring (excluded from stats)")
@@ -279,14 +286,15 @@ func writeResults(cfg *cliConfig, label string, levels []bench.LevelResult) erro
 		out = fmt.Sprintf("results/forgemark-%s.json", cfg.workload.RunID)
 	}
 	doc := results.Doc{
-		RunID:     cfg.workload.RunID,
-		Strategy:  cfg.workload.Strategy,
-		Duration:  cfg.workload.Duration.String(),
-		Warmup:    cfg.workload.Warmup.String(),
-		Commit:    cfg.workload.CommitDesc(),
-		Target:    label,
-		RepoCount: len(cfg.target.Repos),
-		Levels:    levels,
+		RunID:        cfg.workload.RunID,
+		Strategy:     cfg.workload.Strategy,
+		RefNamespace: cfg.workload.Namespace(),
+		Duration:     cfg.workload.Duration.String(),
+		Warmup:       cfg.workload.Warmup.String(),
+		Commit:       cfg.workload.CommitDesc(),
+		Target:       label,
+		RepoCount:    len(cfg.target.Repos),
+		Levels:       levels,
 	}
 	if err := results.Save(out, doc); err != nil {
 		return err

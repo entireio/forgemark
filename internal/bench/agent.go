@@ -35,7 +35,7 @@ type agent struct {
 	id       int
 	repoPath string // repo path, appended to node verbatim (see verbatimURLFor)
 	node     string // node base URL, e.g. https://node1.cluster:443
-	ref      string // destination ref, e.g. refs/heads/<run>-a7
+	ref      string // destination ref, e.g. refs/forgemark/<run>-c8-a7 (see DestRef)
 	objFmt   formatcfg.ObjectFormat
 
 	cfg   *CommitConfig
@@ -244,11 +244,12 @@ const maxErrMsgLen = 200
 
 // reURL/reRef match the volatile substrings go-git embeds in error text — the
 // receive-pack URL (varies by node/repo) and the destination ref (varies by
-// agent/session). Collapsing them lets identical failures group in the results.
-// Compiled once; the message-shape sibling of classify.
+// agent/session, and by namespace: refs/forgemark/ by default, refs/heads/ or
+// anything else via -ref-namespace). Collapsing them lets identical failures
+// group in the results. Compiled once; the message-shape sibling of classify.
 var (
 	reURL = regexp.MustCompile(`https?://\S+`)
-	reRef = regexp.MustCompile(`refs/heads/\S+`)
+	reRef = regexp.MustCompile(`refs/\S+`)
 )
 
 // normalizeErr turns a raw go-git error message into a stable grouping key:

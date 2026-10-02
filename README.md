@@ -280,7 +280,8 @@ modest, or point `-remote` at a self-managed GitLab you control.
 | `-user` | `x-access-token` | basic-auth username (token forges ignore it) |
 | `-repos` / `-repo-pattern`+`-repo-count` | — | target repo path(s), appended verbatim; `-repo-pattern` expands `{n}` to `1..N` |
 | `-strategy` | `branch` | `branch` \| `repo` \| `clone` \| `session` |
-| `-branch-prefix` | — | prepended verbatim to branch names, before the run ID (e.g. `bench/` → `refs/heads/bench/fm...`); groups branches for easy cleanup |
+| `-ref-namespace` | `refs/forgemark/` | where pushed refs land; the default stays off `refs/heads/` so the forge's post-receive pipeline (search ingestion, CI, webhooks) never sees bench pushes. `refs/heads/` pushes real branches |
+| `-branch-prefix` | — | prepended verbatim inside the namespace, before the run ID (e.g. `bench/` → `refs/forgemark/bench/fm...`); groups refs for easy cleanup |
 | `-concurrency` | `1,8,32,128` | swept sequentially, one row each |
 | `-duration` / `-warmup` | `60s` / `10s` | measured window / discarded ramp |
 | `-files-min`/`-files-max`/`-file-size` | `1`/`10`/`2048` | commit shape; ignored by `clone` |
@@ -310,8 +311,15 @@ not a forge PAT.
 ## How it works
 
 - **Each agent** keeps an in-memory go-git repo (object format matched to the
-  remote), commits 1–10 small files per iteration, and pushes its own branch in
+  remote), commits 1–10 small files per iteration, and pushes its own ref in
   a tight loop. Agents are pinned round-robin across the target's nodes.
+- **Pushed refs** land under `refs/forgemark/` (see `-ref-namespace`), not
+  `refs/heads/`. Receive-pack does the same work for any ref — packfile
+  unpack, connectivity check, ref update — so the measured latency is the
+  same, but a branch would also trigger whatever the forge runs post-receive
+  (search ingestion, CI, webhooks), which is paid-for, rate-limited work on
+  the target and never shows up in the number anyway. Pass
+  `-ref-namespace refs/heads/` to load that pipeline on purpose.
 - **Clone runs** create each shallow clone in memory and discard it after
   recording latency, so the client side stays off disk.
 - **Stats**: every operation is timed; warm-up samples are dropped; exact
@@ -323,11 +331,18 @@ not a forge PAT.
   distant machine is dominated by round-trip time, so you'd be measuring the
   network path, not the forge. Watch the generator's CPU stays below 100% at the
   top concurrency level, or it — not the server — is your bottleneck.
-- `branch`/`repo` leave one per-agent branch each on the target (no cleanup);
-  `session` deletes each ephemeral branch as the agent abandons it; `clone`
-  does not write refs. Use throwaway repos regardless. Pass `-branch-prefix`
-  (e.g. `bench/`) to namespace the branches so they're easy to find and delete
-  on the target afterwards.
+- `branch`/`repo` leave one per-agent ref each on the target (swept by the
+  next run once they're a week old — including leftovers under `refs/heads/`
+  from forgemark versions that predate `-ref-namespace`); `session` deletes
+  each ephemeral ref as the agent abandons it; `clone` does not write refs.
+  Use throwaway repos regardless. Pass `-branch-prefix` (e.g. `bench/`) to
+  group the refs so they're easy to find and delete on the target afterwards.
+- Result docs record `ref_namespace`; docs written before the field existed
+  load as `refs/heads/`, since that was the only place pushes could go.
+- Under the default namespace no bench push ever creates a branch, so an
+  **empty repo stays empty** (HEAD unborn, only `refs/forgemark/*` present):
+  `clone`/`session` against an unseeded repo find nothing to clone and degrade
+  to push-only. Seed a `main` first if you want read load.
 - `branch`/`repo` use force-push on agent-owned refs so numbers aren't polluted
   by spurious non-fast-forwards; the server still does the full receive-pack, so
   throughput is unaffected.

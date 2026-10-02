@@ -4,6 +4,8 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	"github.com/entireio/forgemark/internal/bench"
 )
 
 func f64(v float64) *float64 { return &v }
@@ -62,6 +64,9 @@ func TestWithDefaultsAbsentVsExplicitZero(t *testing.T) {
 	}
 	if len(got.Concurrency) != 4 {
 		t.Fatalf("absent concurrency should default to the CLI sweep, got %v", got.Concurrency)
+	}
+	if got.RefNamespace != bench.DefaultRefNamespace {
+		t.Fatalf("absent ref_namespace should record the default on the run, got %q", got.RefNamespace)
 	}
 
 	got = WorkloadSpec{Strategy: "clone", WarmupSec: f64(0), CloneDepth: i(0)}.withDefaults()

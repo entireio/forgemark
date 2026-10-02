@@ -101,8 +101,9 @@ func (a *agent) runSessions(ctx context.Context, start time.Time) {
 }
 
 // cloneSession shallow-clones the base branch into a fresh in-memory repo and
-// returns the local branch to commit on. An empty remote degrades to an orphan
-// (no read load) so the mode still runs against an unseeded repo.
+// returns the local branch to commit on. A remote with nothing to clone (see
+// orphanFallback) degrades to an orphan (no read load) so the mode still runs
+// against an unseeded repo.
 func (a *agent) cloneSession(ctx context.Context) (*git.Repository, plumbing.ReferenceName, error) {
 	clone := a.cloneConfig()
 	if clone == nil {
@@ -132,7 +133,7 @@ func (a *agent) cloneSession(ctx context.Context) (*git.Repository, plumbing.Ref
 		opts.ReferenceName = normalizeBaseRef(clone.baseRef)
 	}
 	repo, err := git.CloneContext(ctx, storer, wt, opts)
-	if errors.Is(err, transport.ErrEmptyRemoteRepository) {
+	if orphanFallback(err, clone.baseRef != "") {
 		// CloneContext still initialised the storer + origin remote; open it and
 		// commit on an unborn master so the session runs without a real base.
 		repo, err = git.Open(storer, wt)
@@ -149,6 +150,27 @@ func (a *agent) cloneSession(ctx context.Context) (*git.Repository, plumbing.Ref
 		return nil, "", fmt.Errorf("resolve head: %w", err)
 	}
 	return repo, head.Name(), nil
+}
+
+// orphanFallback reports whether a failed clone means "nothing to clone" —
+// degrade to an unborn local branch — rather than a real error. Two remote
+// states qualify: a genuinely empty repo, and one whose HEAD is unborn but
+// which holds non-branch refs — exactly what a branch/repo run leaves on an
+// unseeded repo under the default refs/forgemark/ namespace, since no push
+// there ever promotes a branch to HEAD. go-git reports the second state
+// differently per wire protocol: over v2, ls-refs is prefix-filtered to
+// refs/heads/, refs/tags/ and HEAD, so nothing comes back and it is
+// ErrEmptyRemoteRepository like the first; over v0/v1 the full advertisement
+// includes the custom refs, so the clone gets as far as resolving HEAD and
+// fails with ErrRemoteRefNotFound. Without this branch a session run against
+// such a repo would fail every clone, forever, on a v0/v1 forge. Only the
+// implicit default branch degrades: an explicit -base-ref that is missing is
+// an operator typo that must surface as the clone error it is.
+func orphanFallback(err error, explicitBase bool) bool {
+	if errors.Is(err, transport.ErrEmptyRemoteRepository) {
+		return true
+	}
+	return !explicitBase && errors.Is(err, git.ErrRemoteRefNotFound)
 }
 
 func (a *agent) cloneConfig() *cloneConfig {
