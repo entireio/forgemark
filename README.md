@@ -340,9 +340,9 @@ not a forge PAT.
 - Result docs record `ref_namespace`; docs written before the field existed
   load as `refs/heads/`, since that was the only place pushes could go.
 - Under the default namespace no bench push ever creates a branch, so an
-  **empty repo stays empty**: `clone`/`session` against an unseeded repo find
-  nothing to clone and degrade to push-only. Seed a `main` first if you want
-  read load.
+  **empty repo stays empty** (HEAD unborn, only `refs/forgemark/*` present):
+  `clone`/`session` against an unseeded repo find nothing to clone and degrade
+  to push-only. Seed a `main` first if you want read load.
 - `branch`/`repo` use force-push on agent-owned refs so numbers aren't polluted
   by spurious non-fast-forwards; the server still does the full receive-pack, so
   throughput is unaffected.
