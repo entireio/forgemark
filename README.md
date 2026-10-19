@@ -211,6 +211,32 @@ comes from `-token-file` or the `ACCESS_TOKEN` env var — never a CLI flag, so 
 can't leak via `ps` or shell history. Entire needs a couple of extra flags — see
 below.
 
+### 3. Clean up
+
+`branch` and `repo` runs leave one ref per agent on the target. Every run
+sweeps its own leftovers before measuring, but only once they are a week old
+— it can't tell a fresh ref from another generator's live one. `forgemark
+sweep` deletes them on demand, aimed with the same target, `-ref-namespace`
+and `-branch-prefix` flags as the run that pushed them:
+
+```bash
+# See what would go, then delete it
+forgemark sweep $FORGE -token-file ~/.forge-token -repos org/repo -dry-run
+forgemark sweep $FORGE -token-file ~/.forge-token -repos org/repo
+
+# Only the refs a prefixed run left, across the whole repo pattern
+forgemark sweep $FORGE -token-file ~/.forge-token \
+  -repo-pattern "org/bench-{n}" -repo-count 16 -branch-prefix bench/
+```
+
+It selects exactly the refs ForgeMark itself pushes under that namespace and
+prefix (plus leftovers under `refs/heads/` from versions that predate
+`-ref-namespace`), never a human branch or the remote's default branch, and
+lists every selected ref by name. `-min-age` restores an age guard (e.g.
+`-min-age 1h`) if another generator might still be pushing to the repo; the
+default of `0` sweeps everything, which is the point on a throwaway repo. A
+ref the forge refuses to delete is reported and the rest are still swept.
+
 ## Entire
 
 Entire needs two extra flags — `-token-url` and `-jurisdiction`; their presence
@@ -333,10 +359,11 @@ not a forge PAT.
   top concurrency level, or it — not the server — is your bottleneck.
 - `branch`/`repo` leave one per-agent ref each on the target (swept by the
   next run once they're a week old — including leftovers under `refs/heads/`
-  from forgemark versions that predate `-ref-namespace`); `session` deletes
-  each ephemeral ref as the agent abandons it; `clone` does not write refs.
-  Use throwaway repos regardless. Pass `-branch-prefix` (e.g. `bench/`) to
-  group the refs so they're easy to find and delete on the target afterwards.
+  from forgemark versions that predate `-ref-namespace` — or right away by
+  `forgemark sweep`); `session` deletes each ephemeral ref as the agent
+  abandons it; `clone` does not write refs. Use throwaway repos regardless.
+  Pass `-branch-prefix` (e.g. `bench/`) to group the refs so they're easy to
+  find, and to sweep only them afterwards.
 - Result docs record `ref_namespace`; docs written before the field existed
   load as `refs/heads/`, since that was the only place pushes could go.
 - Under the default namespace no bench push ever creates a branch, so an

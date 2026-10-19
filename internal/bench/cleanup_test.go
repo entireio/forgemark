@@ -108,6 +108,23 @@ func TestStaleRefAgeGuard(t *testing.T) {
 	if staleRef(re, "refs/heads/bench/fmzzzzzzzzzzzzzzzzzzzz-c1-a0", cutoff) {
 		t.Error("unparseable run-id timestamp treated as stale")
 	}
+
+	// A zero cutoff (standalone sweep at -min-age 0) drops the time
+	// comparison: a ref stamped by a generator whose clock runs ahead of the
+	// sweeper's is still swept. Shape and a parseable run ID still gate it.
+	future := "refs/heads/bench/fm" + id(time.Now().Add(time.Hour)) + "-c1-a0"
+	if staleRef(re, future, time.Now()) {
+		t.Error("future-stamped ref swept under a real cutoff")
+	}
+	if !staleRef(re, future, time.Time{}) {
+		t.Error("future-stamped ref (clock skew) spared by a zero cutoff; min-age 0 must sweep every bench ref")
+	}
+	if staleRef(re, "refs/heads/bench/my-feature", time.Time{}) {
+		t.Error("zero cutoff swept a non-forgemark ref")
+	}
+	if staleRef(re, "refs/heads/bench/fmzzzzzzzzzzzzzzzzzzzz-c1-a0", time.Time{}) {
+		t.Error("zero cutoff swept an unparseable run-id timestamp")
+	}
 }
 
 // The first push to an empty repo promotes that bench ref to the remote's

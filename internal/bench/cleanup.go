@@ -67,6 +67,13 @@ const legacyRefNamespace = "refs/heads/"
 // staleRef reports whether ref is a forgemark bench ref whose owning run
 // started before cutoff. A ref that matches the shape but carries an
 // unparseable timestamp is NOT stale — when in doubt, never delete.
+//
+// A zero cutoff means "no age guard": every well-formed bench ref is stale.
+// The run timestamp comes from the clock of whichever host pushed the ref, so
+// a standalone sweep at -min-age 0 compared against time.Now() would silently
+// skip refs from a generator whose clock runs ahead of the sweeper's — the
+// exact refs an operator asking for "everything" expects gone. Shape and a
+// parseable run ID still gate deletion; only the time comparison is dropped.
 func staleRef(re *regexp.Regexp, ref string, cutoff time.Time) bool {
 	m := re.FindStringSubmatch(ref)
 	if m == nil {
@@ -75,6 +82,9 @@ func staleRef(re *regexp.Regexp, ref string, cutoff time.Time) bool {
 	nanos, err := strconv.ParseInt(m[1], 36, 64)
 	if err != nil {
 		return false
+	}
+	if cutoff.IsZero() {
+		return true
 	}
 	return time.Unix(0, nanos).Before(cutoff)
 }
@@ -111,8 +121,56 @@ func (r *Runner) CleanStaleBenchRefs(ctx context.Context) (int, error) {
 			r.httpc.CloseIdleConnections()
 		}
 	}()
-	re := staleBenchRefRe(r.w.Namespace(), r.w.BranchPrefix)
+	sweeps, err := r.sweepBenchRefs(ctx, time.Now().Add(-staleAfter), false)
 	deleted := 0
+	for _, s := range sweeps {
+		deleted += s.Deleted
+	}
+	return deleted, err
+}
+
+// SweepOptions tunes a standalone sweep (`forgemark sweep`), as opposed to
+// the housekeeping sweep every run performs on itself before measuring.
+type SweepOptions struct {
+	// DryRun lists the refs the sweep would delete and deletes nothing.
+	DryRun bool
+	// MinAge spares refs whose owning run started less than this long ago.
+	// Zero sweeps every matching ref right away. The in-run sweep always
+	// waits staleAfter because it cannot know what else is pushing to the
+	// repo; a standalone sweep is the operator asserting that nothing is.
+	MinAge time.Duration
+}
+
+// RepoSweep is one repo's share of a sweep.
+type RepoSweep struct {
+	Repo    string
+	Refs    []string // bench refs selected for deletion, in advertisement order
+	Deleted int      // how many of Refs were deleted; 0 on a dry run
+}
+
+// SweepBenchRefs is the standalone sweep behind `forgemark sweep`. It selects
+// refs exactly like CleanStaleBenchRefs — forgemark-shaped refs under this
+// workload's namespace and branch prefix, plus the legacy refs/heads/
+// leftovers, never the remote's default branch — but with the age cutoff set
+// by the caller and an optional dry run, and it reports what it found in
+// every repo so the operator can see the refs before deleting them. Like the
+// in-run sweep it keeps going past a repo that refuses and returns the joined
+// refusals alongside the per-repo outcomes.
+func (r *Runner) SweepBenchRefs(ctx context.Context, o SweepOptions) ([]RepoSweep, error) {
+	if o.MinAge < 0 {
+		return nil, fmt.Errorf("sweep min age %s must be >= 0", o.MinAge)
+	}
+	// Zero age means no guard at all, not "older than now": see staleRef.
+	var cutoff time.Time
+	if o.MinAge > 0 {
+		cutoff = time.Now().Add(-o.MinAge)
+	}
+	return r.sweepBenchRefs(ctx, cutoff, o.DryRun)
+}
+
+func (r *Runner) sweepBenchRefs(ctx context.Context, cutoff time.Time, dryRun bool) ([]RepoSweep, error) {
+	re := staleBenchRefRe(r.w.Namespace(), r.w.BranchPrefix)
+	var sweeps []RepoSweep
 	var errs []error
 	seen := map[string]bool{}
 	for _, repoPath := range r.target.Repos {
@@ -120,21 +178,21 @@ func (r *Runner) CleanStaleBenchRefs(ctx context.Context) (int, error) {
 			continue
 		}
 		seen[repoPath] = true
-		n, err := r.cleanRepoRefs(ctx, repoPath, re)
-		deleted += n
+		s, err := r.sweepRepoRefs(ctx, repoPath, re, cutoff, dryRun)
+		sweeps = append(sweeps, s)
 		if err != nil {
 			// One repo's refusal (protected ref, permissions) must not leave the
 			// REST of a multi-repo target unswept — their advertisements would
 			// keep growing behind a repeating warning. Collect and keep going;
 			// a dead context is different, every further repo would just add
 			// the same cancellation error.
-			errs = append(errs, fmt.Errorf("clean stale bench refs in %s: %w", repoPath, err))
+			errs = append(errs, fmt.Errorf("sweep bench refs in %s: %w", repoPath, err))
 			if ctx.Err() != nil {
 				break
 			}
 		}
 	}
-	return deleted, errors.Join(errs...)
+	return sweeps, errors.Join(errs...)
 }
 
 // sweepSpecs selects the deletion refspecs for one repo's advertisement:
@@ -167,10 +225,15 @@ func sweepSpecs(refs []*plumbing.Reference, re *regexp.Regexp, cutoff time.Time)
 	return specs
 }
 
-func (r *Runner) cleanRepoRefs(ctx context.Context, repoPath string, re *regexp.Regexp) (int, error) {
+// sweepRepoRefs lists one repo's advertisement, selects the bench refs older
+// than cutoff, and — unless dryRun — deletes them. The returned RepoSweep
+// always carries the selection, even when the deletion was refused, so a
+// caller can show what the sweep tried.
+func (r *Runner) sweepRepoRefs(ctx context.Context, repoPath string, re *regexp.Regexp, cutoff time.Time, dryRun bool) (RepoSweep, error) {
+	s := RepoSweep{Repo: repoPath}
 	auth, err := r.creds.basicAuth(ctx, repoPath)
 	if err != nil {
-		return 0, err
+		return s, err
 	}
 	opts := []gitclient.Option{gitclient.WithHTTPClient(r.httpc), gitclient.WithHTTPAuth(auth)}
 	// nodes[0] serves the full advertisement and accepts ref deletes like any
@@ -180,14 +243,17 @@ func (r *Runner) cleanRepoRefs(ctx context.Context, repoPath string, re *regexp.
 	})
 	refs, err := remote.ListContext(ctx, &git.ListOptions{ClientOptions: opts})
 	if errors.Is(err, transport.ErrEmptyRemoteRepository) {
-		return 0, nil // nothing to clean in an unborn repo
+		return s, nil // nothing to clean in an unborn repo
 	}
 	if err != nil {
-		return 0, fmt.Errorf("list refs: %w", err)
+		return s, fmt.Errorf("list refs: %w", err)
 	}
-	specs := sweepSpecs(refs, re, time.Now().Add(-staleAfter))
-	if len(specs) == 0 {
-		return 0, nil
+	specs := sweepSpecs(refs, re, cutoff)
+	for _, spec := range specs {
+		s.Refs = append(s.Refs, strings.TrimPrefix(string(spec), ":"))
+	}
+	if len(specs) == 0 || dryRun {
+		return s, nil
 	}
 	// One push carries every deletion; an empty-source refspec needs no local
 	// objects, so a bare remote over an empty storer suffices. NoErrAlreadyUpToDate
@@ -200,9 +266,10 @@ func (r *Runner) cleanRepoRefs(ctx context.Context, repoPath string, re *regexp.
 		return err
 	}
 	if err := push(specs); err == nil {
-		return len(specs), nil
+		s.Deleted = len(specs)
+		return s, nil
 	} else if ctx.Err() != nil {
-		return 0, err
+		return s, err
 	}
 	// The batch was refused. receive-pack applies each deletion independently,
 	// but go-git reports ONE error for the whole push — a single protected ref
@@ -213,7 +280,6 @@ func (r *Runner) cleanRepoRefs(ctx context.Context, repoPath string, re *regexp.
 	// error confines itself to the refs the forge actually refused. A run of
 	// consecutive refusals means a blanket rule (every retry would fail the
 	// same way) — stop burning a round-trip per ref on it.
-	deleted := 0
 	var errs []error
 	consecutive := 0
 	for i, spec := range specs {
@@ -230,7 +296,7 @@ func (r *Runner) cleanRepoRefs(ctx context.Context, repoPath string, re *regexp.
 			continue
 		}
 		consecutive = 0
-		deleted++
+		s.Deleted++
 	}
-	return deleted, errors.Join(errs...)
+	return s, errors.Join(errs...)
 }

@@ -28,8 +28,8 @@
 // measured push latency.
 //
 // The benchmark engine itself lives in internal/bench; this package is the
-// flag-driven CLI over it, and `forgemark serve` is the web demo GUI over the
-// same engine.
+// flag-driven CLI over it, `forgemark serve` is the web demo GUI over the
+// same engine, and `forgemark sweep` deletes the refs runs leave behind.
 //
 // Only ever run this against infrastructure you own or are explicitly
 // authorized to load-test.
@@ -54,19 +54,31 @@ import (
 )
 
 func main() {
-	// `forgemark serve` starts the web demo GUI; anything else is the classic
-	// flag-driven CLI (which takes no positional args, so this can't collide).
-	if len(os.Args) > 1 && os.Args[1] == "serve" {
-		if err := runServe(os.Args[2:]); err != nil {
-			fmt.Fprintln(os.Stderr, "forgemark: "+err.Error())
-			os.Exit(1)
-		}
-		return
+	// `forgemark serve` starts the web demo GUI and `forgemark sweep` deletes
+	// leftover bench refs; anything else is the classic flag-driven benchmark
+	// CLI (which takes no positional args, so a subcommand can't collide).
+	var err error
+	switch sub := subcommand(os.Args); sub {
+	case "serve":
+		err = runServe(os.Args[2:])
+	case "sweep":
+		err = runSweep(os.Args[2:])
+	default:
+		err = run()
 	}
-	if err := run(); err != nil {
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "forgemark: "+err.Error())
 		os.Exit(1)
 	}
+}
+
+// subcommand returns argv's leading subcommand word, or "" for the benchmark
+// CLI. Only a bare word counts: a leading flag belongs to the benchmark.
+func subcommand(argv []string) string {
+	if len(argv) > 1 && !strings.HasPrefix(argv[1], "-") {
+		return argv[1]
+	}
+	return ""
 }
 
 // cliConfig is the parsed flag set: the single benchmark target, the shared
@@ -172,44 +184,72 @@ func readSecret(tokenFile string) (string, error) {
 	return "", errors.New("no credential: pass -token-file <path|-> (recommended) or set ACCESS_TOKEN")
 }
 
-func parseFlags() (*cliConfig, error) {
-	cfg := &cliConfig{}
-	var reposCSV, pattern, concCSV string
-	var repoCount int
-	var durationFlag, warmupFlag time.Duration
+// targetArgs holds the raw repo-selection flag values, which expand into
+// Target.Repos only after parsing (expandRepos); every other target flag
+// binds to its Target field directly.
+type targetArgs struct {
+	reposCSV, pattern string
+	repoCount         int
+}
 
-	flag.StringVar(&cfg.target.Remote, "remote", "", "base URL of the forge, e.g. https://gitlab.com (repos are appended verbatim as <base>/<repo>); for Entire, the cluster base URL")
-	flag.StringVar(&cfg.tokenFile, "token-file", "", "path to a file holding the credential secret (Entire: the subject token); \"-\" reads stdin. Preferred over $ACCESS_TOKEN — keeps the secret off argv")
-	flag.StringVar(&cfg.target.User, "user", "", "basic-auth username for the credential (default x-access-token; token forges ignore it)")
-	flag.StringVar(&reposCSV, "repos", "", "comma-separated repo paths, appended to -remote verbatim (e.g. you/bench.git)")
-	flag.StringVar(&pattern, "repo-pattern", "", "repo path template; {n} is replaced by the index (1..N), used with -repo-count (e.g. you/bench-{n})")
-	flag.IntVar(&repoCount, "repo-count", 0, "number of repos for -repo-pattern (expands {n} = 1..N)")
-	flag.StringVar(&cfg.workload.Strategy, "strategy", "branch", "branch (one repo, per-agent branches) | repo (spread across repos) | clone (clone-only read loop) | session (clone+push loop per agent)")
-	flag.StringVar(&cfg.workload.RefNamespace, "ref-namespace", bench.DefaultRefNamespace, "ref namespace pushes land under; the default keeps bench refs off refs/heads/ so the forge's post-receive pipeline (search ingestion, CI, webhooks) never sees them; refs/heads/ pushes real branches")
-	flag.StringVar(&cfg.workload.BranchPrefix, "branch-prefix", "", "prefix prepended verbatim inside the namespace, before the run ID (e.g. bench/ → refs/forgemark/bench/fm...-c1-a0); empty keeps the default")
-	flag.StringVar(&concCSV, "concurrency", "1,8,32,128", "comma-separated writer counts to sweep")
-	flag.DurationVar(&durationFlag, "duration", 60*time.Second, "measured window per concurrency level")
-	flag.DurationVar(&warmupFlag, "warmup", 10*time.Second, "warm-up before measuring (excluded from stats)")
-	flag.IntVar(&cfg.workload.Commit.FilesMin, "files-min", 1, "min changed files per commit")
-	flag.IntVar(&cfg.workload.Commit.FilesMax, "files-max", 10, "max changed files per commit")
-	flag.IntVar(&cfg.workload.Commit.FileSize, "file-size", 2048, "bytes per changed file")
-	flag.StringVar(&cfg.target.ObjectFmt, "object-format", "auto", "auto | sha1 | sha256 (auto probes the entiredb advertisement; generic/github default sha1)")
-	flag.BoolVar(&cfg.target.Insecure, "insecure", false, "skip TLS verification (dev/self-signed hosts)")
-	flag.StringVar(&cfg.out, "out", "", "write JSON results here (default: results/forgemark-<id>.json)")
-	flag.IntVar(&cfg.workload.SessionCommits, "session-commits", 5, "session strategy: commit+push checkpoints per cloned session")
-	flag.IntVar(&cfg.workload.CloneDepth, "clone-depth", 1, "clone/session strategy: shallow clone depth (1=tip; 0=full history)")
-	flag.StringVar(&cfg.workload.BaseRef, "base-ref", "", "clone/session strategy: branch to clone — bare name (main) or full ref (refs/heads/main); default: remote default branch")
+// register binds the flags that identify and authenticate one forge target
+// onto fs. The benchmark and `forgemark sweep` both call it, so the two
+// take the same target flags with the same meanings — a sweep is aimed with
+// the exact flags of the run that left the refs behind.
+func (a *targetArgs) register(fs *flag.FlagSet, t *bench.Target, tokenFile *string) {
+	fs.StringVar(&t.Remote, "remote", "", "base URL of the forge, e.g. https://gitlab.com (repos are appended verbatim as <base>/<repo>); for Entire, the cluster base URL")
+	fs.StringVar(tokenFile, "token-file", "", "path to a file holding the credential secret (Entire: the subject token); \"-\" reads stdin. Preferred over $ACCESS_TOKEN — keeps the secret off argv")
+	fs.StringVar(&t.User, "user", "", "basic-auth username for the credential (default x-access-token; token forges ignore it)")
+	fs.StringVar(&a.reposCSV, "repos", "", "comma-separated repo paths, appended to -remote verbatim (e.g. you/bench.git)")
+	fs.StringVar(&a.pattern, "repo-pattern", "", "repo path template; {n} is replaced by the index (1..N), used with -repo-count (e.g. you/bench-{n})")
+	fs.IntVar(&a.repoCount, "repo-count", 0, "number of repos for -repo-pattern (expands {n} = 1..N)")
+	fs.StringVar(&t.ObjectFmt, "object-format", "auto", "auto | sha1 | sha256 (auto probes the entiredb advertisement; generic/github default sha1)")
+	fs.BoolVar(&t.Insecure, "insecure", false, "skip TLS verification (dev/self-signed hosts)")
 
 	// entiredb: presence of -token-url/-jurisdiction selects the entiredb path.
-	flag.StringVar(&cfg.target.TokenURL, "token-url", "", "entiredb: core /oauth/token endpoint, e.g. https://<region>.auth.example.com/oauth/token (selects entiredb; not dialed)")
-	flag.StringVar(&cfg.target.Jurisdiction, "jurisdiction", "", "entiredb: jurisdiction host (bare origin), e.g. https://<region>.example.com (selects entiredb)")
-	flag.StringVar(&cfg.target.ClientID, "client-id", "entire-cli", "entiredb: accepted for compatibility; unused")
+	fs.StringVar(&t.TokenURL, "token-url", "", "entiredb: core /oauth/token endpoint, e.g. https://<region>.auth.example.com/oauth/token (selects entiredb; not dialed)")
+	fs.StringVar(&t.Jurisdiction, "jurisdiction", "", "entiredb: jurisdiction host (bare origin), e.g. https://<region>.example.com (selects entiredb)")
+	fs.StringVar(&t.ClientID, "client-id", "entire-cli", "entiredb: accepted for compatibility; unused")
+}
+
+// repos expands the parsed repo-selection flags into the target repo list.
+func (a *targetArgs) repos() ([]string, error) {
+	return expandRepos(a.reposCSV, a.pattern, a.repoCount)
+}
+
+// registerRefFlags binds the two flags that decide where bench refs land.
+// `forgemark sweep` takes the same two to find those refs again.
+func registerRefFlags(fs *flag.FlagSet, w *bench.Workload) {
+	fs.StringVar(&w.RefNamespace, "ref-namespace", bench.DefaultRefNamespace, "ref namespace pushes land under; the default keeps bench refs off refs/heads/ so the forge's post-receive pipeline (search ingestion, CI, webhooks) never sees them; refs/heads/ pushes real branches")
+	fs.StringVar(&w.BranchPrefix, "branch-prefix", "", "prefix prepended verbatim inside the namespace, before the run ID (e.g. bench/ → refs/forgemark/bench/fm...-c1-a0); empty keeps the default")
+}
+
+func parseFlags() (*cliConfig, error) {
+	cfg := &cliConfig{}
+	var ta targetArgs
+	var concCSV string
+	var durationFlag, warmupFlag time.Duration
+
+	fs := flag.CommandLine
+	ta.register(fs, &cfg.target, &cfg.tokenFile)
+	registerRefFlags(fs, &cfg.workload)
+	fs.StringVar(&cfg.workload.Strategy, "strategy", "branch", "branch (one repo, per-agent branches) | repo (spread across repos) | clone (clone-only read loop) | session (clone+push loop per agent)")
+	fs.StringVar(&concCSV, "concurrency", "1,8,32,128", "comma-separated writer counts to sweep")
+	fs.DurationVar(&durationFlag, "duration", 60*time.Second, "measured window per concurrency level")
+	fs.DurationVar(&warmupFlag, "warmup", 10*time.Second, "warm-up before measuring (excluded from stats)")
+	fs.IntVar(&cfg.workload.Commit.FilesMin, "files-min", 1, "min changed files per commit")
+	fs.IntVar(&cfg.workload.Commit.FilesMax, "files-max", 10, "max changed files per commit")
+	fs.IntVar(&cfg.workload.Commit.FileSize, "file-size", 2048, "bytes per changed file")
+	fs.StringVar(&cfg.out, "out", "", "write JSON results here (default: results/forgemark-<id>.json)")
+	fs.IntVar(&cfg.workload.SessionCommits, "session-commits", 5, "session strategy: commit+push checkpoints per cloned session")
+	fs.IntVar(&cfg.workload.CloneDepth, "clone-depth", 1, "clone/session strategy: shallow clone depth (1=tip; 0=full history)")
+	fs.StringVar(&cfg.workload.BaseRef, "base-ref", "", "clone/session strategy: branch to clone — bare name (main) or full ref (refs/heads/main); default: remote default branch")
 	flag.Parse()
 
 	cfg.workload.Duration = durationFlag
 	cfg.workload.Warmup = warmupFlag
 
-	repos, err := expandRepos(reposCSV, pattern, repoCount)
+	repos, err := ta.repos()
 	if err != nil {
 		return nil, err
 	}

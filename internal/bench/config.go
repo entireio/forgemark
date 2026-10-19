@@ -209,3 +209,21 @@ func IsGitHubDotCom(remote string) bool {
 	}
 	return strings.EqualFold(u.Hostname(), "github.com")
 }
+
+// SweepWorkload is the workload a standalone sweep (`forgemark sweep`) hands
+// NewRunner. The sweep itself uses only the ref namespace and branch prefix
+// — they anchor the regex that selects bench refs — but resolving the target
+// (credentials, entiredb node discovery, the object format) happens in
+// NewRunner against a validated workload, so the sweep borrows the smallest
+// valid run shape instead of growing a second setup path. Nothing in it is
+// ever run; Validate still rejects a malformed namespace or prefix up front.
+func SweepWorkload(refNamespace, branchPrefix string) Workload {
+	return Workload{
+		Strategy:     "branch",
+		RefNamespace: refNamespace,
+		BranchPrefix: branchPrefix,
+		Concurrency:  []int{1},
+		Duration:     time.Second,
+		Commit:       CommitConfig{FilesMin: 1, FilesMax: 1, FileSize: 1},
+	}
+}
