@@ -95,10 +95,13 @@ func TestSweepBenchRefsEndToEnd(t *testing.T) {
 	repo := newGitHTTPRepo(t)
 	oldStale := "refs/forgemark/bench/" + runIDAt(time.Now().Add(-2*staleAfter)) + "-c1-a0"
 	fresh := "refs/forgemark/bench/" + runIDAt(time.Now().Add(-time.Hour)) + "-c1-a1"
+	// Stamped by a machine whose clock runs ahead of ours: its run "starts"
+	// in our future. -min-age 0 must still reach it.
+	skewed := "refs/forgemark/bench/" + runIDAt(time.Now().Add(time.Hour)) + "-c1-a2"
 	legacy := "refs/heads/bench/" + runIDAt(time.Now().Add(-2*staleAfter)) + "-c1-a0"
 	otherPrefix := "refs/forgemark/other/" + runIDAt(time.Now().Add(-2*staleAfter)) + "-c1-a0"
 	human := "refs/forgemark/bench/keep-me"
-	for _, ref := range []string{oldStale, fresh, legacy, otherPrefix, human} {
+	for _, ref := range []string{oldStale, fresh, skewed, legacy, otherPrefix, human} {
 		repo.set(ref)
 	}
 	before := repo.refs()
@@ -133,7 +136,7 @@ func TestSweepBenchRefsEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dry run: %v", err)
 	}
-	want(got, []string{oldStale, fresh, legacy}, 0)
+	want(got, []string{oldStale, fresh, skewed, legacy}, 0)
 	if after := repo.refs(); !slices.Equal(after, before) {
 		t.Fatalf("dry run changed the remote: before %v, after %v", before, after)
 	}
@@ -146,16 +149,17 @@ func TestSweepBenchRefsEndToEnd(t *testing.T) {
 	if n != 2 {
 		t.Errorf("CleanStaleBenchRefs deleted %d, want 2", n)
 	}
-	if after := repo.refs(); slices.Contains(after, oldStale) || slices.Contains(after, legacy) || !slices.Contains(after, fresh) {
+	if after := repo.refs(); slices.Contains(after, oldStale) || slices.Contains(after, legacy) || !slices.Contains(after, fresh) || !slices.Contains(after, skewed) {
 		t.Fatalf("in-run sweep left %v", after)
 	}
 
-	// The standalone sweep at min-age 0 reaches what the guard spared.
+	// The standalone sweep at min-age 0 reaches what the guard spared — the
+	// hour-old ref AND the one stamped ahead of this machine's clock.
 	got, err = r.SweepBenchRefs(ctx, SweepOptions{})
 	if err != nil {
 		t.Fatalf("sweep: %v", err)
 	}
-	want(got, []string{fresh}, 1)
+	want(got, []string{fresh, skewed}, 2)
 	if after := repo.refs(); !slices.Equal(after, []string{human, otherPrefix, "refs/heads/main"}) {
 		t.Fatalf("sweep left %v, want only the human ref, the other prefix and main", after)
 	}
@@ -175,8 +179,10 @@ func TestSweepBenchRefsMinAge(t *testing.T) {
 	repo := newGitHTTPRepo(t)
 	old := "refs/forgemark/" + runIDAt(time.Now().Add(-48*time.Hour)) + "-c4-a2"
 	recent := "refs/forgemark/" + runIDAt(time.Now().Add(-time.Minute)) + "-c4-a3"
+	skewed := "refs/forgemark/" + runIDAt(time.Now().Add(time.Hour)) + "-c4-a4" // pushing clock ahead of ours
 	repo.set(old)
 	repo.set(recent)
+	repo.set(skewed)
 
 	ctx := context.Background()
 	r, err := NewRunner(ctx, Target{Remote: repo.url, Repos: []string{"repo.git"}, Secret: "token"},
@@ -196,7 +202,7 @@ func TestSweepBenchRefsMinAge(t *testing.T) {
 	if len(got) != 1 || !slices.Equal(got[0].Refs, []string{old}) || got[0].Deleted != 1 {
 		t.Fatalf("min-age 24h sweep = %+v, want only %s deleted", got, old)
 	}
-	if after := repo.refs(); !slices.Equal(after, []string{recent, "refs/heads/main"}) {
+	if after := repo.refs(); !slices.Equal(after, []string{recent, skewed, "refs/heads/main"}) {
 		t.Fatalf("remote after min-age sweep = %v", after)
 	}
 }

@@ -67,6 +67,17 @@ const legacyRefNamespace = "refs/heads/"
 // staleRef reports whether ref is a forgemark bench ref whose owning run
 // started before cutoff. A ref that matches the shape but carries an
 // unparseable timestamp is NOT stale — when in doubt, never delete.
+//
+// A zero cutoff means "no age guard": every shaped ref is stale. That is the
+// only correct meaning of -min-age 0, and it is NOT the same as comparing
+// against time.Now(). The run ID's timestamp was stamped by the PUSHING
+// machine's clock, so a ref from a machine running ahead of this one decodes
+// to a start time in our future; a now-based cutoff reads that as "not yet
+// started" and skips it, silently, forever, until our clock catches up — a
+// sweep the operator explicitly asked to be immediate would leave refs
+// behind with no indication why. The age guard is a window measured in
+// hours or days, where skew of seconds or minutes is noise; a window of
+// zero is where skew becomes the whole comparison, so there is no window.
 func staleRef(re *regexp.Regexp, ref string, cutoff time.Time) bool {
 	m := re.FindStringSubmatch(ref)
 	if m == nil {
@@ -75,6 +86,9 @@ func staleRef(re *regexp.Regexp, ref string, cutoff time.Time) bool {
 	nanos, err := strconv.ParseInt(m[1], 36, 64)
 	if err != nil {
 		return false
+	}
+	if cutoff.IsZero() {
+		return true
 	}
 	return time.Unix(0, nanos).Before(cutoff)
 }
@@ -125,9 +139,13 @@ type SweepOptions struct {
 	// DryRun lists the refs the sweep would delete and deletes nothing.
 	DryRun bool
 	// MinAge spares refs whose owning run started less than this long ago.
-	// Zero sweeps every matching ref right away. The in-run sweep always
-	// waits staleAfter because it cannot know what else is pushing to the
-	// repo; a standalone sweep is the operator asserting that nothing is.
+	// Zero sweeps every matching ref right away — with NO timestamp
+	// comparison at all, not a cutoff of "now": run IDs carry the pushing
+	// machine's clock, and a ref stamped ahead of this machine's clock would
+	// otherwise be spared as "not started yet" (see staleRef). The in-run
+	// sweep always waits staleAfter because it cannot know what else is
+	// pushing to the repo; a standalone sweep is the operator asserting that
+	// nothing is.
 	MinAge time.Duration
 }
 
@@ -150,9 +168,19 @@ func (r *Runner) SweepBenchRefs(ctx context.Context, o SweepOptions) ([]RepoSwee
 	if o.MinAge < 0 {
 		return nil, fmt.Errorf("sweep min age %s must be >= 0", o.MinAge)
 	}
-	return r.sweepBenchRefs(ctx, time.Now().Add(-o.MinAge), o.DryRun)
+	// A zero MinAge is the zero cutoff (no age guard), never time.Now():
+	// clock skew between the machine that pushed a ref and this one would
+	// put the ref's start time in our future and the now-cutoff would skip
+	// it. Only a positive window compares timestamps.
+	var cutoff time.Time
+	if o.MinAge > 0 {
+		cutoff = time.Now().Add(-o.MinAge)
+	}
+	return r.sweepBenchRefs(ctx, cutoff, o.DryRun)
 }
 
+// sweepBenchRefs sweeps every repo of the target. A zero cutoff disables the
+// age guard (see staleRef); the in-run sweep always passes now-staleAfter.
 func (r *Runner) sweepBenchRefs(ctx context.Context, cutoff time.Time, dryRun bool) ([]RepoSweep, error) {
 	re := staleBenchRefRe(r.w.Namespace(), r.w.BranchPrefix)
 	var sweeps []RepoSweep
