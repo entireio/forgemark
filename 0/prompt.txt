@@ -1,0 +1,9 @@
+There's a bug in the sweep command: with -min-age 0 it still skips refs whose run ID is stamped ahead of this machine's clock, because run IDs carry the pushing machinest for a ref stamped in the future. Save thelesson as a durable memory for this repo so no agent ever puts this bug back. Then commit, push, and open a new trail for this branch titled "Sweep: ignore clock skew atd the memory go up for review together.
+
+---
+
+run entire doctor and resolve
+
+---
+
+fix it all
