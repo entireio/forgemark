@@ -1,0 +1,43 @@
+now check the other active session of claude and provide me the rest of the script that i now have to add at the end of the script you already generated. This will be about brainstore and hosted brain on the repo. Check the sessions to give me the command I need to run so that a trail opens, spend time to introduce the brain at the repo level both at the very beginning and towards the end and finally value prop it. I'm ready to copy paste the whole thing again after I tell you to add it in a .txt but first you have to agree with me in this window and then crate the txt when i tell you. In the meantime this is how I was starting so keep it "In this demo our repository gets Continuous Memory. It helps us and agents make better decisions, without wasting time and tokens hitting the same walls as before. Every day developers and agents make decisions, hit constraints, and learn what works. That vanishes when the session ends. Brain keeps it, so the next agent already knows the past before building the future."
+
+---
+
+mention that memories get merged when code gets merge, because memories land in the trails. Check last messages from Evis in slack today and include this info because in the beginning i'll go over them (so I show the end result) and then start from the beginning to achieve that.
+
+---
+
+improve the cold open by condensing it, and starting from a repo's memories and how they're useful, then how we get them, and then that brain lives locally as well, and it's up to them if they host it on their repo, but write this in a way that sounds natural. Your opening "In this demo our repository gets Continuous Memory. It helps us and agents make better decisions, without wasting time and tokens hitting the same walls as before. Every day developers and agents make decisions, hit constraints, and learn what works. " should be part of the cold open because what's mainly on cold open is like the B-roll. Now the cold open together with opening is like tooooo long of an opening you must condense it into one and make it work. In brainstore and the trail section shouldn't the command be "> entire brain connect" instead of "> entire brain status" Explain why is recorded as an invariant. I wanna run that thing live on Claude Code so give me the exact prompt that will show Claude doing it. The closing explains it well, and I wish your opening could do too at the very beginning such as "in this demo we will " Your closing is really strong, make the intro strong too.
+
+---
+
+now i don't want script at all, just the commands on screen. There was a brain setup step and a brain status you didn't do. The only think i want you to give a very brief explanation/lines about is what forgemark does and the context around the connector so I get to refresh it in my memory. Then remember the entire brain dash and viz commands too, not just the connect
+
+---
+
+explain a bit more by adding to that paragraph you gave the reason someone joining the team or a reviewer would consider sharding/splitting. Remove the line that says "The forge can be ...". Then add a brief explanation of how brain is updated behind the scenes and how it categorizes different memories into what they should be. Then, the prompt "One thing worth keeping for the team: the push race preset is 16 agents for 60 seconds because above 16 a public forge's abuse limiter can trip mid-race and wreck the comparison. Make sure the next person, or the next agent, doesn't have to rediscover that. Give me the fact id." isn't it like another prompt I should run separately after the "I want to make the collector lock faster?". Then once I type the "one thing worth keeping" shall I just let it run, exit claude code and open codex to prompt codex?
+
+For the connect part, I want to create a new trail, not switching to a current one. However I'll need the prompt to create that new trail while pushing a memory into it when it's given for review.
+
+---
+
+can you explain this further? and generate the same output as per previous message? There's a bug in the sweep command: with -min-age 0 it still skips refs whose run ID is stamped ahead of this machine's clock, because run IDs carry the pushing machine's time. Fix it, with a test for a ref stamped in the future. Save the lesson as a durable memory for this repo so no agent ever puts this bug back. Then commit, push, and open a new trail for this branch titled "Sweep: ignore clock skew at min-age 0", so the fix and the memory go up for review together. Then I want you to make the forgemark explanation for shared lock shorter
+
+---
+
+regenerate it all but explain sweep in much easier terms like a one liner that everyone can understand or a very very brief explanation
+
+---
+
+finally return it all but include the stash command before the brain connect.
+
+---
+
+generate once again but make the before recording appearing at the very beginning
+
+---
+
+what was the prompt for the brief command "make the collector lock faster"?
+
+---
+
+i run all and just finished, if you need to undo something on the repo to prepare me for the next demo tomorrow that is the official one go for it. You can bring branches back to where they should be etc
