@@ -1,0 +1,24 @@
+{
+  "cli_version": "0.12.0",
+  "checkpoint_id": "01M5MN1Q21TQYZHHAATGTV2JY1",
+  "session_id": "d8fc50af-3112-42fe-bc2f-864bb5ca2d3d",
+  "strategy": "manual-commit",
+  "created_at": "2026-10-23T15:11:11.813785Z",
+  "branch": "demo/sweep-new",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "internal/bench/cleanup.go",
+    "internal/bench/cleanup_test.go"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-fable-5-1",
+  "turn_id": "08965d431d91",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 226,
+    "cache_creation_tokens": 49662,
+    "cache_read_tokens": 544633,
+    "output_tokens": 5251,
+    "api_call_count": 8
+  }
+}
