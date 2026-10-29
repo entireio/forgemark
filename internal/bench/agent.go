@@ -14,6 +14,7 @@ import (
 	"github.com/go-git/go-billy/v6/memfs"
 	"github.com/go-git/go-git/v6"
 	"github.com/go-git/go-git/v6/config"
+	"github.com/go-git/go-git/v6/plumbing"
 	gitclient "github.com/go-git/go-git/v6/plumbing/client"
 	formatcfg "github.com/go-git/go-git/v6/plumbing/format/config"
 	"github.com/go-git/go-git/v6/plumbing/object"
@@ -30,7 +31,9 @@ func (noopSigner) Sign(context.Context, io.Reader) ([]byte, error) { return nil,
 // stream of small commits to its assigned ref on its assigned repo+node. Each
 // agent owns its own ref (per-agent branch), so in branch/repo strategies its
 // pushes never lose a CAS race — what we measure is the server's per-repo
-// serialized ref-commit throughput, not client retry behaviour.
+// serialized ref-commit throughput, not client retry behaviour. The
+// contention strategy inverts that on purpose: every agent shares one ref and
+// CAS rejections are the measurement.
 type agent struct {
 	id       int
 	repoPath string // repo path, appended to node verbatim (see verbatimURLFor)
@@ -44,6 +47,7 @@ type agent struct {
 	pushOpts []string       // push options sent with every push (git push -o)
 	clone    *cloneConfig   // non-nil → "clone" strategy (clone-only loop)
 	sess     *sessionConfig // non-nil → "session" strategy (clone+push loop)
+	contend  bool           // "contention" strategy: every agent races the same ref, non-force
 	sink     Sink           // optional live observer; nil on the CLI path
 
 	repo      *git.Repository
@@ -103,10 +107,10 @@ const resetEvery = 128
 // newAgent builds an agent. In branch/repo mode it initialises its in-memory
 // repo up front (object format matched to the remote). In clone/session mode
 // the repo is created per clone by the clone loop, so init is skipped.
-func newAgent(id int, repoPath, node, ref string, objFmt formatcfg.ObjectFormat, cfg *CommitConfig, creds credentialProvider, httpc *http.Client, pushOpts []string, clone *cloneConfig, sess *sessionConfig, sink Sink) (*agent, error) {
+func newAgent(id int, repoPath, node, ref string, objFmt formatcfg.ObjectFormat, cfg *CommitConfig, creds credentialProvider, httpc *http.Client, pushOpts []string, clone *cloneConfig, sess *sessionConfig, contend bool, sink Sink) (*agent, error) {
 	a := &agent{
 		id: id, repoPath: repoPath, node: node, ref: ref, objFmt: objFmt,
-		cfg: cfg, creds: creds, httpc: httpc, pushOpts: pushOpts, clone: clone, sess: sess, sink: sink,
+		cfg: cfg, creds: creds, httpc: httpc, pushOpts: pushOpts, clone: clone, sess: sess, contend: contend, sink: sink,
 	}
 	if clone == nil && sess == nil {
 		if err := a.initRepo(); err != nil {
@@ -185,6 +189,14 @@ func (a *agent) run(ctx context.Context, start, end time.Time) {
 		o := classify(err)
 		a.record(Sample{Offset: t0.Sub(start), Dur: dur, Res: o, Msg: errMsg(o, err)})
 		iter++
+		// A contention agent that lost the ref race fetches the shared tip and
+		// resets onto it so the next commit is its child — the push → reject →
+		// fetch → rebase → push loop a real agent runs against a busy ref. The
+		// converge is not a measured op; if it fails the next push just
+		// CAS-rejects again, so a converge failure can't hot-spin the loop.
+		if a.contend && o == OutcomeCAS {
+			_ = a.converge(ctx)
+		}
 	}
 }
 
@@ -234,10 +246,18 @@ func (a *agent) push(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	// Owned refs force-push ('+' refspec) so numbers stay clean of spurious
+	// non-ff. Contention agents race the shared ref with NEITHER '+' nor
+	// Force — the CAS / non-fast-forward rejection is the measured signal,
+	// and forcing would silently clobber every race.
+	refspec := config.RefSpec("+refs/heads/master:" + a.ref)
+	if a.contend {
+		refspec = config.RefSpec("refs/heads/master:" + a.ref)
+	}
 	err = a.repo.PushContext(ctx, &git.PushOptions{
 		RemoteName: "origin",
-		RefSpecs:   []config.RefSpec{config.RefSpec("+refs/heads/master:" + a.ref)},
-		Force:      true, // each agent owns its ref; force keeps numbers clean of spurious non-ff
+		RefSpecs:   []config.RefSpec{refspec},
+		Force:      !a.contend,
 		Options:    a.pushOpts,
 		ClientOptions: []gitclient.Option{
 			gitclient.WithHTTPClient(a.httpc),
@@ -246,6 +266,51 @@ func (a *agent) push(ctx context.Context) error {
 	})
 	if err != nil {
 		return fmt.Errorf("push: %w", err)
+	}
+	return nil
+}
+
+// contentionTipRef is the local scratch ref a contention agent fetches the
+// shared ref's current tip into before resetting onto it. It lives outside
+// refs/heads/ so it can never collide with the push refspec
+// (refs/heads/master:<shared>) or be swept up as a bench ref on the remote —
+// it never leaves the in-memory storer.
+const contentionTipRef = "refs/forgemark-contention/tip"
+
+// converge moves a contention agent's local branch onto the shared ref's
+// current tip after a CAS rejection: a depth-1 fetch of just that ref, then a
+// hard reset. Depth 1 is load-shaping, not just an optimization — the shared
+// ref's history grows by every accepted push, so a full fetch would get
+// heavier with every converged op until the retry path dominated the measured
+// window. The shared ref is guaranteed to exist when converge runs (a CAS
+// rejection implies it does), so a "ref not found" here is a real error.
+func (a *agent) converge(ctx context.Context) error {
+	auth, err := a.creds.basicAuth(ctx, a.repoPath)
+	if err != nil {
+		return err
+	}
+	err = a.repo.FetchContext(ctx, &git.FetchOptions{
+		RemoteName: "origin",
+		RefSpecs:   []config.RefSpec{config.RefSpec("+" + a.ref + ":" + contentionTipRef)},
+		Depth:      1,
+		ClientOptions: []gitclient.Option{
+			gitclient.WithHTTPClient(a.httpc),
+			gitclient.WithHTTPAuth(auth),
+		},
+	})
+	if err != nil && !errors.Is(err, git.NoErrAlreadyUpToDate) {
+		return fmt.Errorf("fetch shared tip: %w", err)
+	}
+	tip, err := a.repo.Reference(plumbing.ReferenceName(contentionTipRef), true)
+	if err != nil {
+		return fmt.Errorf("resolve %s: %w", contentionTipRef, err)
+	}
+	wt, err := a.repo.Worktree()
+	if err != nil {
+		return fmt.Errorf("worktree: %w", err)
+	}
+	if err := wt.Reset(&git.ResetOptions{Mode: git.HardReset, Commit: tip.Hash()}); err != nil {
+		return fmt.Errorf("reset onto shared tip: %w", err)
 	}
 	return nil
 }
@@ -264,7 +329,21 @@ func classify(err error) Outcome {
 		if strings.Contains(msg, "non-fast-forward") ||
 			strings.Contains(msg, "reference has changed") ||
 			strings.Contains(msg, "fetch first") ||
-			strings.Contains(msg, "stale info") {
+			strings.Contains(msg, "stale info") ||
+			// Real git receive-pack rejects the optimistic-update side of a
+			// ref race with its own phrasing — none of it contains
+			// "non-fast-forward":
+			//   "command error on <ref> incorrect old value provided" — the
+			//     advertised tip the command's old= was built on moved before
+			//     the update landed (the TOCTOU half of the race);
+			//   "…reference already exists" — the create half of the race;
+			//   "cannot lock ref" — the ref backend's own update spool
+			//     refusing a second writer, contention by another name.
+			// Bucketing these as errors would make real forges report CAS
+			// storms as failures, so the contention strategy depends on them.
+			strings.Contains(msg, "incorrect old value provided") ||
+			strings.Contains(msg, "reference already exists") ||
+			strings.Contains(msg, "cannot lock ref") {
 			return OutcomeCAS
 		}
 		return OutcomeErr

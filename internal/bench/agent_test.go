@@ -62,7 +62,7 @@ func TestAgentPushSendsPushOptions(t *testing.T) {
 	opts := []string{"ci.skip", "merge_request.label=a,b"}
 	a, err := newAgent(0, "repo.git", srv.URL, "refs/forgemark/fmX-c1-a0", formatcfg.SHA1,
 		&CommitConfig{FilesMin: 1, FilesMax: 1, FileSize: 16},
-		staticCreds{username: "u", password: "p"}, srv.Client(), opts, nil, nil, nil)
+		staticCreds{username: "u", password: "p"}, srv.Client(), opts, nil, nil, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -217,7 +217,7 @@ func TestAgentStopsBeforeWindowEnd(t *testing.T) {
 
 	a, err := newAgent(0, "repo.git", srv.URL, "refs/forgemark/fmX-c1-a0", formatcfg.SHA1,
 		&CommitConfig{FilesMin: 1, FilesMax: 1, FileSize: 16},
-		staticCreds{username: "u", password: "p"}, srv.Client(), nil, nil, nil, nil)
+		staticCreds{username: "u", password: "p"}, srv.Client(), nil, nil, nil, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -260,7 +260,7 @@ func TestAgentRecordsOpsFinishingDuringDrain(t *testing.T) {
 
 	a, err := newAgent(0, "repo.git", srv.URL, "refs/forgemark/fmX-c1-a0", formatcfg.SHA1,
 		&CommitConfig{FilesMin: 1, FilesMax: 1, FileSize: 16},
-		staticCreds{username: "u", password: "p"}, srv.Client(), nil, nil, nil, nil)
+		staticCreds{username: "u", password: "p"}, srv.Client(), nil, nil, nil, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -299,7 +299,7 @@ func TestAgentCountsCancelledOps(t *testing.T) {
 
 	a, err := newAgent(0, "repo.git", srv.URL, "refs/forgemark/fmX-c1-a0", formatcfg.SHA1,
 		&CommitConfig{FilesMin: 1, FilesMax: 1, FileSize: 16},
-		staticCreds{username: "u", password: "p"}, srv.Client(), nil, nil, nil, nil)
+		staticCreds{username: "u", password: "p"}, srv.Client(), nil, nil, nil, false, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

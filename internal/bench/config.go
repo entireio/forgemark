@@ -89,9 +89,9 @@ type Workload struct {
 // so the server rejects a bad workload with the same errors the CLI reports.
 func (w Workload) Validate() error {
 	switch w.Strategy {
-	case "branch", "repo", "clone", "session":
+	case "branch", "repo", "clone", "session", "contention":
 	default:
-		return fmt.Errorf("invalid -strategy %q (branch|repo|clone|session)", w.Strategy)
+		return fmt.Errorf("invalid -strategy %q (branch|repo|clone|session|contention)", w.Strategy)
 	}
 	if w.Strategy == "session" && w.SessionCommits < 1 {
 		return errors.New("-session-commits must be >= 1")

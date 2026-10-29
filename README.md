@@ -134,6 +134,7 @@ charting.
 | `repo` | N agents spread across **M repos** (`-repo-count`), own branches | Horizontal-scale ceiling — distinct repos serialize independently, so this should scale where `branch` saturates. |
 | `clone` | N agents, **one repo**, each loops: **shallow-clone** the base branch → discard → repeat | Read-side ceiling: how many concurrent shallow clones/sec the forge sustains, without write load. |
 | `session` | N agents, each loops: **shallow-clone** the base branch → commit+push `-session-commits` checkpoints to a fresh ephemeral branch → abandon → repeat | Realistic agent lifecycle: interleaves **read load (clone) with write load (push)** on one repo. Reports clone and push latencies separately. |
+| `contention` | N agents, **one repo, one shared ref**: every agent pushes non-force to the same ref; losers fetch the tip, rebase, and retry | **Converged ref-update rate under contention.** `push_ok`/s is how many updates the forge serializes per second on a hot ref; `cas` counts the rejected races. Models agent fleets checkpointing to one branch. |
 
 ## Usage
 
@@ -279,7 +280,7 @@ modest, or point `-remote` at a self-managed GitLab you control.
 | `-token-file` | — | file holding the credential secret; `-` reads stdin (else `$ACCESS_TOKEN`) |
 | `-user` | `x-access-token` | basic-auth username (token forges ignore it) |
 | `-repos` / `-repo-pattern`+`-repo-count` | — | target repo path(s), appended verbatim; `-repo-pattern` expands `{n}` to `1..N` |
-| `-strategy` | `branch` | `branch` \| `repo` \| `clone` \| `session` |
+| `-strategy` | `branch` | `branch` \| `repo` \| `clone` \| `session` \| `contention` |
 | `-ref-namespace` | `refs/forgemark/` | where pushed refs land; the default stays off `refs/heads/` so the forge's post-receive pipeline (search ingestion, CI, webhooks) never sees bench pushes. `refs/heads/` pushes real branches |
 | `-branch-prefix` | — | prepended verbatim inside the namespace, before the run ID (e.g. `bench/` → `refs/forgemark/bench/fm...`); groups refs for easy cleanup |
 | `-push-options` | — | push option sent with every push, like `git push -o` (e.g. `ci.skip`); repeat the flag for several. The run refuses to start unless every repo advertises the `push-options` capability, since go-git would otherwise drop them silently |

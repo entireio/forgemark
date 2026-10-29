@@ -193,7 +193,14 @@ func (r *Runner) RunLevel(ctx context.Context, c int, barrier *StartBarrier) (Le
 		}
 		node := r.ep.nodes[i%len(r.ep.nodes)]
 		ref := DestRef(r.w.Namespace(), r.w.BranchPrefix, r.w.RunID, c, i)
-		a, err := newAgent(i, repoPath, node, ref, r.ep.objFmt, &r.w.Commit, r.creds, r.httpc, r.w.PushOptions, clone, sess, r.sink)
+		// Contention: every agent races the same destination ref. Reusing
+		// DestRef's a0 shape keeps the shared ref inside the stale-bench-ref
+		// sweep pattern, so a contention level cleans up like any other.
+		contend := r.w.Strategy == "contention"
+		if contend {
+			ref = DestRef(r.w.Namespace(), r.w.BranchPrefix, r.w.RunID, c, 0)
+		}
+		a, err := newAgent(i, repoPath, node, ref, r.ep.objFmt, &r.w.Commit, r.creds, r.httpc, r.w.PushOptions, clone, sess, contend, r.sink)
 		if err != nil {
 			if barrier != nil {
 				barrier.Arrive() // don't leave the coordinator's Await hanging
