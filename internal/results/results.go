@@ -49,6 +49,20 @@ type Doc struct {
 	Target    string              `json:"target,omitempty"`
 	RepoCount int                 `json:"repo_count,omitempty"`
 	Levels    []bench.LevelResult `json:"levels,omitempty"`
+
+	// CLI threshold gating (-min-push-rate / -max-p95 / -max-errors). Both are
+	// absent unless at least one threshold was set.
+	ThresholdsOK *bool      `json:"thresholds_ok,omitempty"`
+	Thresholds   *Threshold `json:"thresholds,omitempty"`
+}
+
+// Threshold records the configured gates and every breach the run hit. Unset
+// gates are omitted.
+type Threshold struct {
+	MinPushRate float64  `json:"min_push_rate,omitempty"`
+	MaxP95      string   `json:"max_p95,omitempty"`
+	MaxErrors   *int     `json:"max_errors,omitempty"`
+	Breaches    []string `json:"breaches"`
 }
 
 // TargetResult is one target's outcome within a run.

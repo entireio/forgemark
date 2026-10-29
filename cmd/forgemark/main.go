@@ -64,6 +64,9 @@ func main() {
 		return
 	}
 	if err := run(); err != nil {
+		if errors.Is(err, errThresholdBreached) {
+			os.Exit(2)
+		}
 		fmt.Fprintln(os.Stderr, "forgemark: "+err.Error())
 		os.Exit(1)
 	}
@@ -77,6 +80,7 @@ type cliConfig struct {
 	workload  bench.Workload
 	tokenFile string // path to the credential secret ("-" = stdin); preferred over $ACCESS_TOKEN
 	out       string
+	gates     thresholds
 }
 
 func run() error {
@@ -139,7 +143,17 @@ func run() error {
 		printRow(res)
 	}
 
-	return writeResults(cfg, r.Label(), results)
+	if err := writeResults(cfg, r.Label(), results); err != nil {
+		return err
+	}
+	breaches := cfg.gates.check(results)
+	for _, breach := range breaches {
+		fmt.Fprintln(os.Stderr, "forgemark: threshold breached: "+breach)
+	}
+	if len(breaches) > 0 {
+		return errThresholdBreached
+	}
+	return nil
 }
 
 // readSecret returns the credential secret from the most secure source
@@ -173,7 +187,7 @@ func readSecret(tokenFile string) (string, error) {
 }
 
 func parseFlags() (*cliConfig, error) {
-	cfg := &cliConfig{}
+	cfg := &cliConfig{gates: thresholds{maxErrors: -1}}
 	var reposCSV, pattern, concCSV string
 	var repoCount int
 	var durationFlag, warmupFlag time.Duration
@@ -196,6 +210,9 @@ func parseFlags() (*cliConfig, error) {
 	flag.StringVar(&cfg.target.ObjectFmt, "object-format", "auto", "auto | sha1 | sha256 (auto probes the entiredb advertisement; generic/github default sha1)")
 	flag.BoolVar(&cfg.target.Insecure, "insecure", false, "skip TLS verification (dev/self-signed hosts)")
 	flag.StringVar(&cfg.out, "out", "", "write JSON results here (default: results/forgemark-<id>.json)")
+	flag.Float64Var(&cfg.gates.minPushRate, "min-push-rate", 0, "minimum successful pushes/sec per concurrency level (disabled when unset)")
+	flag.DurationVar(&cfg.gates.maxP95, "max-p95", 0, "maximum p95 push latency per concurrency level (disabled when unset)")
+	flag.IntVar(&cfg.gates.maxErrors, "max-errors", -1, "maximum non-CAS errors per concurrency level (disabled when unset)")
 	flag.IntVar(&cfg.workload.SessionCommits, "session-commits", 5, "session strategy: commit+push checkpoints per cloned session")
 	flag.IntVar(&cfg.workload.CloneDepth, "clone-depth", 1, "clone/session strategy: shallow clone depth (1=tip; 0=full history)")
 	flag.Func("push-options", "push option sent with every push, like git push -o (repeatable; one option per flag, so values may contain commas). The run refuses to start unless the server advertises push-options", func(v string) error {
@@ -227,6 +244,9 @@ func parseFlags() (*cliConfig, error) {
 			return nil, fmt.Errorf("invalid concurrency %q", p)
 		}
 		cfg.workload.Concurrency = append(cfg.workload.Concurrency, n)
+	}
+	if err := cfg.gates.validate(); err != nil {
+		return nil, err
 	}
 	cfg.workload.RunID = bench.NewRunID()
 	if err := cfg.workload.Validate(); err != nil {
@@ -300,6 +320,7 @@ func writeResults(cfg *cliConfig, label string, levels []bench.LevelResult) erro
 		RepoCount:    len(cfg.target.Repos),
 		Levels:       levels,
 	}
+	cfg.gates.annotate(&doc, levels)
 	if err := results.Save(out, doc); err != nil {
 		return err
 	}
