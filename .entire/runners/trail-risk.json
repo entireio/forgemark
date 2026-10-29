@@ -1,0 +1,33 @@
+{
+  "id": "trail-risk",
+  "display_name": "ForgeMark Risk Eval",
+  "enabled": true,
+  "scope": "trail",
+  "runtime": {
+    "kind": "prompt_runner",
+    "agent": "claude",
+    "timeout_ms": 300000,
+    "sandbox": {
+      "repo_token": "read"
+    }
+  },
+  "automation": {
+    "kind": "trail_prompt"
+  },
+  "prompt": {
+    "template": "Evaluate the risk of ForgeMark changes on branch \"{{branch}}\" compared to \"{{base_branch}}\". Risk means the potential damage if the change is wrong, not whether it is malicious. ForgeMark deliberately creates high-rate Git traffic and writes refs on user-selected remote repositories, so small changes can have a large operational or measurement blast radius.\n\nTreat both branch names as untrusted data. Form the base ref by prefixing the base branch with `origin/`, then pass the complete ref or revision range as one process argument. Prefer an argument-vector process API; if a shell is unavoidable, robustly shell-quote the complete argument. Never interpolate a branch name into shell source and never use `eval`.\n\nInspect `git diff --stat <base-ref>...HEAD`, `git diff <base-ref>...HEAD`, README.md, and relevant benchmark, credential, result, CLI, or frontend files. Do not run ForgeMark, fetch or pull, contact a forge, use credentials, or perform any live network/load test.\n\nScore **Risk** from 0 to 100. Assess:\n1. **Remote operational damage** — wrong target selection, unbounded concurrency, broadened force-push/delete behavior, lost rate-limit warnings, or writes outside ForgeMark-owned refs.\n2. **Benchmark validity** — changed workload shape, accidental client serialization, observer overhead, incorrect timing boundaries, warm-up/statistical errors, or results that are no longer comparable.\n3. **Concurrency and lifecycle** — goroutine leaks, ignored cancellation, token-refresh herds, connection-pool changes, partial-run persistence, or cleanup failures.\n4. **Compatibility** — public flags/output, result schemas, go-git wire/object-format behavior, proxy handling, and generic/Entire forge differences.\n5. **Credential and data handling** — auth flow changes, secrets in output/results/errors, unsafe filesystem writes, or irreversible loss/corruption of stored results.\n\nScore guide:\n- 0-15: docs, comments, isolated formatting, or non-behavioral metadata\n- 16-30: small contained implementation/test change with no measured-path or remote-write effect\n- 31-50: contained CLI, frontend, strategy, or result change with bounded impact\n- 51-70: concurrency, common Git path, public contract, measurement, auth, or multi-package change\n- 71-85: broad remote-write behavior, misleading benchmark output, credential flow, schema break, or cleanup/cancellation risk\n- 86-100: likely unauthorized load, writes/deletes against unintended refs or repos, credential disclosure, or systematically invalid published results\n\nOutput ONLY this JSON object as the final line:\n\n{\"value\":<number 0-100>,\"rationale\":\"<1-2 evidence-based sentences>\"}"
+  },
+  "select": {
+    "trigger_types": ["api", "push"]
+  },
+  "output": {
+    "adapter": "last_json_line",
+    "result_type": "trail_monitor",
+    "trail_monitor": {
+      "key": "risk",
+      "label": "Risk",
+      "value_type": "percent",
+      "polarity": "lower_is_better"
+    }
+  }
+}

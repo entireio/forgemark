@@ -7,10 +7,11 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
-	"github.com/go-git/go-git/v6/plumbing"
+	"github.com/entireio/forgemark/internal/bench"
 )
 
 func TestExpandRepos(t *testing.T) {
@@ -52,176 +53,93 @@ func TestExpandRepos(t *testing.T) {
 	}
 }
 
-func TestDestRef(t *testing.T) {
-	// The prefix is prepended verbatim before the run ID; the assembled ref is what
-	// parseFlags validates. Readable prefixes pass; typo shapes git rejects fail fast
-	// (before any push pollutes the measured window).
-	tests := []struct {
-		name      string
-		prefix    string
-		c, i      int
-		want      string
-		wantValid bool
-	}{
-		{name: "no prefix", prefix: "", c: 32, i: 5, want: "refs/heads/fmX-c32-a5", wantValid: true},
-		{name: "slash namespace", prefix: "bench/", c: 32, i: 5, want: "refs/heads/bench/fmX-c32-a5", wantValid: true},
-		{name: "dash separator", prefix: "bench-", c: 8, i: 0, want: "refs/heads/bench-fmX-c8-a0", wantValid: true},
-		{name: "no separator", prefix: "bench", c: 1, i: 0, want: "refs/heads/benchfmX-c1-a0", wantValid: true}, // ugly-but-valid
-		{name: "space", prefix: "my bench/", c: 1, i: 0, want: "refs/heads/my bench/fmX-c1-a0", wantValid: false},
-		{name: "tilde", prefix: "bench~1", c: 1, i: 0, want: "refs/heads/bench~1fmX-c1-a0", wantValid: false},
-		{name: "leading slash", prefix: "/bench", c: 1, i: 0, want: "refs/heads//benchfmX-c1-a0", wantValid: false},
+func TestParseFlagsCloneStrategyIgnoresCommitShape(t *testing.T) {
+	cfg, err := parseFlagsForTest(t,
+		"-strategy", "clone",
+		"-repos", "org/repo",
+		"-clone-depth", "3",
+		"-base-ref", "main",
+		"-files-min", "10",
+		"-files-max", "1",
+		"-file-size", "0",
+	)
+	if err != nil {
+		t.Fatalf("parseFlags clone = %v, want commit-shape flags ignored", err)
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := destRef(tt.prefix, "fmX", tt.c, tt.i)
-			if got != tt.want {
-				t.Errorf("destRef(%q, ...) = %q, want %q", tt.prefix, got, tt.want)
-			}
-			if valid := plumbing.ReferenceName(got).Validate() == nil; valid != tt.wantValid {
-				t.Errorf("Validate(%q) valid = %v, want %v", got, valid, tt.wantValid)
-			}
-		})
+	if cfg.workload.Strategy != "clone" {
+		t.Fatalf("strategy = %q, want clone", cfg.workload.Strategy)
+	}
+	if cfg.workload.CloneDepth != 3 || cfg.workload.BaseRef != "main" {
+		t.Fatalf("clone knobs = depth %d base %q, want 3/main", cfg.workload.CloneDepth, cfg.workload.BaseRef)
+	}
+	if !reflect.DeepEqual(cfg.target.Repos, []string{"org/repo"}) {
+		t.Fatalf("repos = %v, want [org/repo]", cfg.target.Repos)
 	}
 }
 
-func TestParseFlagsThresholds(t *testing.T) {
-	tests := []struct {
-		name          string
-		args          []string
-		wantMinRate   float64
-		wantMaxP95    time.Duration
-		wantMaxErrors int
-	}{
-		{
-			name:          "unset",
-			args:          []string{"-repos", "org/repo"},
-			wantMaxErrors: -1,
-		},
-		{
-			name:          "configured",
-			args:          []string{"-repos", "org/repo", "-min-push-rate", "5.5", "-max-p95", "1500ms", "-max-errors", "0"},
-			wantMinRate:   5.5,
-			wantMaxP95:    1500 * time.Millisecond,
-			wantMaxErrors: 0,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg, err := parseFlagsForTest(t, tt.args...)
-			if err != nil {
-				t.Fatalf("parseFlags() error = %v", err)
-			}
-			if cfg.minPushRate != tt.wantMinRate {
-				t.Errorf("minPushRate = %v, want %v", cfg.minPushRate, tt.wantMinRate)
-			}
-			if cfg.maxP95 != tt.wantMaxP95 {
-				t.Errorf("maxP95 = %v, want %v", cfg.maxP95, tt.wantMaxP95)
-			}
-			if cfg.maxErrors != tt.wantMaxErrors {
-				t.Errorf("maxErrors = %v, want %v", cfg.maxErrors, tt.wantMaxErrors)
-			}
-		})
+func TestParseFlagsCloneStrategyNeedsRepos(t *testing.T) {
+	_, err := parseFlagsForTest(t, "-strategy", "clone")
+	if err == nil || !strings.Contains(err.Error(), "no repos") {
+		t.Fatalf("parseFlags clone without repos err = %v, want no repos error", err)
 	}
 }
 
-func TestWriteResultsIncludesThresholdsWhenConfigured(t *testing.T) {
-	out := filepath.Join(t.TempDir(), "results.json")
-	cfg := &runConfig{
-		out:         out,
-		runID:       "fmtest",
-		strategy:    "branch",
-		duration:    30 * time.Second,
-		warmup:      5 * time.Second,
-		repos:       []string{"org/repo"},
-		minPushRate: 5,
-		maxP95:      2 * time.Second,
-		maxErrors:   0,
+func TestParseFlagsCommitShapeStillValidatedForPushStrategies(t *testing.T) {
+	_, err := parseFlagsForTest(t, "-strategy", "branch", "-repos", "org/repo", "-files-min", "0")
+	if err == nil || !strings.Contains(err.Error(), "-files-min") {
+		t.Fatalf("parseFlags branch with -files-min 0 err = %v, want -files-min validation", err)
 	}
-	results := []levelResult{{
-		Concurrency: 4,
-		OpsPerSec:   3.1,
-		P95ms:       2200,
-		OtherErrors: 2,
-	}}
+}
 
-	if err := writeResults(cfg, &endpoint{label: "test"}, results); err != nil {
-		t.Fatalf("writeResults() error = %v", err)
+// The CLI must keep writing the legacy format-1 document (no "format" field,
+// a single "target" plus "repo_count" and "levels") so existing tooling and
+// internal/results.Load keep reading its output after the engine refactor.
+func TestWriteResultsEmitsLegacyFormat(t *testing.T) {
+	out := filepath.Join(t.TempDir(), "out.json")
+	cfg := &cliConfig{out: out}
+	cfg.workload.RunID = "fmtest"
+	cfg.workload.Strategy = "branch"
+	cfg.workload.Duration = 60 * time.Second
+	cfg.workload.Warmup = 10 * time.Second
+	cfg.workload.Commit = bench.CommitConfig{FilesMin: 1, FilesMax: 10, FileSize: 2048}
+	cfg.target.Repos = []string{"org/repo"}
+	levels := []bench.LevelResult{{Concurrency: 4, OK: 12, OpsPerSec: 2}}
+
+	if err := writeResults(cfg, "https://git.example", levels); err != nil {
+		t.Fatal(err)
 	}
 	b, err := os.ReadFile(out)
 	if err != nil {
-		t.Fatalf("ReadFile(%q) error = %v", out, err)
+		t.Fatal(err)
 	}
-	var doc map[string]any
-	if err := json.Unmarshal(b, &doc); err != nil {
-		t.Fatalf("Unmarshal results error = %v", err)
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatal(err)
 	}
-	ok, exists := doc["thresholds_ok"].(bool)
-	if !exists || ok {
-		t.Fatalf("thresholds_ok = %v (exists %v), want false", doc["thresholds_ok"], exists)
+	if _, ok := m["format"]; ok {
+		t.Errorf("legacy doc must not carry a format field, got %v", m["format"])
 	}
-	thresholds, exists := doc["thresholds"].(map[string]any)
-	if !exists {
-		t.Fatalf("thresholds missing from result: %v", doc)
+	for _, k := range []string{"run_id", "target", "strategy", "duration", "warmup", "repo_count", "commit", "levels"} {
+		if _, ok := m[k]; !ok {
+			t.Errorf("missing legacy field %q", k)
+		}
 	}
-	if got := thresholds["min_push_rate"]; got != float64(5) {
-		t.Errorf("min_push_rate = %v, want 5", got)
-	}
-	if got := thresholds["max_p95"]; got != "2s" {
-		t.Errorf("max_p95 = %v, want 2s", got)
-	}
-	if got := thresholds["max_errors"]; got != float64(0) {
-		t.Errorf("max_errors = %v, want 0", got)
-	}
-	breaches, exists := thresholds["breaches"].([]any)
-	if !exists || len(breaches) != 3 {
-		t.Fatalf("breaches = %v (exists %v), want 3 entries", thresholds["breaches"], exists)
-	}
-	if breaches[0] != "c=4 push/s=3.1 < min 5.0" {
-		t.Errorf("first breach = %v, want push-rate breach", breaches[0])
+	if m["target"] != "https://git.example" || m["run_id"] != "fmtest" {
+		t.Errorf("target/run_id = %v/%v, want https://git.example/fmtest", m["target"], m["run_id"])
 	}
 }
 
-func TestWriteResultsOmitsThresholdsWhenUnset(t *testing.T) {
-	out := filepath.Join(t.TempDir(), "results.json")
-	cfg := &runConfig{
-		out:       out,
-		runID:     "fmtest",
-		strategy:  "branch",
-		repos:     []string{"org/repo"},
-		maxErrors: -1,
-	}
-
-	if err := writeResults(cfg, &endpoint{label: "test"}, []levelResult{{Concurrency: 1}}); err != nil {
-		t.Fatalf("writeResults() error = %v", err)
-	}
-	b, err := os.ReadFile(out)
-	if err != nil {
-		t.Fatalf("ReadFile(%q) error = %v", out, err)
-	}
-	var doc map[string]any
-	if err := json.Unmarshal(b, &doc); err != nil {
-		t.Fatalf("Unmarshal results error = %v", err)
-	}
-	if _, exists := doc["thresholds"]; exists {
-		t.Fatalf("thresholds present when unset: %v", doc["thresholds"])
-	}
-	if _, exists := doc["thresholds_ok"]; exists {
-		t.Fatalf("thresholds_ok present when unset: %v", doc["thresholds_ok"])
-	}
-}
-
-func parseFlagsForTest(t *testing.T, args ...string) (*runConfig, error) {
+func parseFlagsForTest(t *testing.T, args ...string) (*cliConfig, error) {
 	t.Helper()
 	oldArgs := os.Args
 	oldCommandLine := flag.CommandLine
-	t.Cleanup(func() {
-		os.Args = oldArgs
-		flag.CommandLine = oldCommandLine
-	})
-
 	fs := flag.NewFlagSet("forgemark", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	flag.CommandLine = fs
 	os.Args = append([]string{"forgemark"}, args...)
+	t.Cleanup(func() {
+		os.Args = oldArgs
+		flag.CommandLine = oldCommandLine
+	})
 	return parseFlags()
 }

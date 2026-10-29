@@ -1,0 +1,202 @@
+package results
+
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"runtime"
+	"testing"
+
+	"github.com/entireio/forgemark/internal/bench"
+)
+
+func TestWriteLoadRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	doc := Doc{
+		Format: 2, RunID: "fmtest", Strategy: "branch", RefNamespace: "refs/forgemark/",
+		Duration: "10s", Warmup: "1s", Commit: "1-10 x 2048B", State: "done",
+		Targets: []TargetResult{{
+			Name: "a", Label: "https://a.example",
+			Levels: []bench.LevelResult{{Concurrency: 4, OK: 10, OpsPerSec: 2.5}},
+			Series: []SeriesPoint{{T: 100, Level: 0, OK: 3, P95: 42.5}},
+		}},
+	}
+	if err := Write(dir, "forgemark-fmtest.json", doc); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load(dir, "forgemark-fmtest.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Format != 2 || len(got.Targets) != 1 || got.Targets[0].Series[0].P95 != 42.5 {
+		t.Fatalf("round trip mismatch: %+v", got)
+	}
+	if got.RefNamespace != "refs/forgemark/" {
+		t.Fatalf("ref namespace lost on round trip: %q", got.RefNamespace)
+	}
+}
+
+// Save is the CLI's -out escape hatch: an arbitrary path, outside the
+// discoverable forgemark-*.json shape, whose parent dirs must be created.
+func TestSaveCreatesParentDirsAtArbitraryPath(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "nested", "sub", "out.json")
+	doc := Doc{
+		RunID: "fmx", Strategy: "branch", Target: "https://x", RepoCount: 1,
+		Levels: []bench.LevelResult{{Concurrency: 1, OK: 5}},
+	}
+	if err := Save(path, doc); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("parent dirs not created / file missing: %v", err)
+	}
+	var got Doc
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.RunID != "fmx" || len(got.Levels) != 1 || got.Levels[0].OK != 5 {
+		t.Fatalf("round trip mismatch: %+v", got)
+	}
+}
+
+func TestLoadNormalizesLegacyDoc(t *testing.T) {
+	dir := t.TempDir()
+	legacy := `{"run_id":"fmold","target":"https://old.example","strategy":"branch",
+		"levels":[{"concurrency":8,"ok":50,"ops_per_sec":5}]}`
+	if err := os.WriteFile(filepath.Join(dir, "forgemark-fmold.json"), []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	doc, err := Load(dir, "forgemark-fmold.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.Targets) != 1 || doc.Targets[0].Name != "https://old.example" {
+		t.Fatalf("legacy not normalized to one pseudo-target: %+v", doc)
+	}
+	if doc.Targets[0].Levels[0].Concurrency != 8 {
+		t.Fatalf("legacy levels lost: %+v", doc.Targets[0])
+	}
+	if doc.Target != "" || doc.Levels != nil {
+		t.Fatal("legacy fields should be cleared after normalization")
+	}
+	// Written before the namespace was configurable, so its pushes were
+	// branches: it must say so, not read as equivalent to a refs/forgemark/
+	// run. The same holds for a format-2 doc from a server of that era.
+	if doc.RefNamespace != LegacyRefNamespace {
+		t.Fatalf("legacy doc namespace = %q, want %q", doc.RefNamespace, LegacyRefNamespace)
+	}
+	oldServer := `{"format":2,"run_id":"fmsrv","strategy":"branch","state":"done",
+		"targets":[{"name":"a","levels":[{"concurrency":1,"ok":1}]}]}`
+	if err := os.WriteFile(filepath.Join(dir, "forgemark-fmsrv.json"), []byte(oldServer), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if doc, err = Load(dir, "forgemark-fmsrv.json"); err != nil {
+		t.Fatal(err)
+	}
+	if doc.RefNamespace != LegacyRefNamespace {
+		t.Fatalf("pre-namespace server doc namespace = %q, want %q", doc.RefNamespace, LegacyRefNamespace)
+	}
+	// And List carries it, so the history row can show it.
+	list, err := List(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range list {
+		if s.RefNamespace != LegacyRefNamespace {
+			t.Fatalf("summary %s namespace = %q, want %q", s.File, s.RefNamespace, LegacyRefNamespace)
+		}
+	}
+}
+
+func TestFilenameValidation(t *testing.T) {
+	dir := t.TempDir()
+	for _, bad := range []string{"../evil.json", "forgemark-x.txt", "other.json", "forgemark-a/b.json"} {
+		if _, err := Load(dir, bad); err == nil {
+			t.Fatalf("Load(%q) succeeded, want rejection", bad)
+		}
+		if err := Write(dir, bad, Doc{}); err == nil {
+			t.Fatalf("Write(%q) succeeded, want rejection", bad)
+		}
+	}
+}
+
+func TestListSkipsUnparseableAndSortsNewestFirst(t *testing.T) {
+	dir := t.TempDir()
+	_ = os.WriteFile(filepath.Join(dir, "forgemark-good.json"), []byte(`{"run_id":"good","target":"x","levels":[]}`), 0o600)
+	_ = os.WriteFile(filepath.Join(dir, "forgemark-bad.json"), []byte(`{{{`), 0o600)
+	_ = os.WriteFile(filepath.Join(dir, "unrelated.txt"), []byte(`x`), 0o600)
+
+	list, err := List(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 || list[0].RunID != "good" {
+		t.Fatalf("List = %+v, want just the parseable doc", list)
+	}
+	if got := list[0]; len(got.Targets) != 1 || got.Targets[0] != "x" || got.State != "done" || got.RefNamespace != LegacyRefNamespace {
+		t.Fatalf("legacy summary = %+v, want target x, state done, legacy namespace", got)
+	}
+
+	if empty, err := List(filepath.Join(dir, "missing")); err != nil || len(empty) != 0 {
+		t.Fatalf("List(missing dir) = %v, %v — want empty, nil", empty, err)
+	}
+}
+
+// List backs a history endpoint that remote viewers can call on an exposed
+// bind, so a summary must cost about one read of the file, not a full decode
+// of every per-second series point. Not parallel: it measures process-wide
+// allocation.
+func TestListDoesNotDecodeSeries(t *testing.T) {
+	dir := t.TempDir()
+	series := make([]SeriesPoint, 50_000)
+	for i := range series {
+		series[i] = SeriesPoint{T: int64(i), DtMs: 1000, OK: 3, P50: 1.5, P95: 2.5, P99: 3.5}
+	}
+	doc := Doc{
+		Format: 2, RunID: "fmbig", Strategy: "branch", State: "done",
+		Targets: []TargetResult{{Name: "a", Levels: []bench.LevelResult{{Concurrency: 1}}, Series: series}},
+	}
+	if err := Write(dir, "forgemark-fmbig.json", doc); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(filepath.Join(dir, "forgemark-fmbig.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	list, err := List(dir)
+	runtime.ReadMemStats(&after)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 || list[0].RunID != "fmbig" || list[0].Levels != 1 || list[0].Targets[0] != "a" {
+		t.Fatalf("List = %+v, want one summary of fmbig", list)
+	}
+	if alloc := after.TotalAlloc - before.TotalAlloc; alloc > uint64(info.Size())*3/2 {
+		t.Fatalf("List allocated %d bytes for a %d-byte doc, want under 1.5x the file size", alloc, info.Size())
+	}
+}
+
+// A doc the history view can't open must not be listed. Levels are small, so
+// the summary decodes them with their real type, as Load does.
+func TestListSkipsDocsWithMalformedLevels(t *testing.T) {
+	dir := t.TempDir()
+	_ = os.WriteFile(filepath.Join(dir, "forgemark-target.json"), []byte(`{"format":2,"run_id":"t","targets":[{"name":"a","levels":["bad"]}]}`), 0o600)
+	_ = os.WriteFile(filepath.Join(dir, "forgemark-legacy.json"), []byte(`{"run_id":"l","target":"x","levels":["bad"]}`), 0o600)
+
+	for _, file := range []string{"forgemark-target.json", "forgemark-legacy.json"} {
+		if _, err := Load(dir, file); err == nil {
+			t.Fatalf("Load(%s) succeeded, want a decode error", file)
+		}
+	}
+	list, err := List(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 0 {
+		t.Fatalf("List = %+v, want no docs that Load rejects", list)
+	}
+}

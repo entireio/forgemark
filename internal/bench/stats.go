@@ -1,61 +1,72 @@
-package main
+package bench
 
 import (
-	"fmt"
 	"math"
 	"sort"
 	"time"
 )
 
-// outcome classifies a single push attempt.
-type outcome int
+// Outcome classifies a single push attempt.
+type Outcome int
 
 const (
-	outcomeOK  outcome = iota // push landed
-	outcomeCAS                // rejected by ref CAS / non-fast-forward (contention)
-	outcomeErr                // any other failure (transport, auth, server error)
+	OutcomeOK  Outcome = iota // push landed
+	OutcomeCAS                // rejected by ref CAS / non-fast-forward (contention)
+	OutcomeErr                // any other failure (transport, auth, server error)
 )
 
-// opKind distinguishes which operation a sample measured. Zero value is opPush
+// OpKind distinguishes which operation a sample measured. Zero value is OpPush
 // so existing push-only call sites need no change.
-type opKind int
+type OpKind int
 
 const (
-	opPush  opKind = iota // a receive-pack push (the write path)
-	opClone               // a clone (the read path; session strategy)
+	OpPush  OpKind = iota // a receive-pack push (the write path)
+	OpClone               // a clone (the read path; clone/session strategy)
 )
 
-// sample is one recorded operation. offset is measured from the start of the
-// concurrency level so warm-up samples can be dropped post-hoc.
-type sample struct {
-	offset time.Duration
-	dur    time.Duration
-	res    outcome
-	op     opKind
-	msg    string // raw error text, retained only when res == outcomeErr
+// Sample is one recorded operation, kept in each agent's post-hoc log and
+// delivered live to a Sink as the agent records it. Offset is measured from
+// the start of the concurrency level so warm-up samples can be dropped
+// post-hoc.
+type Sample struct {
+	Offset time.Duration // measured from level start; warm-up samples included
+	Dur    time.Duration
+	Res    Outcome
+	Op     OpKind
+	Msg    string // raw error text, only when Res == OutcomeErr
+}
+
+// Sink observes every sample live, warm-up included. OnSample is called
+// concurrently from up to `concurrency` agent goroutines mid-measurement, so
+// it must be cheap and non-blocking (a mutex-protected aggregator is fine; a
+// slow sink would perturb the numbers being measured). A nil Sink disables
+// observation — the CLI path.
+type Sink interface {
+	OnSample(s Sample)
 }
 
 // errMsg returns the message to retain on a sample. Only genuine errors carry
 // text; OK and CAS outcomes stay message-free.
-func errMsg(res outcome, err error) string {
-	if res != outcomeErr || err == nil {
+func errMsg(res Outcome, err error) string {
+	if res != OutcomeErr || err == nil {
 		return ""
 	}
 	return err.Error()
 }
 
-// levelResult is the published summary for one concurrency level. JSON tags
+// LevelResult is the published summary for one concurrency level. JSON tags
 // are the columns charts consume.
-type levelResult struct {
+type LevelResult struct {
 	Concurrency int     `json:"concurrency"`
 	Strategy    string  `json:"strategy"`
 	Repos       int     `json:"repos"`
 	Nodes       int     `json:"nodes"`
 	WindowSec   float64 `json:"window_sec"`
-	Pushes      int     `json:"pushes"` // attempts in the measured window
-	OK          int     `json:"ok"`     // successful pushes
+	Pushes      int     `json:"pushes"` // attempts in the measured window; clone strategy uses this as its primary op count
+	OK          int     `json:"ok"`     // successful primary operations
 	CASFailures int     `json:"cas_failures"`
 	OtherErrors int     `json:"other_errors"`
+	Cancelled   int     `json:"cancelled"`   // ops cut off by the hard deadline or a cancelled run, any kind. Not samples
 	OpsPerSec   float64 `json:"ops_per_sec"` // OK / window
 	P50ms       float64 `json:"p50_ms"`
 	P95ms       float64 `json:"p95_ms"`
@@ -64,7 +75,7 @@ type levelResult struct {
 	Maxms       float64 `json:"max_ms"`
 	CommitFiles string  `json:"commit_files"` // e.g. "1-10 x 2048B"
 
-	// Session-strategy read side (op==clone). Omitted in push/repo modes.
+	// Clone/session-strategy read side (op==clone). Omitted in push/repo modes.
 	Clones      int     `json:"clones,omitempty"`
 	CloneOK     int     `json:"clone_ok,omitempty"`
 	CloneErrors int     `json:"clone_errors,omitempty"`
@@ -74,12 +85,12 @@ type levelResult struct {
 
 	// Distinct error messages (normalized) with occurrence counts, for the err
 	// bucket only. Omitted when there were no errors.
-	ErrorMessages      []errGroup `json:"error_messages,omitempty"`
-	CloneErrorMessages []errGroup `json:"clone_error_messages,omitempty"`
+	ErrorMessages      []ErrGroup `json:"error_messages,omitempty"`
+	CloneErrorMessages []ErrGroup `json:"clone_error_messages,omitempty"`
 }
 
-// errGroup is one distinct (normalized) error message and how often it occurred.
-type errGroup struct {
+// ErrGroup is one distinct (normalized) error message and how often it occurred.
+type ErrGroup struct {
 	Message string `json:"message"`
 	Count   int    `json:"count"`
 }
@@ -93,7 +104,7 @@ const maxDistinctErrors = 20
 // tally by the resulting key, then keep the maxDistinctErrors most frequent
 // (count desc, message asc) and fold the remainder into "(other errors)".
 // Returns nil when there were no errors, so the JSON field is omitted.
-func errGroups(raw map[string]int) []errGroup {
+func errGroups(raw map[string]int) []ErrGroup {
 	if len(raw) == 0 {
 		return nil
 	}
@@ -103,9 +114,9 @@ func errGroups(raw map[string]int) []errGroup {
 	for msg, n := range raw {
 		counts[normalizeErr(msg)] += n
 	}
-	out := make([]errGroup, 0, len(counts))
+	out := make([]ErrGroup, 0, len(counts))
 	for msg, n := range counts {
-		out = append(out, errGroup{Message: msg, Count: n})
+		out = append(out, ErrGroup{Message: msg, Count: n})
 	}
 	byFreq := func(i, j int) bool {
 		if out[i].Count != out[j].Count {
@@ -119,17 +130,17 @@ func errGroups(raw map[string]int) []errGroup {
 		for _, g := range out[maxDistinctErrors:] {
 			other += g.Count
 		}
-		out = append(out[:maxDistinctErrors], errGroup{Message: "(other errors)", Count: other})
+		out = append(out[:maxDistinctErrors], ErrGroup{Message: "(other errors)", Count: other})
 		sort.Slice(out, byFreq) // the overflow bucket may outrank the kept singletons
 	}
 	return out
 }
 
-// summarize folds raw samples into a levelResult, dropping anything inside the
+// summarize folds raw samples into a LevelResult, dropping anything inside the
 // warm-up window and computing exact percentiles over the OK samples.
-func summarize(samples []sample, concurrency int, strategy string, repos, nodes int,
-	warmup, window time.Duration, commitFiles string) levelResult {
-	r := levelResult{
+func summarize(samples []Sample, concurrency int, strategy string, repos, nodes int,
+	warmup, window time.Duration, commitFiles string) LevelResult {
+	r := LevelResult{
 		Concurrency: concurrency,
 		Strategy:    strategy,
 		Repos:       repos,
@@ -142,38 +153,35 @@ func summarize(samples []sample, concurrency int, strategy string, repos, nodes 
 	pushErrs := map[string]int{}
 	cloneErrs := map[string]int{}
 	for _, s := range samples {
-		if s.offset < warmup {
+		if s.Offset < warmup {
 			continue // warm-up: excluded from every statistic
 		}
-		if s.op == opClone {
+		if s.Op == OpClone {
 			r.Clones++
-			if s.res == outcomeOK {
+			if s.Res == OutcomeOK {
 				r.CloneOK++
-				cloneDurs = append(cloneDurs, float64(s.dur)/float64(time.Millisecond))
+				cloneDurs = append(cloneDurs, float64(s.Dur)/float64(time.Millisecond))
 			} else {
 				r.CloneErrors++
-				cloneErrs[s.msg]++
+				cloneErrs[s.Msg]++
 			}
 			continue
 		}
 		r.Pushes++
-		switch s.res {
-		case outcomeOK:
+		switch s.Res {
+		case OutcomeOK:
 			r.OK++
-			okDurs = append(okDurs, float64(s.dur)/float64(time.Millisecond))
-		case outcomeCAS:
+			okDurs = append(okDurs, float64(s.Dur)/float64(time.Millisecond))
+		case OutcomeCAS:
 			r.CASFailures++
-		case outcomeErr:
+		case OutcomeErr:
 			r.OtherErrors++
-			pushErrs[s.msg]++
+			pushErrs[s.Msg]++
 		}
 	}
 	r.ErrorMessages = errGroups(pushErrs)
 	r.CloneErrorMessages = errGroups(cloneErrs)
 
-	if window > 0 {
-		r.OpsPerSec = float64(r.OK) / window.Seconds()
-	}
 	if len(okDurs) > 0 {
 		sort.Float64s(okDurs)
 		r.P50ms = percentile(okDurs, 50)
@@ -188,30 +196,24 @@ func summarize(samples []sample, concurrency int, strategy string, repos, nodes 
 		r.CloneP95ms = percentile(cloneDurs, 95)
 		r.CloneP99ms = percentile(cloneDurs, 99)
 	}
+	if strategy == "clone" {
+		r.Pushes = r.Clones
+		r.OK = r.CloneOK
+		r.OtherErrors = r.CloneErrors
+		r.CASFailures = 0
+		r.ErrorMessages = r.CloneErrorMessages
+		r.P50ms = r.CloneP50ms
+		r.P95ms = r.CloneP95ms
+		r.P99ms = r.CloneP99ms
+		if len(cloneDurs) > 0 {
+			r.P999ms = percentile(cloneDurs, 99.9)
+			r.Maxms = cloneDurs[len(cloneDurs)-1]
+		}
+	}
+	if window > 0 {
+		r.OpsPerSec = float64(r.OK) / window.Seconds()
+	}
 	return r
-}
-
-// checkThresholds reports every configured threshold breach in sweep order.
-func checkThresholds(results []levelResult, cfg *runConfig) []string {
-	if cfg == nil {
-		return nil
-	}
-	var breaches []string
-	for _, r := range results {
-		if cfg.minPushRate > 0 && r.OpsPerSec < cfg.minPushRate {
-			breaches = append(breaches, fmt.Sprintf("c=%d push/s=%.1f < min %.1f", r.Concurrency, r.OpsPerSec, cfg.minPushRate))
-		}
-		if cfg.maxP95 > 0 {
-			maxP95ms := float64(cfg.maxP95) / float64(time.Millisecond)
-			if r.P95ms > maxP95ms {
-				breaches = append(breaches, fmt.Sprintf("c=%d p95=%.1fms > max %.1fms", r.Concurrency, r.P95ms, maxP95ms))
-			}
-		}
-		if cfg.maxErrors >= 0 && r.OtherErrors > cfg.maxErrors {
-			breaches = append(breaches, fmt.Sprintf("c=%d errors=%d > max %d", r.Concurrency, r.OtherErrors, cfg.maxErrors))
-		}
-	}
-	return breaches
 }
 
 // percentile returns the nearest-rank percentile of an already-sorted slice.

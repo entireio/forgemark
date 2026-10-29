@@ -1,4 +1,4 @@
-package main
+package bench
 
 import (
 	"context"
@@ -24,7 +24,7 @@ import (
 // interferes.
 type noopSigner struct{}
 
-func (noopSigner) Sign(io.Reader) ([]byte, error) { return nil, nil }
+func (noopSigner) Sign(context.Context, io.Reader) ([]byte, error) { return nil, nil }
 
 // agent is one synthetic writer. It keeps an in-memory git repo and pushes a
 // stream of small commits to its assigned ref on its assigned repo+node. Each
@@ -35,23 +35,59 @@ type agent struct {
 	id       int
 	repoPath string // repo path, appended to node verbatim (see verbatimURLFor)
 	node     string // node base URL, e.g. https://node1.cluster:443
-	ref      string // destination ref, e.g. refs/heads/<run>-a7
+	ref      string // destination ref, e.g. refs/forgemark/<run>-c8-a7 (see DestRef)
 	objFmt   formatcfg.ObjectFormat
 
-	cfg   *commitConfig
-	creds credentialProvider
-	httpc *http.Client
-	sess  *sessionConfig // non-nil → "session" strategy (clone+push loop)
+	cfg      *CommitConfig
+	creds    credentialProvider
+	httpc    *http.Client
+	pushOpts []string       // push options sent with every push (git push -o)
+	clone    *cloneConfig   // non-nil → "clone" strategy (clone-only loop)
+	sess     *sessionConfig // non-nil → "session" strategy (clone+push loop)
+	sink     Sink           // optional live observer; nil on the CLI path
 
-	repo    *git.Repository
-	samples []sample
+	repo      *git.Repository
+	samples   []Sample
+	cancelled int                        // ops cut off by ctx, which the server saw as cancelled
+	est       [OpClone + 1]time.Duration // smoothed latency per OpKind (see observe)
 }
 
-// commitConfig is the subset of run config an agent needs.
-type commitConfig struct {
-	filesMin int
-	filesMax int
-	fileSize int
+// record appends a sample to the agent's authoritative post-hoc log and, when
+// a sink is attached, forwards it live. Every sample the agent takes goes
+// through here.
+func (a *agent) record(s Sample) {
+	a.samples = append(a.samples, s)
+	if s.Dur > 0 {
+		a.observe(s.Op, s.Dur)
+	}
+	if a.sink != nil {
+		a.sink.OnSample(s)
+	}
+}
+
+// observe folds one measured duration into the op's latency estimate. The
+// estimate rises at once to a slower sample but decays slowly towards faster
+// ones. Latency growing because requests are queueing on the server is then
+// reflected immediately, and the agent errs towards stopping early rather than
+// starting an op the window end would cancel.
+func (a *agent) observe(op OpKind, d time.Duration) {
+	if e := a.est[op]; e > 0 {
+		d = max(d, e+(d-e)/4)
+	}
+	a.est[op] = d
+}
+
+// fits reports whether an op of kind op started now is expected to finish
+// before end. With nothing observed yet it always fits.
+func (a *agent) fits(op OpKind, end time.Time) bool {
+	return time.Now().Add(a.est[op]).Before(end)
+}
+
+// CommitConfig is the subset of run config an agent needs.
+type CommitConfig struct {
+	FilesMin int
+	FilesMax int
+	FileSize int
 }
 
 // authorEmail stamps the synthetic load commits. .invalid is the RFC 2606
@@ -65,15 +101,14 @@ const authorEmail = "agent@forgemark.invalid"
 const resetEvery = 128
 
 // newAgent builds an agent. In branch/repo mode it initialises its in-memory
-// repo up front (object format matched to the remote). In session mode (sess
-// != nil) the repo is (re)created per session by the clone loop, so init is
-// skipped.
-func newAgent(id int, repoPath, node, ref string, objFmt formatcfg.ObjectFormat, cfg *commitConfig, creds credentialProvider, httpc *http.Client, sess *sessionConfig) (*agent, error) {
+// repo up front (object format matched to the remote). In clone/session mode
+// the repo is created per clone by the clone loop, so init is skipped.
+func newAgent(id int, repoPath, node, ref string, objFmt formatcfg.ObjectFormat, cfg *CommitConfig, creds credentialProvider, httpc *http.Client, pushOpts []string, clone *cloneConfig, sess *sessionConfig, sink Sink) (*agent, error) {
 	a := &agent{
 		id: id, repoPath: repoPath, node: node, ref: ref, objFmt: objFmt,
-		cfg: cfg, creds: creds, httpc: httpc, sess: sess,
+		cfg: cfg, creds: creds, httpc: httpc, pushOpts: pushOpts, clone: clone, sess: sess, sink: sink,
 	}
-	if sess == nil {
+	if clone == nil && sess == nil {
 		if err := a.initRepo(); err != nil {
 			return nil, err
 		}
@@ -101,20 +136,26 @@ func (a *agent) initRepo() error {
 	return nil
 }
 
-// run pushes commits in a tight loop until ctx is cancelled, recording one
-// sample per attempt. start anchors sample offsets so the caller can drop the
-// warm-up window afterwards.
-func (a *agent) run(ctx context.Context, start time.Time) {
+// run dispatches the agent's configured strategy until the window ends or ctx
+// is cancelled. start anchors sample offsets so the caller can drop the
+// warm-up window afterwards. No op starts unless it is expected to finish by
+// end, so the window closing doesn't cancel a burst of in-flight requests.
+// ctx is the hard stop for ops that overrun their estimate.
+func (a *agent) run(ctx context.Context, start, end time.Time) {
+	if a.clone != nil {
+		a.runClones(ctx, start, end)
+		return
+	}
 	if a.sess != nil {
-		a.runSessions(ctx, start)
+		a.runSessions(ctx, start, end)
 		return
 	}
 	rng := rand.New(rand.NewSource(int64(a.id)*1_000_003 + 1)) //nolint:gosec // synthetic load content, not security-sensitive
 	iter := 0
-	for ctx.Err() == nil {
+	for ctx.Err() == nil && a.fits(OpPush, end) {
 		if iter > 0 && iter%resetEvery == 0 {
 			if err := a.initRepo(); err != nil {
-				a.samples = append(a.samples, sample{offset: time.Since(start), res: outcomeErr, msg: err.Error()})
+				a.record(Sample{Offset: time.Since(start), Res: OutcomeErr, Msg: err.Error()})
 				iter++
 				continue
 			}
@@ -123,25 +164,31 @@ func (a *agent) run(ctx context.Context, start time.Time) {
 			// A local commit failure is a harness bug, not a server signal —
 			// record it as an error and keep going so one bad agent doesn't
 			// silently drop out of the concurrency level.
-			a.samples = append(a.samples, sample{offset: time.Since(start), res: outcomeErr, msg: err.Error()})
+			a.record(Sample{Offset: time.Since(start), Res: OutcomeErr, Msg: err.Error()})
 			iter++
 			continue
+		}
+		// Building the commit spent window time. Recheck, or a slow commit
+		// could start the push after end, outside the measured window.
+		if !a.fits(OpPush, end) {
+			break
 		}
 		t0 := time.Now()
 		err := a.push(ctx)
 		dur := time.Since(t0)
 		// Don't record the attempt that lost the ctx-cancellation race; it's a
-		// truncated measurement, not real latency.
+		// truncated measurement, not real latency. Count it instead.
 		if ctx.Err() != nil {
+			a.cancelled++
 			break
 		}
 		o := classify(err)
-		a.samples = append(a.samples, sample{offset: t0.Sub(start), dur: dur, res: o, msg: errMsg(o, err)})
+		a.record(Sample{Offset: t0.Sub(start), Dur: dur, Res: o, Msg: errMsg(o, err)})
 		iter++
 	}
 }
 
-// commit writes filesMin..filesMax small files and records a commit on the
+// commit writes FilesMin..FilesMax small files and records a commit on the
 // local default branch (refs/heads/master). Stable filenames mean later commits
 // are modifications, the realistic shape of an agent editing a working set.
 func (a *agent) commit(rng *rand.Rand, iter int) error {
@@ -149,11 +196,11 @@ func (a *agent) commit(rng *rand.Rand, iter int) error {
 	if err != nil {
 		return fmt.Errorf("worktree: %w", err)
 	}
-	n := a.cfg.filesMin
-	if a.cfg.filesMax > a.cfg.filesMin {
-		n += rng.Intn(a.cfg.filesMax - a.cfg.filesMin + 1)
+	n := a.cfg.FilesMin
+	if a.cfg.FilesMax > a.cfg.FilesMin {
+		n += rng.Intn(a.cfg.FilesMax - a.cfg.FilesMin + 1)
 	}
-	buf := make([]byte, a.cfg.fileSize)
+	buf := make([]byte, a.cfg.FileSize)
 	for i := range n {
 		name := fmt.Sprintf("file-%d.txt", i)
 		f, err := wt.Filesystem().Create(name)
@@ -191,6 +238,7 @@ func (a *agent) push(ctx context.Context) error {
 		RemoteName: "origin",
 		RefSpecs:   []config.RefSpec{config.RefSpec("+refs/heads/master:" + a.ref)},
 		Force:      true, // each agent owns its ref; force keeps numbers clean of spurious non-ff
+		Options:    a.pushOpts,
 		ClientOptions: []gitclient.Option{
 			gitclient.WithHTTPClient(a.httpc),
 			gitclient.WithHTTPAuth(auth),
@@ -202,24 +250,24 @@ func (a *agent) push(ctx context.Context) error {
 	return nil
 }
 
-// classify maps a push result to an outcome. A nil error or "already
+// classify maps a push result to an Outcome. A nil error or "already
 // up-to-date" is success; a CAS / non-fast-forward rejection is contention;
 // everything else is an error.
-func classify(err error) outcome {
+func classify(err error) Outcome {
 	switch {
 	case err == nil, errors.Is(err, git.NoErrAlreadyUpToDate):
-		return outcomeOK
+		return OutcomeOK
 	case errors.Is(err, git.ErrNonFastForwardUpdate):
-		return outcomeCAS
+		return OutcomeCAS
 	default:
 		msg := strings.ToLower(err.Error())
 		if strings.Contains(msg, "non-fast-forward") ||
 			strings.Contains(msg, "reference has changed") ||
 			strings.Contains(msg, "fetch first") ||
 			strings.Contains(msg, "stale info") {
-			return outcomeCAS
+			return OutcomeCAS
 		}
-		return outcomeErr
+		return OutcomeErr
 	}
 }
 
@@ -229,11 +277,12 @@ const maxErrMsgLen = 200
 
 // reURL/reRef match the volatile substrings go-git embeds in error text — the
 // receive-pack URL (varies by node/repo) and the destination ref (varies by
-// agent/session). Collapsing them lets identical failures group in the results.
-// Compiled once; the message-shape sibling of classify.
+// agent/session, and by namespace: refs/forgemark/ by default, refs/heads/ or
+// anything else via -ref-namespace). Collapsing them lets identical failures
+// group in the results. Compiled once; the message-shape sibling of classify.
 var (
 	reURL = regexp.MustCompile(`https?://\S+`)
-	reRef = regexp.MustCompile(`refs/heads/\S+`)
+	reRef = regexp.MustCompile(`refs/\S+`)
 )
 
 // normalizeErr turns a raw go-git error message into a stable grouping key:

@@ -1,0 +1,504 @@
+package bench
+
+import (
+	"context"
+	"crypto/tls"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"runtime/debug"
+	"slices"
+	"strings"
+	"sync"
+	"time"
+
+	formatcfg "github.com/go-git/go-git/v6/plumbing/format/config"
+)
+
+// Runner drives one target through concurrency levels of one workload. The
+// caller owns the sweep loop: it calls RunLevel once per level, so level
+// lifecycle (start/end, the returned LevelResult) is the caller's to observe —
+// the engine only reports per-operation samples, via the optional Sink.
+type Runner struct {
+	target Target
+	w      Workload
+	creds  credentialProvider
+	ep     *endpoint
+	httpc  *http.Client
+	sink   Sink
+
+	tokenExp   time.Time // zero: not a JWT, the server decides
+	levelsLeft int       // levels not yet started
+}
+
+// NewRunner resolves a target (credentials + endpoint; for entiredb this
+// probes the cluster) and validates the workload against it. sink may be nil.
+func NewRunner(ctx context.Context, t Target, w Workload, sink Sink) (*Runner, error) {
+	if err := w.Validate(); err != nil {
+		return nil, err
+	}
+	if len(t.Repos) == 0 {
+		return nil, errors.New("no repos: pass -repos or -repo-pattern + -repo-count")
+	}
+	if w.Strategy == "repo" && len(t.Repos) < 2 {
+		return nil, errors.New("strategy=repo needs >= 2 repos")
+	}
+	if t.Secret == "" {
+		return nil, errors.New("no credential secret provided")
+	}
+	httpc := newHTTPClient(t.Insecure, slices.Max(w.Concurrency)+8)
+
+	var (
+		creds credentialProvider
+		ep    *endpoint
+		err   error
+	)
+	if t.TokenURL != "" || t.Jurisdiction != "" {
+		// Go forwards Authorization on same-domain redirects, which would
+		// carry the account access token past pinReplicas on any request.
+		// The discovery probe vets its own redirect.
+		httpc = refuseRedirects(httpc)
+		creds, ep, err = setupEntiredb(ctx, t, httpc)
+	} else {
+		creds, ep, err = setupGeneric(t)
+	}
+	if err != nil {
+		httpc.CloseIdleConnections() // drop the discovery probe's pool
+		return nil, err
+	}
+	r := &Runner{target: t, w: w, creds: creds, ep: ep, httpc: httpc, sink: sink, levelsLeft: len(w.Concurrency)}
+	if len(w.PushOptions) > 0 {
+		if err := requirePushOptions(ctx, httpc, ep.nodes, t.Repos, creds); err != nil {
+			r.Close()
+			return nil, err
+		}
+	}
+	if t.TokenURL != "" || t.Jurisdiction != "" {
+		// Only Entire's account token bounds the run. After discovery, so
+		// its time counts against the token.
+		r.tokenExp, _ = jwtExpiry(t.Secret)
+		if err := r.tokenCovers(time.Now()); err != nil {
+			r.Close()
+			return nil, err
+		}
+	}
+	return r, nil
+}
+
+// Label is the resolved endpoint label (the remote base URL), for banners and
+// results.
+func (r *Runner) Label() string { return r.ep.label }
+
+// Nodes is how many push destinations the endpoint fans out across (1 for any
+// plain forge; the discovered replica count for entiredb).
+func (r *Runner) Nodes() int { return len(r.ep.nodes) }
+
+// ObjectFormat is the resolved wire object format ("sha1" or "sha256").
+func (r *Runner) ObjectFormat() string { return string(r.ep.objFmt) }
+
+// Close releases the runner's resources once its run is over: it drops idle
+// keep-alive connections and severs the runner's reference to the credential
+// provider, so the credential (a PAT, or an Entire subject/access token) held
+// for the run becomes eligible for garbage collection instead of living on in a
+// finished run kept resident in memory. Go strings can't be wiped in place, so
+// dropping the reference is the strongest release available.
+func (r *Runner) Close() {
+	// Stop any background token refresh before dropping the reference, or a
+	// detached exchange could keep running (and holding the token) after the run.
+	if c, ok := r.creds.(credentialCloser); ok {
+		c.close()
+	}
+	if r.httpc != nil {
+		r.httpc.CloseIdleConnections()
+	}
+	r.creds = nil
+	r.target.Secret = "" // drop the runner's own copy of the token
+}
+
+// credentialCloser is an optional credentialProvider capability: release any
+// background machinery and the credentials it holds.
+type credentialCloser interface{ close() }
+
+// StartBarrier synchronizes the start of one concurrency level across several
+// runners: each Arrives once its agents are built, and the coordinator
+// releases them together, so target-dependent setup time can't skew the
+// measured windows of a comparison run. It tolerates a runner that fails
+// before it is ready — that runner still Arrives, so Await can't hang. A nil
+// barrier means "run alone, no synchronization" (the CLI's single-target path).
+type StartBarrier struct {
+	arrived chan struct{}
+	release chan struct{}
+	n       int
+	firedAt time.Time // set before release closes; the shared start instant
+}
+
+// NewStartBarrier makes a barrier expecting n participants.
+func NewStartBarrier(n int) *StartBarrier {
+	return &StartBarrier{arrived: make(chan struct{}, n), release: make(chan struct{}), n: n}
+}
+
+// Arrive reports that this participant has finished preparing (or has given up
+// and won't Hold). The buffered channel makes it non-blocking.
+func (b *StartBarrier) Arrive() { b.arrived <- struct{}{} }
+
+// Hold blocks until the coordinator fires the shared start signal.
+func (b *StartBarrier) Hold() { <-b.release }
+
+// Await blocks until every participant has Arrived.
+func (b *StartBarrier) Await() {
+	for i := 0; i < b.n; i++ {
+		<-b.arrived
+	}
+}
+
+// Fire releases every held participant to begin its timed window together. It
+// stamps firedAt before closing release, so every participant and the
+// coordinator share one start instant (via FiredAt) rather than each reading
+// its own time.Now after being scheduled — which would skew the sample clock
+// against the window/dt_ms timestamps. The close is a happens-before edge, so
+// the write is visible to every Hold() that returns.
+func (b *StartBarrier) Fire() {
+	b.firedAt = time.Now()
+	close(b.release)
+}
+
+// FiredAt is the shared start instant, valid after Fire (for the coordinator) or
+// after Hold returns (for a participant).
+func (b *StartBarrier) FiredAt() time.Time { return b.firedAt }
+
+// RunLevel runs a single concurrency level: build c agents, wait at the
+// barrier so all targets start together, run for warmup+duration, then fold
+// the samples into one result. It blocks for the full level window (or until
+// ctx is cancelled). barrier may be nil to run without synchronization.
+func (r *Runner) RunLevel(ctx context.Context, c int, barrier *StartBarrier) (LevelResult, error) {
+	var clone *cloneConfig
+	var sess *sessionConfig
+	switch r.w.Strategy {
+	case "clone":
+		clone = &cloneConfig{cloneDepth: r.w.CloneDepth, baseRef: r.w.BaseRef}
+	case "session":
+		sess = &sessionConfig{
+			cloneConfig: cloneConfig{cloneDepth: r.w.CloneDepth, baseRef: r.w.BaseRef},
+			commits:     r.w.SessionCommits,
+		}
+	}
+	agents := make([]*agent, c)
+	for i := range c {
+		repoPath := r.target.Repos[0]
+		if r.w.Strategy == "repo" {
+			repoPath = r.target.Repos[i%len(r.target.Repos)]
+		}
+		node := r.ep.nodes[i%len(r.ep.nodes)]
+		ref := DestRef(r.w.Namespace(), r.w.BranchPrefix, r.w.RunID, c, i)
+		a, err := newAgent(i, repoPath, node, ref, r.ep.objFmt, &r.w.Commit, r.creds, r.httpc, r.w.PushOptions, clone, sess, r.sink)
+		if err != nil {
+			if barrier != nil {
+				barrier.Arrive() // don't leave the coordinator's Await hanging
+			}
+			return LevelResult{}, fmt.Errorf("new agent %d: %w", i, err)
+		}
+		agents[i] = a
+	}
+
+	// Agents are built; wait for every target before starting the clock, so the
+	// measured window begins at the same instant on each and the comparison is
+	// fair regardless of per-target setup time.
+	if barrier != nil {
+		barrier.Arrive()
+		barrier.Hold()
+	}
+
+	total := r.w.Warmup + r.w.Duration
+	// Origin the sample clock AND the context deadline on the same instant — the
+	// barrier's shared fire time when there is one. Using FiredAt for the offset
+	// origin but a scheduled-now timeout for the deadline let a target released
+	// late run a full `total` from its late start, recording samples past the
+	// shared window end that summarize then miscounts against the fixed duration.
+	// Deriving the deadline from FiredAt()+total stops every target together.
+	// Single-target CLI runs have no barrier and just start now.
+	start := time.Now()
+	if barrier != nil {
+		start = barrier.FiredAt()
+	}
+	// Recheck at the window: discovery, agent setup, the barrier and the
+	// previous level's cleanup all spent token lifetime.
+	if err := r.tokenCovers(start); err != nil {
+		return LevelResult{}, err
+	}
+	r.levelsLeft = max(r.levelsLeft-1, 0)
+	// Agents stop starting ops they don't expect to finish by end. The hard
+	// deadline only cancels the few that overrun their estimate by more than
+	// drainGrace, rather than every op in flight when the window closes.
+	end := start.Add(total)
+	lvlCtx, cancel := context.WithDeadline(ctx, end.Add(drainGrace))
+	defer cancel()
+	var wg sync.WaitGroup
+	for _, a := range agents {
+		wg.Add(1)
+		go func(a *agent) {
+			defer wg.Done()
+			a.run(lvlCtx, start, end)
+		}(a)
+	}
+	wg.Wait()
+	// Agents that stopped early still leave the level open until end. Callers
+	// treat RunLevel returning as the window closing, and summarize divides by
+	// the full duration.
+	idle := time.NewTimer(time.Until(end))
+	select {
+	case <-idle.C:
+	case <-ctx.Done():
+		idle.Stop()
+	}
+
+	var all []Sample
+	cancelled := 0
+	for _, a := range agents {
+		all = append(all, a.samples...)
+		cancelled += a.cancelled
+	}
+	reposUsed := 1
+	if r.w.Strategy == "repo" {
+		reposUsed = min(c, len(r.target.Repos))
+	}
+	res := summarize(all, c, r.w.Strategy, reposUsed, len(r.ep.nodes), r.w.Warmup, r.w.Duration, r.w.CommitDesc())
+	res.Cancelled = cancelled
+	return res, nil
+}
+
+func setupGeneric(t Target) (credentialProvider, *endpoint, error) {
+	if t.Remote == "" {
+		return nil, nil, errors.New("-remote required (e.g. https://gitlab.com); for entiredb also pass -token-url and -jurisdiction")
+	}
+	if IsGitHubDotCom(t.Remote) && t.ObjectFmt == "sha256" {
+		return nil, nil, errors.New("github.com is sha1; drop -object-format sha256")
+	}
+	objFmt, err := parseObjectFormat(t.ObjectFmt)
+	if err != nil {
+		return nil, nil, err
+	}
+	user := t.User
+	if user == "" {
+		user = "x-access-token" // token forges ignore the username; the token is the password
+	}
+	return staticCreds{username: user, password: t.Secret}, newGenericEndpoint(t.Remote, objFmt), nil
+}
+
+// tokenCovers refuses to start work the account access token cannot
+// cover: nothing refreshes it, so a level that outlives it would report
+// authentication failures as throughput. It needs every level not yet
+// started, plus the drain and session ref cleanup after each window and
+// clock skew, measured from now. A secret that is not a JWT with exp passes.
+func (r *Runner) tokenCovers(now time.Time) error {
+	if r.tokenExp.IsZero() {
+		return nil
+	}
+	levels := max(r.levelsLeft, 1)
+	var cleanup time.Duration
+	if r.w.Strategy == "session" {
+		cleanup = sessionCleanupTimeout
+	}
+	need := time.Duration(levels)*(r.w.Warmup+r.w.Duration+drainGrace+cleanup) + tokenSkew
+	if left := r.tokenExp.Sub(now); left < need {
+		return fmt.Errorf("token expires in %s but %d remaining levels need %s (warmup %s + duration %s + drain %s + cleanup %s each, + %s skew); mint a fresher token or shorten the run",
+			max(left, 0).Round(time.Second), levels, need, r.w.Warmup, r.w.Duration, drainGrace, cleanup, tokenSkew)
+	}
+	return nil
+}
+
+// drainGrace is how long past the window end an in-flight op may run before
+// the level cancels it. Agents don't start ops expected to overrun the window,
+// so this only absorbs ops slower than their latency estimate.
+const drainGrace = 30 * time.Second
+
+// tokenSkew absorbs clock drift against the issuer.
+const tokenSkew = 30 * time.Second
+
+// jwtExpiry reads exp from an unverified JWT payload.
+func jwtExpiry(token string) (time.Time, bool) {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return time.Time{}, false
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return time.Time{}, false
+	}
+	var c struct {
+		Exp int64 `json:"exp"`
+	}
+	if json.Unmarshal(payload, &c) != nil || c.Exp == 0 {
+		return time.Time{}, false
+	}
+	return time.Unix(c.Exp, 0), true
+}
+
+// refuseRedirects returns a copy of c (same transport and pool) that fails
+// every redirect instead of following it.
+func refuseRedirects(c *http.Client) *http.Client {
+	out := *c
+	out.CheckRedirect = func(*http.Request, []*http.Request) error {
+		return errors.New("entiredb request attempted a redirect; refusing to forward the credential")
+	}
+	return &out
+}
+
+func setupEntiredb(ctx context.Context, t Target, httpc *http.Client) (credentialProvider, *endpoint, error) {
+	var missing []string
+	if t.Remote == "" {
+		missing = append(missing, "-remote (cluster base URL)")
+	}
+	if t.TokenURL == "" {
+		missing = append(missing, "-token-url")
+	}
+	if t.Jurisdiction == "" {
+		missing = append(missing, "-jurisdiction")
+	}
+	if len(missing) > 0 {
+		return nil, nil, fmt.Errorf("entire target (selected by -token-url/-jurisdiction) also needs: %s", strings.Join(missing, ", "))
+	}
+	// The subject token is the account access token; entiredb authorizes each
+	// push live on its subject, so it is presented as-is (ADR 20260729).
+	// Entire ignores the username.
+	creds := staticCreds{username: "token", password: t.Secret}
+	ep, err := newEntireEndpoint(ctx, t.Remote, t.ObjectFmt, t.Repos[0], creds, httpc)
+	if err != nil {
+		return nil, nil, err
+	}
+	return creds, ep, nil
+}
+
+func parseObjectFormat(s string) (formatcfg.ObjectFormat, error) {
+	switch s {
+	case "sha256":
+		return formatcfg.SHA256, nil
+	case "sha1", "auto", "": // generic doesn't probe; auto degrades to sha1
+		return formatcfg.SHA1, nil
+	default:
+		return "", fmt.Errorf("invalid -object-format %q (sha1|sha256|auto)", s)
+	}
+}
+
+func newHTTPClient(insecure bool, maxConns int) *http.Client {
+	tr := &http.Transport{
+		Proxy:               http.ProxyFromEnvironment,
+		MaxIdleConns:        maxConns * 2,
+		MaxIdleConnsPerHost: maxConns,
+		MaxConnsPerHost:     0, // unbounded: don't queue pushes behind a conn cap
+		IdleConnTimeout:     90 * time.Second,
+	}
+	if insecure {
+		tr.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} //nolint:gosec // load-test opt-in
+	}
+	// Client.Timeout must stay zero: with a wrapped RoundTripper a nonzero
+	// value falls off net/http's known-transport fast path and spawns a
+	// cancellation goroutine per request, skewing the very operations
+	// forgemark measures. uaTransport enforces the timeout instead.
+	return &http.Client{
+		Transport:     &uaTransport{base: tr, timeout: 120 * time.Second},
+		CheckRedirect: sameOriginRedirect,
+	}
+}
+
+// sameOriginRedirect keeps the credential on the origin the operator
+// configured. Every request carries Basic auth up front, and Go copies it to a
+// redirect target on any port of the same hostname or on a subdomain. go-git
+// follows the initial info/refs redirect, as git does, and runs this hook
+// after its own policy. A redirect within the origin (GitLab: repo to
+// repo.git) is followed. One that changes scheme, hostname or port is refused.
+func sameOriginRedirect(req *http.Request, via []*http.Request) error {
+	first := via[0].URL
+	if req.URL.Scheme != first.Scheme ||
+		!strings.EqualFold(req.URL.Hostname(), first.Hostname()) ||
+		effectivePort(req.URL) != effectivePort(first) {
+		return fmt.Errorf("refusing to follow a redirect to %s://%s: the credential is only sent to %s://%s",
+			req.URL.Scheme, req.URL.Host, first.Scheme, first.Host)
+	}
+	if len(via) >= 10 {
+		return errors.New("stopped after 10 redirects")
+	}
+	return nil
+}
+
+// uaToken identifies forgemark in User-Agent headers. Binaries built from a
+// git checkout carry the commit via Go's embedded VCS info, so server logs can
+// tie traffic to an exact revision — with "-dirty" when the tree had
+// uncommitted changes; otherwise (go test, -buildvcs=off) it's the bare name.
+var uaToken = func() string {
+	bi, ok := debug.ReadBuildInfo()
+	if !ok {
+		return "forgemark"
+	}
+	var revision, dirty string
+	for _, s := range bi.Settings {
+		switch s.Key {
+		case "vcs.revision":
+			revision = s.Value
+			if len(revision) > 12 {
+				revision = revision[:12]
+			}
+		case "vcs.modified":
+			if s.Value == "true" {
+				dirty = "-dirty"
+			}
+		}
+	}
+	if revision == "" {
+		return "forgemark"
+	}
+	return "forgemark/" + revision + dirty
+}()
+
+// uaTransport appends uaToken to every request's User-Agent so server logs can
+// attribute load-test traffic. Appending keeps go-git's agent string first
+// (servers may key protocol behavior on it), and tagging only the HTTP header
+// leaves the git protocol's agent capability untouched — go-git's
+// GO_GIT_USER_AGENT_EXTRA hook would land there too, where the embedded space
+// reads as a bogus extra capability, and would leak into subprocess
+// environments.
+//
+// It also imposes the request timeout as a context deadline (see
+// newHTTPClient). Unlike Client.Timeout the budget is per attempt, not per
+// redirect chain. Redirects are rare and stay within one origin (see
+// sameOriginRedirect), so that difference is theoretical.
+type uaTransport struct {
+	base    *http.Transport
+	timeout time.Duration
+}
+
+func (t *uaTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	// Per the RoundTripper contract, don't mutate the caller's request.
+	ctx, cancel := context.WithTimeout(req.Context(), t.timeout)
+	req = req.Clone(ctx)
+	if ua := req.Header.Get("User-Agent"); ua != "" {
+		req.Header.Set("User-Agent", ua+" "+uaToken)
+	} else {
+		req.Header.Set("User-Agent", uaToken)
+	}
+	resp, err := t.base.RoundTrip(req)
+	if err != nil {
+		cancel()
+		return nil, err
+	}
+	// Like Client.Timeout, the deadline covers reading the body; the timer is
+	// released when the caller closes it.
+	resp.Body = &cancelOnClose{ReadCloser: resp.Body, cancel: cancel}
+	return resp, nil
+}
+
+// CloseIdleConnections forwards to the underlying transport; without it,
+// http.Client.CloseIdleConnections (used by run cleanup) would be a no-op.
+func (t *uaTransport) CloseIdleConnections() { t.base.CloseIdleConnections() }
+
+type cancelOnClose struct {
+	io.ReadCloser
+	cancel context.CancelFunc
+}
+
+func (b *cancelOnClose) Close() error {
+	b.cancel()
+	return b.ReadCloser.Close()
+}

@@ -1,4 +1,4 @@
-package main
+package bench
 
 import (
 	"context"
@@ -18,6 +18,13 @@ import (
 	"github.com/go-git/go-git/v6/storage/memory"
 )
 
+// cloneConfig is the shared read-side configuration for clone and session
+// strategies.
+type cloneConfig struct {
+	cloneDepth int    // shallow clone depth (1 = tip only; 0 = full history)
+	baseRef    string // branch to clone; "" = remote default branch
+}
+
 // sessionConfig drives the "session" strategy: each agent repeatedly
 // shallow-clones the base branch, commits + pushes `commits` checkpoints to a
 // fresh ephemeral branch, then abandons it and starts a new session. This
@@ -25,25 +32,41 @@ import (
 // realistic agent shape — and exercises read/write contention (bitmap/cache
 // invalidation under push churn) that the pure-push strategies can't.
 type sessionConfig struct {
-	commits    int    // commit+push checkpoints per cloned session
-	cloneDepth int    // shallow clone depth (1 = tip only; 0 = full history)
-	baseRef    string // branch to clone; "" = remote default branch
+	cloneConfig
+	commits int // commit+push checkpoints per cloned session
+}
+
+// runClones is the agent loop for the clone strategy. Each iteration performs
+// a shallow in-memory clone of the base branch, records one op==clone sample,
+// then discards the repo.
+func (a *agent) runClones(ctx context.Context, start, end time.Time) {
+	for ctx.Err() == nil && a.fits(OpClone, end) {
+		t0 := time.Now()
+		_, _, err := a.cloneSession(ctx)
+		if ctx.Err() != nil {
+			a.cancelled++
+			return
+		}
+		res := readOutcome(err)
+		a.record(Sample{Offset: t0.Sub(start), Dur: time.Since(t0), Res: res, Op: OpClone, Msg: errMsg(res, err)})
+	}
 }
 
 // runSessions is the agent loop for the session strategy. Clone latency is
 // recorded as op==clone, push latency as op==push, so they're summarized
 // separately. Ephemeral session branches (…-sN) model an agent abandoning a
 // working branch each session.
-func (a *agent) runSessions(ctx context.Context, start time.Time) {
+func (a *agent) runSessions(ctx context.Context, start, end time.Time) {
 	rng := rand.New(rand.NewSource(int64(a.id)*1_000_003 + 1)) //nolint:gosec // synthetic load, not security-sensitive
-	for session := 0; ctx.Err() == nil; session++ {
+	for session := 0; ctx.Err() == nil && a.fits(OpClone, end); session++ {
 		t0 := time.Now()
 		repo, branch, err := a.cloneSession(ctx)
 		if ctx.Err() != nil {
+			a.cancelled++
 			return
 		}
 		res := readOutcome(err)
-		a.samples = append(a.samples, sample{offset: t0.Sub(start), dur: time.Since(t0), res: res, op: opClone, msg: errMsg(res, err)})
+		a.record(Sample{Offset: t0.Sub(start), Dur: time.Since(t0), Res: res, Op: OpClone, Msg: errMsg(res, err)})
 		if err != nil {
 			continue // clone failed — next session retries
 		}
@@ -51,10 +74,13 @@ func (a *agent) runSessions(ctx context.Context, start time.Time) {
 
 		sessRef := fmt.Sprintf("%s-s%d", a.ref, session)
 		pushed := false
-		for k := 0; k < a.sess.commits && ctx.Err() == nil; k++ {
+		for k := 0; k < a.sess.commits && ctx.Err() == nil && a.fits(OpPush, end); k++ {
 			if err := a.commit(rng, k); err != nil {
-				a.samples = append(a.samples, sample{offset: time.Since(start), res: outcomeErr, op: opPush, msg: err.Error()})
+				a.record(Sample{Offset: time.Since(start), Res: OutcomeErr, Op: OpPush, Msg: err.Error()})
 				continue
+			}
+			if !a.fits(OpPush, end) {
+				break // the commit spent the remaining window. sessRef is still cleaned up
 			}
 			t1 := time.Now()
 			perr := a.pushRef(ctx, branch, sessRef)
@@ -62,10 +88,11 @@ func (a *agent) runSessions(ctx context.Context, start time.Time) {
 				pushed = true // the branch now exists on the remote
 			}
 			if ctx.Err() != nil {
+				a.cancelled++
 				break // window closed mid-push: stop, but still clean up sessRef
 			}
 			o := classify(perr)
-			a.samples = append(a.samples, sample{offset: t1.Sub(start), dur: time.Since(t1), res: o, op: opPush, msg: errMsg(o, perr)})
+			a.record(Sample{Offset: t1.Sub(start), Dur: time.Since(t1), Res: o, Op: OpPush, Msg: errMsg(o, perr)})
 		}
 		// Abandon the session branch by deleting it, so ephemeral …-sN refs don't
 		// accumulate on the target repo across the sweep (a growing receive-pack
@@ -80,9 +107,14 @@ func (a *agent) runSessions(ctx context.Context, start time.Time) {
 }
 
 // cloneSession shallow-clones the base branch into a fresh in-memory repo and
-// returns the local branch to commit on. An empty remote degrades to an orphan
-// (no read load) so the mode still runs against an unseeded repo.
+// returns the local branch to commit on. A remote with nothing to clone (see
+// orphanFallback) degrades to an orphan (no read load) so the mode still runs
+// against an unseeded repo.
 func (a *agent) cloneSession(ctx context.Context) (*git.Repository, plumbing.ReferenceName, error) {
+	clone := a.cloneConfig()
+	if clone == nil {
+		return nil, "", errors.New("clone config missing")
+	}
 	auth, err := a.creds.basicAuth(ctx, a.repoPath)
 	if err != nil {
 		return nil, "", err
@@ -96,18 +128,18 @@ func (a *agent) cloneSession(ctx context.Context) (*git.Repository, plumbing.Ref
 	wt := memfs.New()
 	opts := &git.CloneOptions{
 		URL:          verbatimURLFor(a.node, a.repoPath),
-		Depth:        a.sess.cloneDepth,
+		Depth:        clone.cloneDepth,
 		SingleBranch: true,
 		ClientOptions: []gitclient.Option{
 			gitclient.WithHTTPClient(a.httpc),
 			gitclient.WithHTTPAuth(auth),
 		},
 	}
-	if a.sess.baseRef != "" {
-		opts.ReferenceName = normalizeBaseRef(a.sess.baseRef)
+	if clone.baseRef != "" {
+		opts.ReferenceName = normalizeBaseRef(clone.baseRef)
 	}
 	repo, err := git.CloneContext(ctx, storer, wt, opts)
-	if errors.Is(err, transport.ErrEmptyRemoteRepository) {
+	if orphanFallback(err, clone.baseRef != "") {
 		// CloneContext still initialised the storer + origin remote; open it and
 		// commit on an unborn master so the session runs without a real base.
 		repo, err = git.Open(storer, wt)
@@ -126,6 +158,37 @@ func (a *agent) cloneSession(ctx context.Context) (*git.Repository, plumbing.Ref
 	return repo, head.Name(), nil
 }
 
+// orphanFallback reports whether a failed clone means "nothing to clone" —
+// degrade to an unborn local branch — rather than a real error. Two remote
+// states qualify: a genuinely empty repo, and one whose HEAD is unborn but
+// which holds non-branch refs — exactly what a branch/repo run leaves on an
+// unseeded repo under the default refs/forgemark/ namespace, since no push
+// there ever promotes a branch to HEAD. go-git reports the second state
+// differently per wire protocol: over v2, ls-refs is prefix-filtered to
+// refs/heads/, refs/tags/ and HEAD, so nothing comes back and it is
+// ErrEmptyRemoteRepository like the first; over v0/v1 the full advertisement
+// includes the custom refs, so the clone gets as far as resolving HEAD and
+// fails with ErrRemoteRefNotFound. Without this branch a session run against
+// such a repo would fail every clone, forever, on a v0/v1 forge. Only the
+// implicit default branch degrades: an explicit -base-ref that is missing is
+// an operator typo that must surface as the clone error it is.
+func orphanFallback(err error, explicitBase bool) bool {
+	if errors.Is(err, transport.ErrEmptyRemoteRepository) {
+		return true
+	}
+	return !explicitBase && errors.Is(err, git.ErrRemoteRefNotFound)
+}
+
+func (a *agent) cloneConfig() *cloneConfig {
+	if a.clone != nil {
+		return a.clone
+	}
+	if a.sess != nil {
+		return &a.sess.cloneConfig
+	}
+	return nil
+}
+
 // pushRef force-pushes the local working branch to a session-scoped remote ref.
 func (a *agent) pushRef(ctx context.Context, src plumbing.ReferenceName, dst string) error {
 	auth, err := a.creds.basicAuth(ctx, a.repoPath)
@@ -136,6 +199,7 @@ func (a *agent) pushRef(ctx context.Context, src plumbing.ReferenceName, dst str
 		RemoteName: "origin",
 		RefSpecs:   []config.RefSpec{config.RefSpec("+" + src.String() + ":" + dst)},
 		Force:      true,
+		Options:    a.pushOpts,
 		ClientOptions: []gitclient.Option{
 			gitclient.WithHTTPClient(a.httpc),
 			gitclient.WithHTTPAuth(auth),
@@ -147,6 +211,9 @@ func (a *agent) pushRef(ctx context.Context, src plumbing.ReferenceName, dst str
 	return nil
 }
 
+// sessionCleanupTimeout bounds each post-window ref delete.
+const sessionCleanupTimeout = 30 * time.Second
+
 // deleteRef best-effort deletes an ephemeral session branch via an empty-source
 // refspec, so refs don't accumulate on the target repo across a sweep. It runs
 // on its OWN short-lived context, not the caller's per-level ctx: the final
@@ -154,7 +221,7 @@ func (a *agent) pushRef(ctx context.Context, src plumbing.ReferenceName, dst str
 // level ctx is already done — using that dead ctx would no-op the delete and
 // leak the ref. It is cleanup, not a measured operation.
 func (a *agent) deleteRef(dst string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), sessionCleanupTimeout)
 	defer cancel()
 	auth, err := a.creds.basicAuth(ctx, a.repoPath)
 	if err != nil {
@@ -164,6 +231,7 @@ func (a *agent) deleteRef(dst string) {
 	if err := a.repo.PushContext(ctx, &git.PushOptions{
 		RemoteName: "origin",
 		RefSpecs:   []config.RefSpec{config.RefSpec(":" + dst)},
+		Options:    a.pushOpts,
 		ClientOptions: []gitclient.Option{
 			gitclient.WithHTTPClient(a.httpc),
 			gitclient.WithHTTPAuth(auth),
@@ -184,10 +252,10 @@ func normalizeBaseRef(ref string) plumbing.ReferenceName {
 	return plumbing.NewBranchReferenceName(ref)
 }
 
-// readOutcome maps a clone/fetch result to an outcome (reads have no CAS).
-func readOutcome(err error) outcome {
+// readOutcome maps a clone/fetch result to an Outcome (reads have no CAS).
+func readOutcome(err error) Outcome {
 	if err == nil {
-		return outcomeOK
+		return OutcomeOK
 	}
-	return outcomeErr
+	return OutcomeErr
 }

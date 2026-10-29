@@ -1,9 +1,8 @@
-package main
+package bench
 
 import (
 	"errors"
 	"fmt"
-	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -36,12 +35,12 @@ func TestPercentileNearestRank(t *testing.T) {
 func TestSummarizeDropsWarmupAndCountsOutcomes(t *testing.T) {
 	warmup := 10 * time.Second
 	window := 10 * time.Second
-	samples := []sample{
-		{offset: 5 * time.Second, dur: 1 * time.Second, res: outcomeOK}, // warm-up: dropped
-		{offset: 11 * time.Second, dur: 100 * time.Millisecond, res: outcomeOK},
-		{offset: 12 * time.Second, dur: 300 * time.Millisecond, res: outcomeOK},
-		{offset: 13 * time.Second, res: outcomeCAS},
-		{offset: 14 * time.Second, res: outcomeErr},
+	samples := []Sample{
+		{Offset: 5 * time.Second, Dur: 1 * time.Second, Res: OutcomeOK}, // warm-up: dropped
+		{Offset: 11 * time.Second, Dur: 100 * time.Millisecond, Res: OutcomeOK},
+		{Offset: 12 * time.Second, Dur: 300 * time.Millisecond, Res: OutcomeOK},
+		{Offset: 13 * time.Second, Res: OutcomeCAS},
+		{Offset: 14 * time.Second, Res: OutcomeErr},
 	}
 	r := summarize(samples, 8, "branch", 1, 3, warmup, window, "1-10 x 2048B")
 
@@ -63,56 +62,18 @@ func TestSummarizeDropsWarmupAndCountsOutcomes(t *testing.T) {
 	}
 }
 
-func TestCheckThresholds(t *testing.T) {
-	results := []levelResult{
-		{Concurrency: 1, OpsPerSec: 6.2, P95ms: 900, OtherErrors: 0},
-		{Concurrency: 4, OpsPerSec: 3.1, P95ms: 2200, OtherErrors: 2},
-	}
-	tests := []struct {
-		name string
-		cfg  *runConfig
-		want []string
-	}{
-		{
-			name: "breach",
-			cfg:  &runConfig{minPushRate: 5, maxP95: 2 * time.Second, maxErrors: 0},
-			want: []string{
-				"c=4 push/s=3.1 < min 5.0",
-				"c=4 p95=2200.0ms > max 2000.0ms",
-				"c=4 errors=2 > max 0",
-			},
-		},
-		{
-			name: "no breach",
-			cfg:  &runConfig{minPushRate: 3, maxP95: 3 * time.Second, maxErrors: 2},
-		},
-		{
-			name: "unset flags",
-			cfg:  &runConfig{maxErrors: -1},
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := checkThresholds(results, tt.cfg)
-			if !reflect.DeepEqual(got, tt.want) {
-				t.Fatalf("checkThresholds() = %#v, want %#v", got, tt.want)
-			}
-		})
-	}
-}
-
 func TestClassify(t *testing.T) {
 	cases := []struct {
 		name string
 		err  error
-		want outcome
+		want Outcome
 	}{
-		{"nil", nil, outcomeOK},
-		{"up-to-date", git.NoErrAlreadyUpToDate, outcomeOK},
-		{"non-ff sentinel", git.ErrNonFastForwardUpdate, outcomeCAS},
-		{"ref changed text", errors.New("rpc: reference has changed"), outcomeCAS},
-		{"fetch first text", errors.New("failed to push: fetch first"), outcomeCAS},
-		{"transport", errors.New("dial tcp: connection refused"), outcomeErr},
+		{"nil", nil, OutcomeOK},
+		{"up-to-date", git.NoErrAlreadyUpToDate, OutcomeOK},
+		{"non-ff sentinel", git.ErrNonFastForwardUpdate, OutcomeCAS},
+		{"ref changed text", errors.New("rpc: reference has changed"), OutcomeCAS},
+		{"fetch first text", errors.New("failed to push: fetch first"), OutcomeCAS},
+		{"transport", errors.New("dial tcp: connection refused"), OutcomeErr},
 	}
 	for _, c := range cases {
 		if got := classify(c.err); got != c.want {
@@ -139,6 +100,11 @@ func TestNormalizeErr(t *testing.T) {
 	if r1 != r2 || !strings.Contains(r1, "<ref>") {
 		t.Errorf("ref variance not collapsed: %q vs %q", r1, r2)
 	}
+	// ...whatever namespace they live under (refs/forgemark/ is the default).
+	r3 := normalizeErr("command error on refs/forgemark/run-a4: rejected")
+	if r3 != r1 {
+		t.Errorf("namespaced ref not collapsed like a branch: %q vs %q", r3, r1)
+	}
 
 	// Truncation runs AFTER normalization: a long URL must not push the status
 	// code past the cutoff.
@@ -164,17 +130,17 @@ func TestNormalizeErr(t *testing.T) {
 
 func TestSummarizeAggregatesErrorMessages(t *testing.T) {
 	window := 10 * time.Second
-	samples := []sample{
+	samples := []Sample{
 		// Two push errors that normalize to the same 503 group (different URLs).
-		{offset: 1 * time.Second, res: outcomeErr, msg: `push: unexpected requesting "https://n1/r1/git-receive-pack" status code: 503`},
-		{offset: 2 * time.Second, res: outcomeErr, msg: `push: unexpected requesting "https://n2/r9/git-receive-pack" status code: 503`},
+		{Offset: 1 * time.Second, Res: OutcomeErr, Msg: `push: unexpected requesting "https://n1/r1/git-receive-pack" status code: 503`},
+		{Offset: 2 * time.Second, Res: OutcomeErr, Msg: `push: unexpected requesting "https://n2/r9/git-receive-pack" status code: 503`},
 		// One local harness-bug error, distinct message (no volatile parts).
-		{offset: 3 * time.Second, res: outcomeErr, msg: "commit: worktree: disk full"},
+		{Offset: 3 * time.Second, Res: OutcomeErr, Msg: "commit: worktree: disk full"},
 		// A successful push (no message) and a CAS (no message) must not appear.
-		{offset: 4 * time.Second, dur: 10 * time.Millisecond, res: outcomeOK},
-		{offset: 5 * time.Second, res: outcomeCAS},
+		{Offset: 4 * time.Second, Dur: 10 * time.Millisecond, Res: OutcomeOK},
+		{Offset: 5 * time.Second, Res: OutcomeCAS},
 		// A clone error goes to the clone bucket only.
-		{offset: 6 * time.Second, res: outcomeErr, op: opClone, msg: `clone: unexpected requesting "https://n1/r1/git-upload-pack" status code: 500`},
+		{Offset: 6 * time.Second, Res: OutcomeErr, Op: OpClone, Msg: `clone: unexpected requesting "https://n1/r1/git-upload-pack" status code: 500`},
 	}
 	r := summarize(samples, 8, "session", 1, 3, 0, window, "1-10 x 2048B")
 
@@ -197,18 +163,18 @@ func TestSummarizeAggregatesErrorMessages(t *testing.T) {
 	}
 
 	// A clean run must emit no lists (so omitempty fires in the JSON).
-	clean := summarize([]sample{{offset: time.Second, dur: time.Millisecond, res: outcomeOK}}, 1, "branch", 1, 1, 0, window, "")
+	clean := summarize([]Sample{{Offset: time.Second, Dur: time.Millisecond, Res: OutcomeOK}}, 1, "branch", 1, 1, 0, window, "")
 	if clean.ErrorMessages != nil || clean.CloneErrorMessages != nil {
 		t.Errorf("clean run should have nil error lists, got %+v / %+v", clean.ErrorMessages, clean.CloneErrorMessages)
 	}
 }
 
 func TestSummarizeCapsDistinctErrors(t *testing.T) {
-	var samples []sample
+	var samples []Sample
 	const distinct = 25
 	for i := range distinct {
 		// No volatile substrings, so each stays a distinct normalized key.
-		samples = append(samples, sample{offset: time.Second, res: outcomeErr, msg: fmt.Sprintf("error variant %d", i)})
+		samples = append(samples, Sample{Offset: time.Second, Res: OutcomeErr, Msg: fmt.Sprintf("error variant %d", i)})
 	}
 	r := summarize(samples, 1, "branch", 1, 1, 0, 10*time.Second, "")
 
@@ -216,7 +182,7 @@ func TestSummarizeCapsDistinctErrors(t *testing.T) {
 	if len(r.ErrorMessages) != maxDistinctErrors+1 {
 		t.Fatalf("groups = %d, want %d", len(r.ErrorMessages), maxDistinctErrors+1)
 	}
-	var overflow *errGroup
+	var overflow *ErrGroup
 	for i := range r.ErrorMessages {
 		if r.ErrorMessages[i].Message == "(other errors)" {
 			overflow = &r.ErrorMessages[i]
@@ -235,12 +201,12 @@ func TestSummarizeCapsDistinctErrors(t *testing.T) {
 func TestSummarizeSplitsCloneAndPush(t *testing.T) {
 	warmup := 0 * time.Second
 	window := 10 * time.Second
-	samples := []sample{
-		{offset: 1 * time.Second, dur: 200 * time.Millisecond, res: outcomeOK, op: opClone},
-		{offset: 2 * time.Second, dur: 400 * time.Millisecond, res: outcomeOK, op: opClone},
-		{offset: 3 * time.Second, res: outcomeErr, op: opClone}, // failed clone
-		{offset: 4 * time.Second, dur: 30 * time.Millisecond, res: outcomeOK, op: opPush},
-		{offset: 5 * time.Second, dur: 50 * time.Millisecond, res: outcomeOK, op: opPush},
+	samples := []Sample{
+		{Offset: 1 * time.Second, Dur: 200 * time.Millisecond, Res: OutcomeOK, Op: OpClone},
+		{Offset: 2 * time.Second, Dur: 400 * time.Millisecond, Res: OutcomeOK, Op: OpClone},
+		{Offset: 3 * time.Second, Res: OutcomeErr, Op: OpClone}, // failed clone
+		{Offset: 4 * time.Second, Dur: 30 * time.Millisecond, Res: OutcomeOK, Op: OpPush},
+		{Offset: 5 * time.Second, Dur: 50 * time.Millisecond, Res: OutcomeOK, Op: OpPush},
 	}
 	r := summarize(samples, 8, "session", 1, 3, warmup, window, "1-10 x 2048B")
 
@@ -255,5 +221,34 @@ func TestSummarizeSplitsCloneAndPush(t *testing.T) {
 	}
 	if r.CloneP50ms != 200 {
 		t.Fatalf("clone p50=%v, want 200", r.CloneP50ms)
+	}
+}
+
+func TestSummarizeCloneStrategyUsesCloneSamplesAsPrimaryOp(t *testing.T) {
+	warmup := 10 * time.Second
+	window := 10 * time.Second
+	samples := []Sample{
+		{Offset: 5 * time.Second, Dur: 1 * time.Second, Res: OutcomeOK, Op: OpClone}, // warm-up: dropped
+		{Offset: 11 * time.Second, Dur: 100 * time.Millisecond, Res: OutcomeOK, Op: OpClone},
+		{Offset: 12 * time.Second, Dur: 300 * time.Millisecond, Res: OutcomeOK, Op: OpClone},
+		{Offset: 13 * time.Second, Res: OutcomeErr, Op: OpClone, Msg: "clone: auth failed"},
+	}
+	r := summarize(samples, 4, "clone", 1, 2, warmup, window, "ignored")
+
+	if r.Pushes != 3 || r.OK != 2 || r.OtherErrors != 1 {
+		t.Fatalf("primary clone counts: Pushes=%d OK=%d OtherErrors=%d, want 3/2/1", r.Pushes, r.OK, r.OtherErrors)
+	}
+	if want := float64(2) / window.Seconds(); r.OpsPerSec != want {
+		t.Fatalf("OpsPerSec = %v, want clone throughput %v", r.OpsPerSec, want)
+	}
+	if r.P50ms != 100 || r.P95ms != 300 || r.P99ms != 300 || r.Maxms != 300 {
+		t.Fatalf("primary clone latencies p50/p95/p99/max = %v/%v/%v/%v, want 100/300/300/300", r.P50ms, r.P95ms, r.P99ms, r.Maxms)
+	}
+	if r.Clones != 3 || r.CloneOK != 2 || r.CloneErrors != 1 || r.CloneP50ms != 100 {
+		t.Fatalf("clone side counts/latency = clones %d ok %d err %d p50 %v, want 3/2/1/100",
+			r.Clones, r.CloneOK, r.CloneErrors, r.CloneP50ms)
+	}
+	if len(r.ErrorMessages) != 1 || r.ErrorMessages[0].Message != "clone: auth failed" {
+		t.Fatalf("primary ErrorMessages = %+v, want clone error", r.ErrorMessages)
 	}
 }
